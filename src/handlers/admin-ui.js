@@ -41,7 +41,7 @@ export async function handleAdminUI(request, env, sys) {
           <td>
             <div style="display:flex; align-items:center; gap:8px;">
               ${flagHtml}
-              <a href="/server/${s.id}" style="color:var(--text-primary); font-weight:bold; text-decoration:none; hover:text:var(--accent-green);">${s.name}</a>
+              <a href="/?id=${s.id}" style="color:var(--text-primary); font-weight:bold; text-decoration:none; hover:text:var(--accent-green);">${s.name}</a>
             </div>
           </td>
           <td><span class="group-tag">${s.server_group || '默认分组'}</span></td>
@@ -811,7 +811,7 @@ export async function handleAdminUI(request, env, sys) {
         admin — ${sys.admin_title}
       </div>
       <div style="color: var(--text-muted); font-size: 11px;">
-        ${new Date().toLocaleString()}
+        ${new Date().toLocaleString('zh-CN')}
       </div>
     </div>
     
