@@ -109,8 +109,6 @@ export async function getMetricsHistory(db, serverId, hours, columns) {
   if (hours > 72) {
     queryHours = 72;
     intervalMs = 25 * 60 * 1000;
-  } else if (hours > 24) {
-    intervalMs = 25 * 60 * 1000;
   } else if (hours >= 24) {
     intervalMs = 15 * 60 * 1000;
   } else if (hours >= 12) {
@@ -140,7 +138,7 @@ export async function getMetricsHistory(db, serverId, hours, columns) {
         timestamp, 
         ${columns},
         ROW_NUMBER() OVER (
-          PARTITION BY (timestamp / ?)
+          PARTITION BY CAST(timestamp / ? AS INTEGER)
           ORDER BY timestamp
         ) AS rn
       FROM metrics_history
