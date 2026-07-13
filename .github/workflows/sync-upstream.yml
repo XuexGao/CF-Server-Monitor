@@ -1,0 +1,35 @@
+name: Sync Upstream
+
+on:
+  schedule:
+    - cron: '0 0 */3 * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    name: Sync upstream to main
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: ⬆️ Sync upstream
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream https://github.com/huilang-me/CF-Server-Monitor.git
+          git fetch upstream
+          # 备份本 workflow 自身（reset 后会被上游覆盖删除）
+          cp .github/workflows/sync-upstream.yml /tmp/sync-upstream.yml
+          git reset --hard upstream/main
+          # 恢复本 workflow，避免下次定时任务丢失
+          mkdir -p .github/workflows
+          cp /tmp/sync-upstream.yml .github/workflows/sync-upstream.yml
+          git add .github/workflows/sync-upstream.yml
+          git diff --cached --quiet || git commit -m "chore: keep sync-upstream workflow"
+          git push origin main --force
