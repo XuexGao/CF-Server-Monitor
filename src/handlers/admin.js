@@ -230,13 +230,9 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null)
         online: 0,
         offline: 0,
         total_cpu: 0,
-        total_ram: 0,
-        total_disk: 0,
         total_net_in: 0,
         total_net_out: 0,
-        avg_cpu: 0,
-        avg_ram: 0,
-        avg_disk: 0
+        avg_cpu: 0
       };
       
       const serversWithStatus = servers.map(server => {
@@ -266,8 +262,6 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null)
         if (isOnline) {
           stats.online++;
           stats.total_cpu += parseFloat(item.cpu) || 0;
-          stats.total_ram += parseFloat(item.ram) || 0;
-          stats.total_disk += parseFloat(item.disk) || 0;
           stats.total_net_in += parseFloat(item.net_in_speed) || 0;
           stats.total_net_out += parseFloat(item.net_out_speed) || 0;
         } else {
@@ -279,8 +273,6 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null)
       
       if (stats.online > 0) {
         stats.avg_cpu = (stats.total_cpu / stats.online).toFixed(2);
-        stats.avg_ram = (stats.total_ram / stats.online).toFixed(2);
-        stats.avg_disk = (stats.total_disk / stats.online).toFixed(2);
       }
 
       return createSuccessResponse({

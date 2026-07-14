@@ -64,14 +64,4 @@ if (fs.existsSync(distDir)) {
   }
 }
 
-console.log('Replacing timestamp in index.html...');
-const indexHtmlPath = path.join(distDir, 'index.html');
-if (fs.existsSync(indexHtmlPath)) {
-  const timestamp = Date.now();
-  let html = fs.readFileSync(indexHtmlPath, 'utf8');
-  html = html.replace(/(\?t=)\d+/g, `$1${timestamp}`);
-  fs.writeFileSync(indexHtmlPath, html, 'utf8');
-  console.log(`Updated timestamp to ${timestamp}`);
-}
-
 console.log('Build complete!');
