@@ -96,7 +96,11 @@ export async function handleServersAPI(request, env, sys) {
       show_expire: sys.show_expire === 'true',
       show_tf: sys.show_tf === 'true',
       show_time: sys.show_time === 'true',
-      display_mode: sys.display_mode || 'bar'
+      display_mode: sys.display_mode || 'bar',
+      custom_ct: sys.custom_ct || '',
+      custom_cu: sys.custom_cu || '',
+      custom_cm: sys.custom_cm || '',
+      custom_bd: sys.custom_bd || ''
     }
   };
 

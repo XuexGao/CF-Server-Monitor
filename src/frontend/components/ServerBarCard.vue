@@ -79,22 +79,10 @@
         <span class="stat-time-value">{{ dataTimeText }}</span>
       </div>
     </div>
-    <div class="ping-panel">
-      <div class="ping-item">
-        <span class="ping-label">CT</span>
-        <span class="ping-value" :style="{ color: getPingColor(server.ping_ct) }">{{ !isPingValid(server.ping_ct) ? trans.timeout : server.ping_ct + 'ms' }}</span>
-      </div>
-      <div class="ping-item">
-        <span class="ping-label">CU</span>
-        <span class="ping-value" :style="{ color: getPingColor(server.ping_cu) }">{{ !isPingValid(server.ping_cu) ? trans.timeout : server.ping_cu + 'ms' }}</span>
-      </div>
-      <div class="ping-item">
-        <span class="ping-label">CM</span>
-        <span class="ping-value" :style="{ color: getPingColor(server.ping_cm) }">{{ !isPingValid(server.ping_cm) ? trans.timeout : server.ping_cm + 'ms' }}</span>
-      </div>
-      <div class="ping-item">
-        <span class="ping-label">BD</span>
-        <span class="ping-value" :style="{ color: getPingColor(server.ping_bd) }">{{ !isPingValid(server.ping_bd) ? trans.timeout : server.ping_bd + 'ms' }}</span>
+    <div class="ping-panel" v-if="filteredPingList.length > 0">
+      <div v-for="ping in filteredPingList" :key="ping.label" class="ping-item">
+        <span class="ping-label">{{ ping.label }}</span>
+        <span class="ping-value" :style="{ color: getPingColor(ping.value) }">{{ !isPingValid(ping.value) ? trans.timeout : ping.value + 'ms' }}</span>
       </div>
     </div>
   </router-link>
@@ -141,6 +129,7 @@ const {
   expireText,
   isPingValid,
   getPingColor,
+  filteredPingList,
   getPublicAssetUrl,
   formatBytes
 } = useServerCardData(props)

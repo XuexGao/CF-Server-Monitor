@@ -270,6 +270,10 @@ export default {
           turnstile_site_key: sys.turnstile_site_key || '',
           site_title: appearanceOptions.site_title || '',
           display_mode: appearanceOptions.display_mode || 'bar',
+          custom_ct: sys.custom_ct || '',
+          custom_cu: sys.custom_cu || '',
+          custom_cm: sys.custom_cm || '',
+          custom_bd: sys.custom_bd || '',
           verified: verified,
           turnstile_verified: turnstileVerified,
           show_long_history: sys.show_long_history === 'true'

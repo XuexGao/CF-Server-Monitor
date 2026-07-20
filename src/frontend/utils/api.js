@@ -254,7 +254,11 @@ const createEmptyMergedData = () => ({
     show_tf: true,
     show_time: true,
     display_mode: 'bar',
-    site_title: DEFAULT_SITE_TITLE
+    site_title: DEFAULT_SITE_TITLE,
+    custom_ct: '',
+    custom_cu: '',
+    custom_cm: '',
+    custom_bd: ''
   }
 })
 
@@ -292,7 +296,11 @@ const mergeSiteResult = (mergedData, { data, error, baseUrl }, multiSite, localT
       show_tf: data.sysConfig.show_tf ?? mergedData.sysConfig.show_tf,
       show_time: data.sysConfig.show_time ?? mergedData.sysConfig.show_time,
       display_mode: resolveDisplayMode(data.sysConfig, mergedData.sysConfig.display_mode),
-      site_title: multiSite ? localTitle : mergedData.sysConfig.site_title
+      site_title: multiSite ? localTitle : mergedData.sysConfig.site_title,
+      custom_ct: data.sysConfig.custom_ct ?? mergedData.sysConfig.custom_ct,
+      custom_cu: data.sysConfig.custom_cu ?? mergedData.sysConfig.custom_cu,
+      custom_cm: data.sysConfig.custom_cm ?? mergedData.sysConfig.custom_cm,
+      custom_bd: data.sysConfig.custom_bd ?? mergedData.sysConfig.custom_bd
     }
   }
 }

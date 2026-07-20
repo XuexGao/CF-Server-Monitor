@@ -10,7 +10,11 @@ export const DEFAULT_SERVER_CARD_CONFIG = {
   show_expire: true,
   show_tf: true,
   show_time: true,
-  display_mode: 'bar'
+  display_mode: 'bar',
+  custom_ct: '',
+  custom_cu: '',
+  custom_cm: '',
+  custom_bd: ''
 }
 
 export const getTrafficUsageBytes = (server) => {
@@ -211,12 +215,19 @@ export function useServerCardData(props) {
     return 'var(--accent-red)'
   }
 
-  const pingList = computed(() => [
-    { label: 'CT', value: props.server.ping_ct },
-    { label: 'CU', value: props.server.ping_cu },
-    { label: 'CM', value: props.server.ping_cm },
-    { label: 'BD', value: props.server.ping_bd }
-  ])
+  const PING_MAP = { CT: 'custom_ct', CU: 'custom_cu', CM: 'custom_cm', BD: 'custom_bd' }
+
+  const filteredPingList = computed(() => {
+    return [
+      { label: 'CT', value: props.server.ping_ct },
+      { label: 'CU', value: props.server.ping_cu },
+      { label: 'CM', value: props.server.ping_cm },
+      { label: 'BD', value: props.server.ping_bd }
+    ].filter(ping => {
+      const settingKey = PING_MAP[ping.label]
+      return props.sysConfig[settingKey] && String(props.sysConfig[settingKey]).trim() !== ''
+    })
+  })
 
   return {
     trans,
@@ -253,7 +264,7 @@ export function useServerCardData(props) {
     roundedPercent,
     isPingValid,
     getPingColor,
-    pingList,
+    filteredPingList,
     getPublicAssetUrl,
     formatBytes
   }
