@@ -20,10 +20,10 @@
     兼容参数。Windows PowerShell 版不使用 samples 采样缓存，始终按上报间隔采集并上报。
 .PARAMETER ReportInterval
     上报间隔（秒），默认 60
-.PARAMETER PingType
-    探测类型: http | tcp，默认 tcp
 .PARAMETER ResetDay
     流量重置日（1-31, 0=不重置），默认 1
+.PARAMETER AutoUpdate
+    自动更新探针（0/1），默认 0
 .PARAMETER RxCorrection
     下行流量校正（GB），直接设置当月下行数据
 .PARAMETER TxCorrection
@@ -53,8 +53,8 @@ param(
     [string]$Url = "",
     [string]$CollectInterval = "0",
     [string]$ReportInterval = "60",
-    [string]$PingType = "tcp",
     [string]$ResetDay = "1",
+    [string]$AutoUpdate = "",
     [string]$RxCorrection = "",
     [string]$TxCorrection = "",
     [string]$CtNode = "",
@@ -79,8 +79,8 @@ if (-not $STA -and $host.Runspace.ApartmentState -ne 'STA') {
     if ($Url) { $argList += " -Url `"$Url`"" }
     if ($CollectInterval) { $argList += " -CollectInterval `"$CollectInterval`"" }
     if ($ReportInterval) { $argList += " -ReportInterval `"$ReportInterval`"" }
-    if ($PingType) { $argList += " -PingType `"$PingType`"" }
     if ($ResetDay) { $argList += " -ResetDay `"$ResetDay`"" }
+    if ($AutoUpdate -ne "") { $argList += " -AutoUpdate `"$AutoUpdate`"" }
     if ($RxCorrection) { $argList += " -RxCorrection `"$RxCorrection`"" }
     if ($TxCorrection) { $argList += " -TxCorrection `"$TxCorrection`"" }
     if ($CtNode) { $argList += " -CtNode `"$CtNode`"" }
@@ -91,22 +91,22 @@ if (-not $STA -and $host.Runspace.ApartmentState -ne 'STA') {
     exit 0
 }
 
-$ErrorActionPreference = "Continue"
 $DebugPreference = "SilentlyContinue"
-trap { Write-Host "捕获到异常: $_" -ForegroundColor Red; continue }
 
 $ErrorActionPreference = "Stop"
 
 $APP_NAME = "CF-Server-Monitor"
+$AGENT_VERSION = "1.3.2"
 $TASK_NAME = "CFProbe"
 # 获取脚本所在目录
 if ($MyInvocation.MyCommand.Path) {
-    $SCRIPT_DIR = Split-Path -Parent $MyInvocation.MyCommand.Path
+    $SCRIPT_PATH = $MyInvocation.MyCommand.Path
 } elseif ($PSCommandPath) {
-    $SCRIPT_DIR = Split-Path -Parent $PSCommandPath
+    $SCRIPT_PATH = $PSCommandPath
 } else {
-    $SCRIPT_DIR = (Get-Location).Path
+    $SCRIPT_PATH = Join-Path (Get-Location).Path "cf-server-monitor.ps1"
 }
+$SCRIPT_DIR = Split-Path -Parent $SCRIPT_PATH
 $CONFIG_DIR = $SCRIPT_DIR
 $CONFIG_FILE = Join-Path $CONFIG_DIR "cf_probe_config.json"
 $LOG_FILE = Join-Path $CONFIG_DIR "cf_probe.log"
@@ -118,8 +118,7 @@ $DEFAULT_CM = "gd-cm-dualstack.ip.zstaticcdn.com"
 $DEFAULT_BD = "lf3-ips.zstaticcdn.com"
 $MAX_TRAFFIC_CORRECTION_GB = 1000000
 
-$MAX_LOG_SIZE = 2MB
-$LOG_BACKUP_COUNT = 3
+$MAX_LOG_SIZE = 1MB
 
 # ============================================================
 # 工具函数
@@ -133,17 +132,25 @@ function Write-Log {
         if (Test-Path $LOG_FILE) {
             $size = (Get-Item $LOG_FILE).Length
             if ($size -gt $MAX_LOG_SIZE) {
-                for ($i = $LOG_BACKUP_COUNT - 1; $i -ge 1; $i--) {
-                    $src = Join-Path $CONFIG_DIR "cf_probe.log.$i"
-                    $dst = Join-Path $CONFIG_DIR "cf_probe.log.$($i+1)"
-                    if (Test-Path $src) {
-                        if (Test-Path $dst) { Remove-Item $dst -Force }
-                        Rename-Item $src $dst
+                $lines = [System.IO.File]::ReadAllLines($LOG_FILE, [System.Text.Encoding]::UTF8)
+                if ($lines.Length -gt 0) {
+                    $targetSize = 102400
+                    $totalBytes = 0
+                    $keepCount = 0
+                    for ($i = $lines.Length - 1; $i -ge 0; $i--) {
+                        $lineBytes = [System.Text.Encoding]::UTF8.GetByteCount($lines[$i] + "`r`n")
+                        if ($totalBytes + $lineBytes -gt $targetSize) { break }
+                        $totalBytes += $lineBytes
+                        $keepCount++
+                    }
+                    if ($keepCount -eq 0) { $keepCount = 1 }
+                    if ($keepCount -gt 0 -and $keepCount -lt $lines.Length) {
+                        $startIdx = $lines.Length - $keepCount
+                        $keepLines = New-Object string[] $keepCount
+                        [Array]::Copy($lines, $startIdx, $keepLines, 0, $keepCount)
+                        [System.IO.File]::WriteAllLines($LOG_FILE, $keepLines, [System.Text.Encoding]::UTF8)
                     }
                 }
-                $backup = Join-Path $CONFIG_DIR "cf_probe.log.1"
-                if (Test-Path $backup) { Remove-Item $backup -Force }
-                Rename-Item $LOG_FILE $backup
             }
         }
         [System.IO.File]::AppendAllText($LOG_FILE, $line + "`r`n", [System.Text.Encoding]::UTF8)
@@ -214,67 +221,245 @@ function Save-Config {
     }
 }
 
+function Get-ConfigProperty {
+    param($Config, [string]$Name, $Default = $null)
+    if ($null -eq $Config) { return $Default }
+    if ($Config -is [hashtable]) {
+        if ($Config.ContainsKey($Name)) { return $Config[$Name] }
+        return $Default
+    }
+    $prop = $Config.PSObject.Properties[$Name]
+    if ($null -ne $prop) { return $prop.Value }
+    return $Default
+}
+
+function Get-ProbeInitialValue {
+    param([string]$Node)
+    if ([string]::IsNullOrWhiteSpace($Node)) { return $false }
+    return ""
+}
+
+function ConvertTo-BinaryFlag {
+    param(
+        [object]$Value,
+        [string]$Default = "0",
+        [switch]$Strict
+    )
+
+    if ($Default -ne "1") { $Default = "0" }
+    if ($null -eq $Value -or [string]::IsNullOrWhiteSpace([string]$Value)) {
+        return $Default
+    }
+
+    $text = ([string]$Value).Trim()
+    if ($text -eq "0" -or $text -eq "1") {
+        return $text
+    }
+    if ($Strict) {
+        throw "AutoUpdate 参数非法，仅支持 0 或 1"
+    }
+    return $Default
+}
+
+function ConvertTo-PowerShellLiteral {
+    param([string]$Value)
+    return "'" + $Value.Replace("'", "''") + "'"
+}
+
+function Get-AgentInstallUrl {
+    param([string]$WorkerUrl)
+
+    try {
+        $uri = [Uri]$WorkerUrl
+        if ($uri.Scheme -notin @("http", "https") -or [string]::IsNullOrWhiteSpace($uri.Authority)) {
+            return $null
+        }
+        return "$($uri.Scheme)://$($uri.Authority)/cf-server-monitor.ps1"
+    } catch {
+        return $null
+    }
+}
+
+function Get-AgentUpdateTempDir {
+    $candidates = @(
+        [System.IO.Path]::GetTempPath(),
+        $env:TEMP,
+        $env:TMP,
+        $CONFIG_DIR
+    ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique
+
+    foreach ($candidate in $candidates) {
+        try {
+            if (-not (Test-Path -LiteralPath $candidate)) {
+                New-Item -ItemType Directory -Path $candidate -Force | Out-Null
+            }
+            if (-not (Test-Path -LiteralPath $candidate -PathType Container)) {
+                continue
+            }
+            $probeFile = Join-Path $candidate "cf-probe-write-test-$PID.tmp"
+            [System.IO.File]::WriteAllText($probeFile, "1", [System.Text.Encoding]::ASCII)
+            Remove-Item -LiteralPath $probeFile -Force -ErrorAction SilentlyContinue
+            return $candidate
+        } catch {}
+    }
+    return $null
+}
+
+function Schedule-AgentUpdate {
+    param(
+        [string]$WorkerUrl,
+        [string]$AutoUpdate
+    )
+
+    if ((ConvertTo-BinaryFlag -Value $AutoUpdate -Default "0") -ne "1") {
+        Write-Log "Auto update ignored: local auto_update=$AutoUpdate" "DEBUG"
+        return
+    }
+
+    $lockFile = Join-Path $CONFIG_DIR "auto_update.lock"
+    $now = [DateTimeOffset]::Now.ToUnixTimeSeconds()
+    if (Test-Path -LiteralPath $lockFile) {
+        try {
+            $last = [long]((Get-Content -LiteralPath $lockFile -Raw -ErrorAction Stop).Trim())
+        } catch {
+            $last = 0
+        }
+        if (($now - $last) -lt 1800) {
+            Write-Log "Auto update already scheduled recently: age=$($now - $last)s lock=$lockFile" "DEBUG"
+            return
+        }
+    }
+
+    $installUrl = Get-AgentInstallUrl -WorkerUrl $WorkerUrl
+    if (-not $installUrl) {
+        Write-Log "Auto update skipped: invalid worker_url=$WorkerUrl" "WARN"
+        return
+    }
+
+    $updateTmpDir = Get-AgentUpdateTempDir
+    if (-not $updateTmpDir) {
+        Write-Log "Auto update skipped: no writable temp dir" "WARN"
+        return
+    }
+
+    $id = [Guid]::NewGuid().ToString("N")
+    $downloadScript = Join-Path $updateTmpDir "cf-probe-auto-update-$id.ps1"
+    $runnerScript = Join-Path $updateTmpDir "cf-probe-auto-update-runner-$id.ps1"
+    $installUrlLiteral = ConvertTo-PowerShellLiteral $installUrl
+    $downloadScriptLiteral = ConvertTo-PowerShellLiteral $downloadScript
+    $targetScriptLiteral = ConvertTo-PowerShellLiteral $SCRIPT_PATH
+
+    $runnerContent = @"
+`$ErrorActionPreference = 'Stop'
+try {
+    Invoke-WebRequest -UseBasicParsing -Uri $installUrlLiteral -OutFile $downloadScriptLiteral -TimeoutSec 30
+    Copy-Item -LiteralPath $downloadScriptLiteral -Destination $targetScriptLiteral -Force
+    Start-Process powershell.exe -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',$targetScriptLiteral,'install') -WindowStyle Hidden -Wait
+} catch {
+} finally {
+    Remove-Item -LiteralPath $downloadScriptLiteral -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath `$PSCommandPath -Force -ErrorAction SilentlyContinue
+}
+"@
+
+    try {
+        [System.IO.File]::WriteAllText($runnerScript, $runnerContent, (New-Object System.Text.UTF8Encoding($false)))
+        Start-Process powershell.exe -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File", $runnerScript) -WindowStyle Hidden
+        [System.IO.File]::WriteAllText($lockFile, [string]$now, [System.Text.Encoding]::ASCII)
+        Write-Log "Auto update scheduled: url=$installUrl temp=$updateTmpDir" "INFO"
+    } catch {
+        Write-Log "Auto update schedule failed: $($_.Exception.Message)" "WARN"
+    }
+}
+
 function ConvertFrom-AgentConfigResponse {
     param([string]$Body, [string]$ConfigMd5)
 
-    if ([string]::IsNullOrEmpty($Body) -or [Text.Encoding]::UTF8.GetByteCount($Body) -gt 1024) {
+    $bodyText = if ($null -eq $Body) { "" } else { $Body.Trim() }
+    if ([string]::IsNullOrEmpty($bodyText) -or [Text.Encoding]::UTF8.GetByteCount($bodyText) -gt 1024) {
         throw "动态配置响应长度无效"
     }
-    $ConfigMd5 = $ConfigMd5.Trim().ToLowerInvariant()
-    if ($ConfigMd5 -notmatch '^[a-f0-9]{32}$') { throw "动态配置 MD5 无效" }
-    if ($Body -notmatch '^[a-z0-9_=&.\-]+$') { throw "动态配置包含非法字符" }
+    if ($bodyText -notmatch '^[a-z0-9_=&.\-:]+$') { throw "动态配置包含非法字符" }
 
-    $expectedKeys = @('collect_interval', 'ping_mode', 'report_interval', 'reset_day', 'schema_version', 'custom_ct', 'custom_cu', 'custom_cm', 'custom_bd')
-    $parts = $Body.Split('&')
-    if ($parts.Count -lt $expectedKeys.Count) { throw "动态配置字段数量无效" }
+    $allowedKeys = @(
+        'collect_interval', 'report_interval', 'reset_day', 'schema_version',
+        'custom_ct', 'custom_cu', 'custom_cm', 'custom_bd',
+        'rx_correction', 'tx_correction', 'update'
+    )
     $values = @{}
-    for ($i = 0; $i -lt [Math]::Min($parts.Count, $expectedKeys.Count); $i++) {
-        $pair = $parts[$i].Split('=')
-        if ($pair.Count -ne 2 -or $pair[0] -ne $expectedKeys[$i]) { throw "动态配置字段无效" }
-        $values[$pair[0]] = $pair[1]
+    foreach ($part in $bodyText.Split('&')) {
+        if ([string]::IsNullOrEmpty($part)) { continue }
+        $eqIndex = $part.IndexOf('=')
+        if ($eqIndex -lt 0) { throw "动态配置字段格式无效" }
+        $key = $part.Substring(0, $eqIndex)
+        $value = $part.Substring($eqIndex + 1)
+        if ($allowedKeys -notcontains $key) { throw "动态配置包含未知字段: $key" }
+        if ($values.ContainsKey($key)) { throw "动态配置包含重复字段: $key" }
+        $values[$key] = $value
     }
 
-    for ($i = $expectedKeys.Count; $i -lt $parts.Count; $i++) {
-        $pair = $parts[$i].Split('=')
-        if ($pair.Count -eq 2) {
-            $values[$pair[0]] = $pair[1]
+    $updateValue = if ($values.ContainsKey('update')) { $values['update'] } else { "" }
+    if ($updateValue -ne "" -and $updateValue -ne "0" -and $updateValue -ne "1") {
+        throw "动态配置 update 无效"
+    }
+
+    $requiredKeys = @('collect_interval', 'report_interval', 'reset_day', 'schema_version', 'custom_ct', 'custom_cu', 'custom_cm', 'custom_bd')
+    $hasConfig = $false
+    foreach ($key in $requiredKeys) {
+        if ($values.ContainsKey($key)) {
+            $hasConfig = $true
+            break
         }
     }
+
+    if (-not $hasConfig) {
+        if ($updateValue -eq "1") {
+            return @{
+                has_config = $false
+                update = "1"
+            }
+        }
+        throw "动态配置缺少配置字段"
+    }
+
+    foreach ($key in $requiredKeys) {
+        if (-not $values.ContainsKey($key)) { throw "动态配置缺少必要字段: $key" }
+    }
+
+    $ConfigMd5 = if ($null -eq $ConfigMd5) { "" } else { $ConfigMd5.Trim().ToLowerInvariant() }
+    if ($ConfigMd5 -notmatch '^[a-f0-9]{32}$') { throw "动态配置 MD5 无效" }
 
     foreach ($key in @('collect_interval', 'report_interval', 'reset_day', 'schema_version')) {
         if ($values[$key] -notmatch '^(0|[1-9][0-9]*)$') { throw "动态配置数值无效" }
     }
-    $collect = [int]$values.collect_interval
-    $report = [int]$values.report_interval
-    $reset = [int]$values.reset_day
-    $schema = [int]$values.schema_version
+    $collect = [int]$values['collect_interval']
+    $report = [int]$values['report_interval']
+    $reset = [int]$values['reset_day']
+    $schema = [int]$values['schema_version']
     if (@(0, 1, 2, 5, 10) -notcontains $collect) { throw "collect_interval 无效" }
     if (@(30, 60, 120, 180) -notcontains $report -or $report -lt $collect) { throw "report_interval 无效" }
-    if (@('http', 'tcp') -notcontains $values.ping_mode) { throw "ping_mode 无效" }
-    if ($reset -lt 0 -or $reset -gt 31 -or $schema -ne 1) { throw "reset_day 或 schema_version 无效" }
-
-    $canonical = "collect_interval=$collect&ping_mode=$($values.ping_mode)&report_interval=$report&reset_day=$reset&schema_version=$schema&custom_ct=$($values.custom_ct)&custom_cu=$($values.custom_cu)&custom_cm=$($values.custom_cm)&custom_bd=$($values.custom_bd)"
-    if ($Body -cne $canonical -and $Body -cne "$canonical&rx_correction=$($values.rx_correction)&tx_correction=$($values.tx_correction)") {
-        throw "动态配置不是规范格式"
-    }
+    if ($reset -lt 0 -or $reset -gt 31 -or $schema -ne 2) { throw "reset_day 或 schema_version 无效" }
 
     $result = @{
+        has_config = $true
         collect_interval = $collect
-        ping_type = $values.ping_mode
         report_interval = $report
         reset_day = $reset
         config_md5 = $ConfigMd5
-        ct_node = $values.custom_ct
-        cu_node = $values.custom_cu
-        cm_node = $values.custom_cm
-        bd_node = $values.custom_bd
+        ct_node = $values['custom_ct']
+        cu_node = $values['custom_cu']
+        cm_node = $values['custom_cm']
+        bd_node = $values['custom_bd']
     }
 
-    if ($values.ContainsKey('rx_correction') -and $values.rx_correction -ne '') {
-        $result.rx_correction = $values.rx_correction
+    if ($values.ContainsKey('rx_correction') -and $values['rx_correction'] -ne '') {
+        $result.rx_correction = $values['rx_correction']
     }
-    if ($values.ContainsKey('tx_correction') -and $values.tx_correction -ne '') {
-        $result.tx_correction = $values.tx_correction
+    if ($values.ContainsKey('tx_correction') -and $values['tx_correction'] -ne '') {
+        $result.tx_correction = $values['tx_correction']
+    }
+    if ($updateValue -ne '') {
+        $result.update = $updateValue
     }
 
     return $result
@@ -298,9 +483,10 @@ function Invoke-AsAdmin {
     if ($Id) { $argList += " -Id `"$Id`"" }
     if ($Secret) { $argList += " -Secret `"$Secret`"" }
     if ($Url) { $argList += " -Url `"$Url`"" }
+    if ($CollectInterval -and $CollectInterval -ne "0") { $argList += " -CollectInterval `"$CollectInterval`"" }
     if ($ReportInterval -and $ReportInterval -ne "60") { $argList += " -ReportInterval `"$ReportInterval`"" }
-    if ($PingType -and $PingType -ne "tcp") { $argList += " -PingType `"$PingType`"" }
     if ($ResetDay -and $ResetDay -ne "1") { $argList += " -ResetDay `"$ResetDay`"" }
+    if ($AutoUpdate -ne "") { $argList += " -AutoUpdate `"$AutoUpdate`"" }
     if ($RxCorrection) { $argList += " -RxCorrection `"$RxCorrection`"" }
     if ($TxCorrection) { $argList += " -TxCorrection `"$TxCorrection`"" }
     if ($CtNode) { $argList += " -CtNode `"$CtNode`"" }
@@ -362,14 +548,28 @@ function Get-MemoryInfo {
 
 function Get-SwapInfo {
     try {
-        $cs = Get-CimInstance Win32_ComputerSystem
-        $totalMB = [math]::Round($cs.TotalPhysicalMemory / 1024 / 1024)
-        $os = Get-CimInstance Win32_OperatingSystem
-        $freeVirtual = [math]::Round($os.FreeVirtualMemory / 1024)
-        $freePhys = [math]::Round($os.FreePhysicalMemory / 1024)
-        $usedMB = $totalMB - $freePhys
-        $swapTotal = [math]::Max($freeVirtual - $freePhys, 0)
-        return @{ total = $swapTotal; used = [math]::Min($usedMB, $swapTotal) }
+        $pageFiles = Get-CimInstance Win32_PageFile -ErrorAction SilentlyContinue
+        if ($pageFiles) {
+            $totalMB = 0
+            foreach ($pf in $pageFiles) {
+                if ($pf.MaxSize) {
+                    $totalMB += [math]::Round($pf.MaxSize / 1024)
+                } elseif ($pf.Size) {
+                    $totalMB += [math]::Round($pf.Size / 1024)
+                }
+            }
+            $usage = Get-CimInstance Win32_PageFileUsage -ErrorAction SilentlyContinue
+            $usedMB = 0
+            if ($usage) {
+                foreach ($u in $usage) {
+                    $usedMB += [math]::Round($u.CurrentUsage / 1024)
+                }
+            }
+            if ($totalMB -gt 0) {
+                return @{ total = $totalMB; used = [math]::Min($usedMB, $totalMB) }
+            }
+        }
+        return @{ total = 0; used = 0 }
     } catch {
         return @{ total = 0; used = 0 }
     }
@@ -377,10 +577,33 @@ function Get-SwapInfo {
 
 function Get-DiskInfo {
     try {
-        $disk = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='C:'"
-        $totalMB = [math]::Round($disk.Size / 1024 / 1024)
-        $freeMB = [math]::Round($disk.FreeSpace / 1024 / 1024)
-        $usedMB = $totalMB - $freeMB
+        $disks = @(Get-CimInstance Win32_LogicalDisk -Filter "DriveType=3" -ErrorAction SilentlyContinue)
+        if (-not $disks -or $disks.Count -eq 0) {
+            $disks = @(Get-PSDrive -PSProvider FileSystem -ErrorAction SilentlyContinue | Where-Object {
+                $_.Root -match '^[A-Za-z]:\\$' -and $null -ne $_.Used -and $null -ne $_.Free
+            } | ForEach-Object {
+                [PSCustomObject]@{
+                    Size = ([int64]$_.Used + [int64]$_.Free)
+                    FreeSpace = [int64]$_.Free
+                }
+            })
+        }
+
+        $totalBytes = [int64]0
+        $freeBytes = [int64]0
+        foreach ($disk in $disks) {
+            if ($null -eq $disk.Size -or $null -eq $disk.FreeSpace) { continue }
+            $size = [int64]$disk.Size
+            $free = [int64]$disk.FreeSpace
+            if ($size -le 0 -or $free -lt 0) { continue }
+            $totalBytes += $size
+            $freeBytes += $free
+        }
+
+        if ($totalBytes -le 0) { return @{ total = 0; used = 0 } }
+        $totalMB = [math]::Round($totalBytes / 1024 / 1024)
+        $freeMB = [math]::Round($freeBytes / 1024 / 1024)
+        $usedMB = [math]::Max($totalMB - $freeMB, 0)
         return @{ total = $totalMB; used = $usedMB }
     } catch {
         return @{ total = 0; used = 0 }
@@ -469,22 +692,19 @@ function Get-LoadAvg {
 # 网络探测
 # ============================================================
 
-function Get-HttpPing {
-    param([string]$TargetHost)
-    if (-not $TargetHost) { return "" }
-    try {
-        $sw = [System.Diagnostics.Stopwatch]::StartNew()
-        $req = [System.Net.HttpWebRequest]::Create("http://$TargetHost")
-        $req.Timeout = 1500
-        $req.Method = "GET"
-        $req.AllowAutoRedirect = $false
-        try { $resp = $req.GetResponse(); $resp.Close() } catch {}
-        $sw.Stop()
-        $ms = [int]$sw.ElapsedMilliseconds
-        return if ($ms -gt 0) { $ms.ToString() } else { "1" }
-    } catch {
-        return ""
+function Resolve-ProbeTarget {
+    param([string]$TargetHost, [int]$DefaultPort = 443)
+    $target = if ($TargetHost) { $TargetHost.Trim() } else { "" }
+    if (-not $target) { return @{ host = ""; port = $DefaultPort } }
+    if ($target.Contains(':')) {
+        if ($target -notmatch '^([^:]+):([0-9]{1,5})$') { return $null }
+        $port = [int]$Matches[2]
+        if ($port -ge 1 -and $port -le 65535) {
+            return @{ host = $Matches[1]; port = $port }
+        }
+        return $null
     }
+    return @{ host = $target; port = $DefaultPort }
 }
 
 function Get-TcpPing {
@@ -509,36 +729,22 @@ function Get-TcpPing {
 }
 
 
-function Get-Ping {
-    param([string]$TargetHost, [string]$PingType = "tcp")
-    $TargetHost = $TargetHost.Trim()
-    if (-not $TargetHost) { 
-        return "" 
+function Get-Probe {
+    param([string]$TargetHost, [int]$Count = 4)
+    if ([string]::IsNullOrWhiteSpace($TargetHost)) { return @{ rtt = $false; loss = $false } }
+    $target = Resolve-ProbeTarget -TargetHost $TargetHost -DefaultPort 443
+    if (-not $target) { return @{ rtt = "null"; loss = "100" } }
+    $TargetHost = $target.host
+    $port = [int]$target.port
+    if (-not $TargetHost) { return @{ rtt = "null"; loss = "100" } }
+    $ok = 0; $totalRtt = 0
+    for ($i = 0; $i -lt $Count; $i++) {
+        $r = Get-TcpPing -TargetHost $TargetHost -Port $port
+        if ($r -match '^\d+$') { $ok++; $totalRtt += [int]$r }
     }
-    if ($PingType -eq "http") { 
-        $result = Get-HttpPing -TargetHost $TargetHost
-        return $result
-    }
-    $result = Get-TcpPing -TargetHost $TargetHost
-    return $result
-}
-
-function Get-PacketLoss {
-    param([string]$TargetHost, [int]$Count = 5) 
-    $TargetHost = $TargetHost.Trim()
-    if (-not $TargetHost) { return "" }
-    try {
-        $result = ping -n $Count -w 1000 $TargetHost 2>$null
-        $lossLine = $result | Select-String "(?:Lost|丢失)\s*=\s*(\d+)"
-        if ($lossLine) {
-            $lost = [int]$lossLine.Matches[0].Groups[1].Value
-            $pct = [math]::Round(($lost / $Count) * 100)
-            return $pct.ToString()
-        }
-    } catch {
-        Write-Log "Get-PacketLoss: $TargetHost 异常: $_" "DEBUG"
-    }
-    return ""
+    $rtt = if ($ok -gt 0) { [math]::Floor($totalRtt / $ok).ToString() } else { "null" }
+    $loss = [math]::Floor(($Count - $ok) / $Count * 100).ToString()
+    return @{ rtt = $rtt; loss = $loss }
 }
 
 # ============================================================
@@ -551,63 +757,74 @@ function Start-PingBackgroundJob {
         [string]$CuNode,
         [string]$CmNode,
         [string]$BdNode,
-        [string]$PingType,
         [string]$TempFile
     )
 
     $jobScript = {
-        param($ct, $cu, $cm, $bd, $pingType, $tempFile)
+        param($ct, $cu, $cm, $bd, $tempFile)
 
-        function Get-Ping {
-            param([string]$TargetHost, [string]$PingType)
-            $TargetHost = $TargetHost.Trim()
+        function Resolve-ProbeTarget {
+            param([string]$TargetHost, [int]$DefaultPort = 443)
+            $target = if ($TargetHost) { $TargetHost.Trim() } else { "" }
+            if (-not $target) { return @{ host = ""; port = $DefaultPort } }
+            if ($target.Contains(':')) {
+                if ($target -notmatch '^([^:]+):([0-9]{1,5})$') { return $null }
+                $port = [int]$Matches[2]
+                if ($port -ge 1 -and $port -le 65535) {
+                    return @{ host = $Matches[1]; port = $port }
+                }
+                return $null
+            }
+            return @{ host = $target; port = $DefaultPort }
+        }
+
+        function Get-TcpPing {
+            param([string]$TargetHost, [int]$Port = 443)
             if (-not $TargetHost) { return "" }
             try {
-                if ($PingType -eq "http") {
-                    $request = [System.Net.WebRequest]::Create("http://${TargetHost}/")
-                    $request.Timeout = 3000
-                    $request.Method = "HEAD"
-                    $start = [DateTime]::Now
-                    $response = $request.GetResponse()
-                    $response.Close()
-                    $duration = [math]::Round(([DateTime]::Now - $start).TotalMilliseconds)
-                    return $duration.ToString()
-                } else {
-                    $tcp = New-Object System.Net.Sockets.TCPClient
-                    $tcp.SendTimeout = 3000
-                    $tcp.ReceiveTimeout = 3000
-                    $start = [DateTime]::Now
-                    $tcp.Connect($TargetHost, 443)
-                    $duration = [math]::Round(([DateTime]::Now - $start).TotalMilliseconds)
+                $sw = [System.Diagnostics.Stopwatch]::StartNew()
+                $tcp = New-Object System.Net.Sockets.TcpClient
+                $task = $tcp.ConnectAsync($TargetHost, $Port)
+                if ($task.Wait(5000)) {
+                    $sw.Stop()
                     $tcp.Close()
-                    return $duration.ToString()
+                    $ms = [int]$sw.ElapsedMilliseconds
+                    if ($ms -gt 0) { return $ms.ToString() } else { return "1" }
+                } else {
+                    $tcp.Close()
+                    return ""
                 }
-            } catch {
-                return ""
-            }
+            } catch { return "" }
         }
 
-        function Get-PacketLoss {
-            param([string]$TargetHost, [string]$PingType, [int]$Count = 4)
-            $TargetHost = $TargetHost.Trim()
-            if (-not $TargetHost) { return "" }
-            $ok = 0
+        function Get-Probe {
+            param([string]$TargetHost, [int]$Count = 4)
+            if ([string]::IsNullOrWhiteSpace($TargetHost)) { return @{ rtt = $false; loss = $false } }
+            $target = Resolve-ProbeTarget -TargetHost $TargetHost -DefaultPort 443
+            if (-not $target) { return @{ rtt = "null"; loss = "100" } }
+            $TargetHost = $target.host
+            $port = [int]$target.port
+            if (-not $TargetHost) { return @{ rtt = $false; loss = $false } }
+            $ok = 0; $totalRtt = 0
             for ($i = 0; $i -lt $Count; $i++) {
-                $r = Get-Ping -TargetHost $TargetHost -PingType $PingType
-                if ($r -match '^\d+$') { $ok++ }
+                $r = Get-TcpPing -TargetHost $TargetHost -Port $port
+                if ($r -match '^\d+$') { $ok++; $totalRtt += [int]$r }
             }
-            return [math]::Round(($Count - $ok) / $Count * 100).ToString()
+            $rtt = if ($ok -gt 0) { [math]::Floor($totalRtt / $ok).ToString() } else { "null" }
+            $loss = [math]::Floor(($Count - $ok) / $Count * 100).ToString()
+            return @{ rtt = $rtt; loss = $loss }
         }
+
+        $ctProbe = Get-Probe -TargetHost $ct
+        $cuProbe = Get-Probe -TargetHost $cu
+        $cmProbe = Get-Probe -TargetHost $cm
+        $bdProbe = Get-Probe -TargetHost $bd
 
         $result = @{
-            ct_ping = Get-Ping -TargetHost $ct -PingType $pingType
-            cu_ping = Get-Ping -TargetHost $cu -PingType $pingType
-            cm_ping = Get-Ping -TargetHost $cm -PingType $pingType
-            bd_ping = Get-Ping -TargetHost $bd -PingType $pingType
-            ct_loss = Get-PacketLoss -TargetHost $ct -PingType $pingType
-            cu_loss = Get-PacketLoss -TargetHost $cu -PingType $pingType
-            cm_loss = Get-PacketLoss -TargetHost $cm -PingType $pingType
-            bd_loss = Get-PacketLoss -TargetHost $bd -PingType $pingType
+            ct_ping = $ctProbe.rtt; ct_loss = $ctProbe.loss
+            cu_ping = $cuProbe.rtt; cu_loss = $cuProbe.loss
+            cm_ping = $cmProbe.rtt; cm_loss = $cmProbe.loss
+            bd_ping = $bdProbe.rtt; bd_loss = $bdProbe.loss
             timestamp = [DateTimeOffset]::Now.ToUnixTimeSeconds()
         }
 
@@ -615,8 +832,7 @@ function Start-PingBackgroundJob {
         [System.IO.File]::WriteAllText($tempFile, $json, [System.Text.Encoding]::UTF8)
     }
 
-    $jobArgs = @($CtNode, $CuNode, $CmNode, $BdNode, $PingType, $TempFile)
-    Start-Job -ScriptBlock $jobScript -ArgumentList $jobArgs -Name "CFProbePingJob" | Out-Null
+    Start-Job -ScriptBlock $jobScript -ArgumentList $CtNode, $CuNode, $CmNode, $BdNode, $TempFile -Name "CFProbePingJob" | Out-Null
 }
 
 function Read-PingResults {
@@ -692,7 +908,9 @@ function Save-TrafficData {
     foreach ($key in $Data.Keys) {
         $lines += "$key=$($Data[$key])"
     }
-    $lines -join "`n" | Set-Content $TRAFFIC_FILE -Encoding UTF8
+    $tmpFile = "$TRAFFIC_FILE.tmp"
+    $lines -join "`n" | Set-Content $tmpFile -Encoding UTF8
+    Move-Item -LiteralPath $tmpFile -Destination $TRAFFIC_FILE -Force -ErrorAction SilentlyContinue
 }
 
 function Apply-TrafficCorrection {
@@ -863,11 +1081,13 @@ function Invoke-TrayCollectLoop {
     $statusItem.Add_Click({
         $config = Load-Config
         $effectiveStatusReportInterval = [math]::Max([int]$config.report_interval, 60)
+        $statusAutoUpdate = ConvertTo-BinaryFlag -Value $config.auto_update -Default "0"
         $msg = "CF-Server-Monitor 状态`n"
         $msg += "Server ID: $($config.server_id)`n"
         $msg += "Worker URL: $($config.worker_url)`n"
         $msg += "上报间隔: $($config.report_interval)秒`n"
         $msg += "实际上报间隔: $effectiveStatusReportInterval秒`n"
+        $msg += "自动更新: $statusAutoUpdate`n"
         $msg += "日志文件: $LOG_FILE"
         [System.Windows.Forms.MessageBox]::Show($msg, "CF-Server-Monitor", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
     })
@@ -917,14 +1137,24 @@ function Start-TimerCollectLoop {
             Write-Host "请使用: .\cf-server-monitor.ps1 run -Id 'ID' -Secret '密钥' -Url '地址'" -ForegroundColor Yellow
             return
         }
+        try {
+            $newAutoUpdate = if ($AutoUpdate -ne "") {
+                ConvertTo-BinaryFlag -Value $AutoUpdate -Default "0" -Strict
+            } else {
+                "0"
+            }
+        } catch {
+            Write-Log "错误: $($_.Exception.Message)" "ERROR"
+            return
+        }
         $config = @{
             server_id = $Id
             secret = $Secret
             worker_url = $Url
             collect_interval = [int]$CollectInterval
             report_interval = [int]$ReportInterval
-            ping_type = $PingType
             reset_day = [int]$ResetDay
+            auto_update = $newAutoUpdate
             config_md5 = "none"
             ct_node = if ($CtNode) { $CtNode } else { $DEFAULT_CT }
             cu_node = if ($CuNode) { $CuNode } else { $DEFAULT_CU }
@@ -945,22 +1175,26 @@ function Start-TimerCollectLoop {
         $reportInterval = 60
     }
 
-    if ($config.ping_type) {
-        $pingType = $config.ping_type
-    } else {
-        $pingType = "tcp"
-    }
-
     if ($null -ne $config.reset_day) {
         $resetDay = [int]$config.reset_day
     } else {
         $resetDay = 1
     }
     $configMd5 = if ($config.config_md5) { $config.config_md5.ToString().Trim().ToLowerInvariant() } else { "none" }
-    $ctNode = if ($CtNode) { $CtNode } elseif ($config.ct_node) { $config.ct_node } else { $DEFAULT_CT }
-    $cuNode = if ($CuNode) { $CuNode } elseif ($config.cu_node) { $config.cu_node } else { $DEFAULT_CU }
-    $cmNode = if ($CmNode) { $CmNode } elseif ($config.cm_node) { $config.cm_node } else { $DEFAULT_CM }
-    $bdNode = if ($BdNode) { $BdNode } elseif ($config.bd_node) { $config.bd_node } else { $DEFAULT_BD }
+    $ctNode = if ($CtNode) { $CtNode } else { Get-ConfigProperty $config 'ct_node' $DEFAULT_CT }
+    $cuNode = if ($CuNode) { $CuNode } else { Get-ConfigProperty $config 'cu_node' $DEFAULT_CU }
+    $cmNode = if ($CmNode) { $CmNode } else { Get-ConfigProperty $config 'cm_node' $DEFAULT_CM }
+    $bdNode = if ($BdNode) { $BdNode } else { Get-ConfigProperty $config 'bd_node' $DEFAULT_BD }
+    try {
+        $autoUpdate = if ($AutoUpdate -ne "") {
+            ConvertTo-BinaryFlag -Value $AutoUpdate -Default "0" -Strict
+        } else {
+            ConvertTo-BinaryFlag -Value $config.auto_update -Default "0"
+        }
+    } catch {
+        Write-Log "错误: $($_.Exception.Message)" "ERROR"
+        return
+    }
     $ctNode = $ctNode.Trim()
     $cuNode = $cuNode.Trim()
     $cmNode = $cmNode.Trim()
@@ -981,7 +1215,6 @@ function Start-TimerCollectLoop {
         return
     }
     if (@(30, 60, 120, 180) -notcontains $reportInterval) { $reportInterval = 60 }
-    if (@('http', 'tcp') -notcontains $pingType) { $pingType = 'tcp' }
     if ($resetDay -lt 0 -or $resetDay -gt 31) { $resetDay = 1 }
     $effectiveReportInterval = [math]::Max($reportInterval, 60)
 
@@ -993,19 +1226,23 @@ function Start-TimerCollectLoop {
     $script:cs_lastPingCheck = 0
     $script:cs_ipV4 = "0"
     $script:cs_ipV6 = "0"
-    $script:cs_pingCt = ""
-    $script:cs_pingCu = ""
-    $script:cs_pingCm = ""
-    $script:cs_pingBd = ""
-    $script:cs_lossCt = ""
-    $script:cs_lossCu = ""
-    $script:cs_lossCm = ""
-    $script:cs_lossBd = ""
+    $script:cs_pingCt = Get-ProbeInitialValue $ctNode
+    $script:cs_pingCu = Get-ProbeInitialValue $cuNode
+    $script:cs_pingCm = Get-ProbeInitialValue $cmNode
+    $script:cs_pingBd = Get-ProbeInitialValue $bdNode
+    $script:cs_lossCt = Get-ProbeInitialValue $ctNode
+    $script:cs_lossCu = Get-ProbeInitialValue $cuNode
+    $script:cs_lossCm = Get-ProbeInitialValue $cmNode
+    $script:cs_lossBd = Get-ProbeInitialValue $bdNode
     $script:cs_lastReportTime = 0
     $script:cs_reportInterval = $effectiveReportInterval
-    $script:cs_pingType = $pingType
     $script:cs_resetDay = $resetDay
     $script:cs_configMd5 = $configMd5
+    $script:cs_ctNode = $ctNode
+    $script:cs_cuNode = $cuNode
+    $script:cs_cmNode = $cmNode
+    $script:cs_bdNode = $bdNode
+    $script:cs_autoUpdate = $autoUpdate
 
     $pingTempFile = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "cf_probe_ping_results.json")
 
@@ -1016,7 +1253,7 @@ function Start-TimerCollectLoop {
         Start-Sleep -Milliseconds 300
     } catch {}
 
-    Write-Log "探针已启动。 ServerID=$serverId Url='$workerUrl' ReportInterval=${reportInterval}s EffectiveReportInterval=${effectiveReportInterval}s CollectInterval=ignored"
+    Write-Log "探针已启动。 ServerID=$serverId Url='$workerUrl' ReportInterval=${reportInterval}s EffectiveReportInterval=${effectiveReportInterval}s CollectInterval=ignored AutoUpdate=$autoUpdate"
 
     # ========================================
     # Timer 驱动采集：每次 Tick 执行一轮采集+上报
@@ -1029,11 +1266,10 @@ function Start-TimerCollectLoop {
             $srvId = $serverId
             $sec = $secret
             $wUrl = $workerUrl
-            $ctN = if ($config.ct_node) { $config.ct_node } else { $ctNode }
-            $cuN = if ($config.cu_node) { $config.cu_node } else { $cuNode }
-            $cmN = if ($config.cm_node) { $config.cm_node } else { $cmNode }
-            $bdN = if ($config.bd_node) { $config.bd_node } else { $bdNode }
-            $pType = $script:cs_pingType
+            $ctN = [string]$script:cs_ctNode
+            $cuN = [string]$script:cs_cuNode
+            $cmN = [string]$script:cs_cmNode
+            $bdN = [string]$script:cs_bdNode
             $rDay = $script:cs_resetDay
             $rInterval = $script:cs_reportInterval
             $pFile = $pingTempFile
@@ -1047,28 +1283,37 @@ function Start-TimerCollectLoop {
                 $script:cs_lastIpCheck = $now
             }
 
-            # Ping 检测（每 30 秒，异步执行）
-            if ($now - $script:cs_lastPingCheck -ge 30 -or $script:cs_lastPingCheck -eq 0) {
+            # Ping 跟随上报间隔并限制在 30-60 秒（同时计算延迟和丢包率）
+            $probeInterval = [int]$script:cs_reportInterval
+            if ($probeInterval -lt 30) { $probeInterval = 30 }
+            if ($probeInterval -gt 60) { $probeInterval = 60 }
+            if ($now - $script:cs_lastPingCheck -ge $probeInterval -or $script:cs_lastPingCheck -eq 0) {
                 $script:cs_lastPingCheck = $now
                 $existingJob = Get-Job -Name "CFProbePingJob" -ErrorAction SilentlyContinue
                 if (-not $existingJob -or $existingJob.State -in @("Completed", "Failed", "Stopped")) {
                     Remove-PingBackgroundJob
-                    Start-PingBackgroundJob -CtNode $ctN -CuNode $cuN -CmNode $cmN -BdNode $bdN -PingType $pType -TempFile $pFile
+                    Start-PingBackgroundJob -CtNode $ctN -CuNode $cuN -CmNode $cmN -BdNode $bdN -TempFile $pFile
                 }
             }
 
             # 读取异步 Ping 检测结果
             $pingResults = Read-PingResults -TempFile $pFile
             if ($pingResults) {
-                $script:cs_pingCt = if ($pingResults.ct_ping) { $pingResults.ct_ping } else { $script:cs_pingCt }
-                $script:cs_pingCu = if ($pingResults.cu_ping) { $pingResults.cu_ping } else { $script:cs_pingCu }
-                $script:cs_pingCm = if ($pingResults.cm_ping) { $pingResults.cm_ping } else { $script:cs_pingCm }
-                $script:cs_pingBd = if ($pingResults.bd_ping) { $pingResults.bd_ping } else { $script:cs_pingBd }
-                $script:cs_lossCt = if ($pingResults.ct_loss) { $pingResults.ct_loss } else { $script:cs_lossCt }
-                $script:cs_lossCu = if ($pingResults.cu_loss) { $pingResults.cu_loss } else { $script:cs_lossCu }
-                $script:cs_lossCm = if ($pingResults.cm_loss) { $pingResults.cm_loss } else { $script:cs_lossCm }
-                $script:cs_lossBd = if ($pingResults.bd_loss) { $pingResults.bd_loss } else { $script:cs_lossBd }
+                $props = $pingResults.PSObject.Properties
+                if ($props['ct_ping']) { $script:cs_pingCt = $pingResults.ct_ping }
+                if ($props['cu_ping']) { $script:cs_pingCu = $pingResults.cu_ping }
+                if ($props['cm_ping']) { $script:cs_pingCm = $pingResults.cm_ping }
+                if ($props['bd_ping']) { $script:cs_pingBd = $pingResults.bd_ping }
+                if ($props['ct_loss']) { $script:cs_lossCt = $pingResults.ct_loss }
+                if ($props['cu_loss']) { $script:cs_lossCu = $pingResults.cu_loss }
+                if ($props['cm_loss']) { $script:cs_lossCm = $pingResults.cm_loss }
+                if ($props['bd_loss']) { $script:cs_lossBd = $pingResults.bd_loss }
             }
+
+            if ([string]::IsNullOrWhiteSpace($ctN)) { $script:cs_pingCt = $false; $script:cs_lossCt = $false }
+            if ([string]::IsNullOrWhiteSpace($cuN)) { $script:cs_pingCu = $false; $script:cs_lossCu = $false }
+            if ([string]::IsNullOrWhiteSpace($cmN)) { $script:cs_pingCm = $false; $script:cs_lossCm = $false }
+            if ([string]::IsNullOrWhiteSpace($bdN)) { $script:cs_pingBd = $false; $script:cs_lossBd = $false }
 
             # 采集各项指标
             $cpuPercent = Get-CpuUsage
@@ -1149,45 +1394,89 @@ function Start-TimerCollectLoop {
                 $json = $payload | ConvertTo-Json -Depth 10 -Compress
                 try {
                     $requestHeaders = @{
-                        'X-Agent-Config-Schema' = '1'
+                        'X-Agent-Config-Schema' = '2'
+                        'X-Agent-Version' = $AGENT_VERSION
                         'X-Agent-Config-Md5' = if ($script:cs_configMd5) { $script:cs_configMd5 } else { 'none' }
                     }
                     $response = Invoke-WebRequest -UseBasicParsing -Uri $wUrl -Method Post -Body $json `
                         -ContentType "application/json; charset=utf-8" -Headers $requestHeaders -TimeoutSec 8 -ErrorAction Stop
-                    if ([int]$response.StatusCode -eq 200 -and $response.Headers['X-Agent-Config-Md5']) {
+                    if ([int]$response.StatusCode -eq 200) {
                         # Windows PowerShell 5.1 returns byte[] for some textual content types.
                         $responseBody = if ($response.Content -is [byte[]]) {
                             [Text.Encoding]::UTF8.GetString([byte[]]$response.Content)
                         } else {
                             [string]$response.Content
                         }
-                        $remoteConfig = ConvertFrom-AgentConfigResponse `
-                            -Body $responseBody `
-                            -ConfigMd5 ([string]$response.Headers['X-Agent-Config-Md5'])
-                        foreach ($entry in $remoteConfig.GetEnumerator()) {
-                            if ($config -is [hashtable]) {
-                                $config[$entry.Key] = $entry.Value
-                            } else {
-                                $config | Add-Member -NotePropertyName $entry.Key -NotePropertyValue $entry.Value -Force
-                            }
-                        }
-                        if (Save-Config -Config $config) {
-                            $effectiveRemoteReportInterval = [math]::Max($remoteConfig.report_interval, 60)
-                            $script:cs_reportInterval = $effectiveRemoteReportInterval
-                            $script:cs_pingType = $remoteConfig.ping_type
-                            $script:cs_resetDay = $remoteConfig.reset_day
-                            $script:cs_configMd5 = $remoteConfig.config_md5
-                            if ($remoteConfig.ContainsKey('ct_node')) { $script:cs_ctNode = $remoteConfig.ct_node }
-                            if ($remoteConfig.ContainsKey('cu_node')) { $script:cs_cuNode = $remoteConfig.cu_node }
-                            if ($remoteConfig.ContainsKey('cm_node')) { $script:cs_cmNode = $remoteConfig.cm_node }
-                            if ($remoteConfig.ContainsKey('bd_node')) { $script:cs_bdNode = $remoteConfig.bd_node }
-                            $timer.Interval = $effectiveRemoteReportInterval * 1000
-                            Write-Log "动态配置已应用: md5=$($remoteConfig.config_md5) report_interval=$($remoteConfig.report_interval)s ct=$($remoteConfig.ct_node) cu=$($remoteConfig.cu_node) cm=$($remoteConfig.cm_node) bd=$($remoteConfig.bd_node)" "INFO"
+                        $responseBody = if ($null -eq $responseBody) { "" } else { $responseBody.Trim() }
+                        if (-not [string]::IsNullOrWhiteSpace($responseBody) -and $responseBody -ne "OK") {
+                            $remoteConfig = ConvertFrom-AgentConfigResponse `
+                                -Body $responseBody `
+                                -ConfigMd5 ([string]$response.Headers['X-Agent-Config-Md5'])
 
-                            if ($remoteConfig.ContainsKey('rx_correction') -or $remoteConfig.ContainsKey('tx_correction')) {
+                            $hasRemoteConfig = (-not $remoteConfig.ContainsKey('has_config')) -or [bool]$remoteConfig['has_config']
+                            $configApplied = $true
+                            if ($hasRemoteConfig) {
+                                $configChanged = $remoteConfig.config_md5 -ne $script:cs_configMd5
+                                if ($configChanged) {
+                                    foreach ($entry in $remoteConfig.GetEnumerator()) {
+                                        if (@('has_config', 'update', 'rx_correction', 'tx_correction') -contains $entry.Key) {
+                                            continue
+                                        }
+                                        if ($config -is [hashtable]) {
+                                            $config[$entry.Key] = $entry.Value
+                                        } else {
+                                            $config | Add-Member -NotePropertyName $entry.Key -NotePropertyValue $entry.Value -Force
+                                        }
+                                    }
+                                    $configApplied = Save-Config -Config $config
+                                    if ($configApplied) {
+                                        $effectiveRemoteReportInterval = [math]::Max($remoteConfig.report_interval, 60)
+                                        $script:cs_reportInterval = $effectiveRemoteReportInterval
+                                        $script:cs_resetDay = $remoteConfig.reset_day
+                                        $script:cs_configMd5 = $remoteConfig.config_md5
+                                        if ($remoteConfig.ContainsKey('ct_node')) { $script:cs_ctNode = $remoteConfig.ct_node }
+                                        if ($remoteConfig.ContainsKey('cu_node')) { $script:cs_cuNode = $remoteConfig.cu_node }
+                                        if ($remoteConfig.ContainsKey('cm_node')) { $script:cs_cmNode = $remoteConfig.cm_node }
+                                        if ($remoteConfig.ContainsKey('bd_node')) { $script:cs_bdNode = $remoteConfig.bd_node }
+                                        $timer.Stop()
+                                        $timer.Interval = $effectiveRemoteReportInterval * 1000
+                                        $timer.Start()
+                                        Write-Log "动态配置已应用: md5=$($remoteConfig.config_md5) report_interval=$($remoteConfig.report_interval)s ct=$($remoteConfig.ct_node) cu=$($remoteConfig.cu_node) cm=$($remoteConfig.cm_node) bd=$($remoteConfig.bd_node)" "INFO"
+
+                                        $script:cs_lastPingCheck = 0
+                                        $script:cs_pingCt = Get-ProbeInitialValue $script:cs_ctNode
+                                        $script:cs_pingCu = Get-ProbeInitialValue $script:cs_cuNode
+                                        $script:cs_pingCm = Get-ProbeInitialValue $script:cs_cmNode
+                                        $script:cs_pingBd = Get-ProbeInitialValue $script:cs_bdNode
+                                        $script:cs_lossCt = Get-ProbeInitialValue $script:cs_ctNode
+                                        $script:cs_lossCu = Get-ProbeInitialValue $script:cs_cuNode
+                                        $script:cs_lossCm = Get-ProbeInitialValue $script:cs_cmNode
+                                        $script:cs_lossBd = Get-ProbeInitialValue $script:cs_bdNode
+                                        Remove-Item -LiteralPath $pingTempFile -Force -ErrorAction SilentlyContinue
+
+                                        $existingPingJob = Get-Job -Name "CFProbePingJob" -ErrorAction SilentlyContinue
+                                        if ($existingPingJob) {
+                                            $existingPingJob | Stop-Job -ErrorAction SilentlyContinue | Out-Null
+                                            $existingPingJob | Remove-Job -Force -ErrorAction SilentlyContinue | Out-Null
+                                        }
+                                        $newCtNode = if ($remoteConfig.ContainsKey('ct_node')) { $remoteConfig.ct_node } else { $config.ct_node }
+                                        $newCuNode = if ($remoteConfig.ContainsKey('cu_node')) { $remoteConfig.cu_node } else { $config.cu_node }
+                                        $newCmNode = if ($remoteConfig.ContainsKey('cm_node')) { $remoteConfig.cm_node } else { $config.cm_node }
+                                        $newBdNode = if ($remoteConfig.ContainsKey('bd_node')) { $remoteConfig.bd_node } else { $config.bd_node }
+                                        Start-PingBackgroundJob -CtNode $newCtNode -CuNode $newCuNode -CmNode $newCmNode -BdNode $newBdNode -TempFile $pingTempFile
+                                    }
+                                }
+                            }
+
+                            if ($hasRemoteConfig -and $configApplied -and ($remoteConfig.ContainsKey('rx_correction') -or $remoteConfig.ContainsKey('tx_correction'))) {
                                 $rxCorr = if ($remoteConfig.ContainsKey('rx_correction')) { $remoteConfig.rx_correction } else { "" }
                                 $txCorr = if ($remoteConfig.ContainsKey('tx_correction')) { $remoteConfig.tx_correction } else { "" }
                                 Invoke-TrafficCorrection -ServerId $srvId -Secret $sec -WorkerUrl $wUrl -RxCorrection $rxCorr -TxCorrection $txCorr
+                            }
+
+                            if ($remoteConfig.ContainsKey('update') -and $remoteConfig.update -eq "1") {
+                                Write-Log "收到自动更新指令" "DEBUG"
+                                Schedule-AgentUpdate -WorkerUrl $wUrl -AutoUpdate $script:cs_autoUpdate
                             }
                         }
                     }
@@ -1220,10 +1509,20 @@ function Install-Service {
     Write-Host "  Id: '$Id'" -ForegroundColor Cyan
     Write-Host "  Secret: '********'" -ForegroundColor Cyan
     Write-Host "  Url: '$Url'" -ForegroundColor Cyan
+    Write-Host "  AutoUpdate: '$AutoUpdate'" -ForegroundColor Cyan
     Write-Host "  脚本目录: $SCRIPT_DIR" -ForegroundColor Cyan
     Write-Host "  配置文件: $CONFIG_FILE" -ForegroundColor Cyan
     Write-Host "=============================================" -ForegroundColor Cyan
     Write-Host ""
+
+    if ($AutoUpdate -ne "") {
+        try {
+            $null = ConvertTo-BinaryFlag -Value $AutoUpdate -Default "0" -Strict
+        } catch {
+            Write-Host "错误: $($_.Exception.Message)" -ForegroundColor Red
+            return
+        }
+    }
     
     if (-not (Test-Admin)) {
         Write-Host "需要管理员权限，正在提升..." -ForegroundColor Yellow
@@ -1237,6 +1536,21 @@ function Install-Service {
     $cleanId = if ($Id) { $Id.Trim().Trim("'").Trim('"') } else { "" }
     $cleanSecret = if ($Secret) { $Secret.Trim().Trim("'").Trim('"') } else { "" }
     $cleanUrl = if ($Url) { $Url.Trim().Trim("'").Trim('"') } else { "" }
+    try {
+        $existingAutoUpdate = if ($existingConfig -and $null -ne $existingConfig.auto_update) {
+            ConvertTo-BinaryFlag -Value $existingConfig.auto_update -Default "0"
+        } else {
+            "0"
+        }
+        $autoUpdateValue = if ($AutoUpdate -ne "") {
+            ConvertTo-BinaryFlag -Value $AutoUpdate -Default $existingAutoUpdate -Strict
+        } else {
+            $existingAutoUpdate
+        }
+    } catch {
+        Write-Host "错误: $($_.Exception.Message)" -ForegroundColor Red
+        return
+    }
 
     $config = @{
         server_id = if ($cleanId) { $cleanId } elseif ($existingConfig) { $existingConfig.server_id } else { "" }
@@ -1244,13 +1558,13 @@ function Install-Service {
         worker_url = if ($cleanUrl) { $cleanUrl } elseif ($existingConfig) { $existingConfig.worker_url } else { "" }
         collect_interval = [int]$CollectInterval
         report_interval = [int]$ReportInterval
-        ping_type = $PingType
         reset_day = [int]$ResetDay
+        auto_update = $autoUpdateValue
         config_md5 = "none"
-        ct_node = if ($CtNode) { $CtNode } elseif ($existingConfig -and $existingConfig.ct_node) { $existingConfig.ct_node } else { $DEFAULT_CT }
-        cu_node = if ($CuNode) { $CuNode } elseif ($existingConfig -and $existingConfig.cu_node) { $existingConfig.cu_node } else { $DEFAULT_CU }
-        cm_node = if ($CmNode) { $CmNode } elseif ($existingConfig -and $existingConfig.cm_node) { $existingConfig.cm_node } else { $DEFAULT_CM }
-        bd_node = if ($BdNode) { $BdNode } elseif ($existingConfig -and $existingConfig.bd_node) { $existingConfig.bd_node } else { $DEFAULT_BD }
+        ct_node = if ($CtNode) { $CtNode } else { Get-ConfigProperty $existingConfig 'ct_node' $DEFAULT_CT }
+        cu_node = if ($CuNode) { $CuNode } else { Get-ConfigProperty $existingConfig 'cu_node' $DEFAULT_CU }
+        cm_node = if ($CmNode) { $CmNode } else { Get-ConfigProperty $existingConfig 'cm_node' $DEFAULT_CM }
+        bd_node = if ($BdNode) { $BdNode } else { Get-ConfigProperty $existingConfig 'bd_node' $DEFAULT_BD }
     }
 
     if (-not $config.server_id -or -not $config.secret -or -not $config.worker_url) {
@@ -1276,7 +1590,6 @@ function Install-Service {
     } else {
         Write-Host "配置保存失败！" -ForegroundColor Red
         Write-Host "请检查是否有写入权限: $CONFIG_DIR" -ForegroundColor Yellow
-        Read-Host "按 Enter 退出"
         return
     }
 
@@ -1327,15 +1640,15 @@ function Install-Service {
 
     Write-Host ""
     Write-Host "=============================================" -ForegroundColor Green
-    Write-Host "       CF-Server-Monitor 安装成功" -ForegroundColor Green
+    Write-Host "       CF-Server-Monitor $AGENT_VERSION 安装成功" -ForegroundColor Green
     Write-Host "=============================================" -ForegroundColor Green
     Write-Host "  Server ID  : $($config.server_id)"
     Write-Host "  Worker URL : $($config.worker_url)"
     Write-Host "  上报间隔   : $($config.report_interval)秒"
     Write-Host "  实际间隔   : $effectiveInstallReportInterval秒"
     Write-Host "  采样间隔   : Windows PowerShell 版不启用 samples 缓存"
-    Write-Host "  探测类型   : $($config.ping_type)"
     Write-Host "  流量重置日 : $($config.reset_day)号"
+    Write-Host "  自动更新   : $($config.auto_update)"
     Write-Host "  配置文件   : $CONFIG_FILE"
     Write-Host "  日志文件   : $LOG_FILE"
     Write-Host "  自动启动   : 已注册计划任务 $TASK_NAME"
@@ -1389,14 +1702,6 @@ function Install-Service {
     }
 
     Write-Host "查看日志: $LOG_FILE" -ForegroundColor Green
-    Write-Host "按 Enter 查看实时日志，或关闭窗口退出..." -ForegroundColor Yellow
-    Read-Host
-    # 显示实时日志
-    if (Test-Path $LOG_FILE) {
-        Get-Content -Path $LOG_FILE -Wait
-    } else {
-        Write-Host "日志文件尚未生成，请稍后检查" -ForegroundColor Yellow
-    }
 }
 
 function Uninstall-Service {
@@ -1427,10 +1732,6 @@ function Uninstall-Service {
     if (Test-Path $CONFIG_FILE) { Remove-Item $CONFIG_FILE -Force }
     if (Test-Path $TRAFFIC_FILE) { Remove-Item $TRAFFIC_FILE -Force }
     if (Test-Path $LOG_FILE) { Remove-Item $LOG_FILE -Force }
-    for ($i = 1; $i -le $LOG_BACKUP_COUNT; $i++) {
-        $backup = Join-Path $CONFIG_DIR "cf_probe.log.$i"
-        if (Test-Path $backup) { Remove-Item $backup -Force }
-    }
 
     Write-Host "卸载完成。" -ForegroundColor Green
 }
@@ -1463,11 +1764,13 @@ function Get-ServiceStatus {
     $config = Load-Config
     if ($config) {
         $effectiveStatusReportInterval = [math]::Max([int]$config.report_interval, 60)
+        $statusAutoUpdate = ConvertTo-BinaryFlag -Value $config.auto_update -Default "0"
         Write-Host "配置文件: $CONFIG_FILE" -ForegroundColor Cyan
         Write-Host "  Server ID  : $($config.server_id)"
         Write-Host "  Worker URL : $($config.worker_url)"
         Write-Host "  上报间隔   : $($config.report_interval)秒"
         Write-Host "  实际间隔   : $effectiveStatusReportInterval秒"
+        Write-Host "  自动更新   : $statusAutoUpdate"
     }
 }
 
@@ -1513,5 +1816,4 @@ try {
     Write-Host "错误详情: $($_.Exception.Message)" -ForegroundColor Red
     Write-Host "错误行: $($_.InvocationInfo.ScriptLineNumber)" -ForegroundColor Red
     Write-Host "=============================================" -ForegroundColor Red
-    Read-Host "按 Enter 退出"
 }

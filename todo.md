@@ -1,5 +1,6 @@
 待办事项：
-- [ ] 服务器单独设置离线告警开关
+- [ ] Workers版本更新提示，Agent版本显示
+- [x] 服务器单独设置离线告警开关
 - [x] 合并getAllServers函数
 - [x] 上报后，插入新的history_partition_id字段
 - [x] 保证metrics_history表是优化状态

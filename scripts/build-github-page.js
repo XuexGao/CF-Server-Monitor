@@ -3,10 +3,10 @@ import { execSync } from 'child_process';
 import fs from 'fs-extra';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { parseCspOrigins, buildApiDomainsWithWs, rebuildCsp, buildBackgroundStyle, injectTitle, injectApiBase } from '../src/utils/csp.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, '..');
-const publicDir = path.join(rootDir, 'public');
 const distDir = path.join(rootDir, 'dist');
 
 // Load .env file
@@ -29,20 +29,19 @@ if (fs.existsSync(envPath)) {
   }
 }
 
-console.log('Generating config.json from environment variables...');
-fs.ensureDirSync(publicDir);
-const apiBase = process.env.API_BASE
-  ? process.env.API_BASE.split(',').map(s => s.trim()).filter(Boolean)
-  : [];
+const apiBase = parseCspOrigins(process.env.API_BASE || '');
 const title = process.env.TITLE || '';
 const backgroundImage = process.env.BACKGROUND_IMAGE || '';
-const config = { apiBase, title, backgroundImage };
-fs.writeFileSync(
-  path.join(publicDir, 'config.json'),
-  JSON.stringify(config, null, 2),
-  'utf8'
-);
-console.log('Generated config.json:', JSON.stringify(config));
+
+// CSP 配置: API_BASE + CSP_API → connect-src（含 wss），CSP_STATIC → script/style/img/font-src
+const rawApiDomains = [
+  ...parseCspOrigins(process.env.API_BASE || ''),
+  ...parseCspOrigins(process.env.CSP_API || '')
+];
+const cspApiDomains = buildApiDomainsWithWs(rawApiDomains);
+const cspStaticDomains = parseCspOrigins(process.env.CSP_STATIC || '');
+
+console.log('Config from env:', { apiBase, title, backgroundImage, cspApiDomains, cspStaticDomains });
 
 console.log('Cleaning dist directory...');
 if (fs.existsSync(distDir)) {
@@ -52,26 +51,31 @@ if (fs.existsSync(distDir)) {
 console.log('Building theme frontend...');
 execSync('npx vite build', { cwd: rootDir, stdio: 'inherit', env: { ...process.env, VITE_BASE: './' } });
 
-console.log('Cleaning unwanted public files from dist...');
-if (fs.existsSync(distDir)) {
-  const keepFiles = new Set(['favicon.ico', 'config.json', 'index.html']);
-  for (const item of fs.readdirSync(distDir)) {
-    if (item === 'assets') continue;
-    if (keepFiles.has(item)) continue;
-    const fullPath = path.join(distDir, item);
-    fs.removeSync(fullPath);
-    console.log(`  removed: ${item}`);
-  }
-}
+// 构建时注入配置到 HTML
+const htmlFiles = fs.readdirSync(distDir).filter(f => f.endsWith('.html'));
+for (const file of htmlFiles) {
+  const filePath = path.join(distDir, file);
+  let html = fs.readFileSync(filePath, 'utf8');
 
-console.log('Replacing timestamp in index.html...');
-const indexHtmlPath = path.join(distDir, 'index.html');
-if (fs.existsSync(indexHtmlPath)) {
-  const timestamp = Date.now();
-  let html = fs.readFileSync(indexHtmlPath, 'utf8');
-  html = html.replace(/(\?t=)\d+/g, `$1${timestamp}`);
-  fs.writeFileSync(indexHtmlPath, html, 'utf8');
-  console.log(`Updated timestamp to ${timestamp}`);
+  // 1. 注入 title
+  html = injectTitle(html, title)
+
+  // 2. 注入运行时 meta 标签
+  html = injectApiBase(html, apiBase)
+
+  // 3. 注入 CSP meta 标签
+  if (cspStaticDomains.length > 0 || cspApiDomains.length > 0) {
+    html = rebuildCsp(html, { staticDomains: cspStaticDomains, apiDomains: cspApiDomains });
+  }
+
+  // 4. 注入背景图样式
+  if (backgroundImage) {
+    const bgStyle = buildBackgroundStyle(backgroundImage)
+    html = html.replace('</head>', `${bgStyle}\n</head>`);
+  }
+
+  fs.writeFileSync(filePath, html, 'utf8');
+  console.log(`Injected config into ${file}`);
 }
 
 console.log('Build complete!');

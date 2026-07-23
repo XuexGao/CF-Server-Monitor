@@ -1,4 +1,11 @@
 import { debug, getSettingByKey } from '../utils/settings.js';
+import {
+  detectBillingCycle,
+  detectCurrencySymbol,
+  normalizeBillingCycle,
+  normalizeCurrency,
+  normalizePrice
+} from '../utils/serverBilling.js';
 
 
 export async function updateDatabase(db) {
@@ -111,15 +118,21 @@ export async function addServerColumns(db) {
   try {
     const { results: columns } = await db.prepare(`PRAGMA table_info(servers)`).all();
     const existingCols = columns.map(c => c.name);
+    const shouldMigrateLegacyPrice = !existingCols.includes('billing_cycle');
     
     const newCols = {
       is_hidden: "TEXT DEFAULT '0'",
       offline_notify_disabled: "TEXT DEFAULT '0'",
       sort_order: "INTEGER DEFAULT 0",
+      tags: "TEXT DEFAULT ''",
+      note: "TEXT DEFAULT ''",
+      billing_cycle: "TEXT DEFAULT 'month'",
+      auto_renewal: "TEXT DEFAULT '0'",
+      currency: "TEXT DEFAULT '¥'",
       reset_day: "INTEGER DEFAULT 1",
       collect_interval: "INTEGER DEFAULT 0",
       report_interval: "INTEGER DEFAULT 60",
-      ping_mode: "TEXT DEFAULT 'http'",
+      auto_update: "TEXT DEFAULT '0'",
       custom_ct: "TEXT DEFAULT ''",
       custom_cu: "TEXT DEFAULT ''",
       custom_cm: "TEXT DEFAULT ''",
@@ -138,8 +151,26 @@ export async function addServerColumns(db) {
         added++;
       }
     }
+
+    let migratedPrices = 0;
+    if (shouldMigrateLegacyPrice) {
+      const { results: servers = [] } = await db.prepare(
+        `SELECT id, price FROM servers`
+      ).all();
+
+      for (const server of servers) {
+        const normalizedPrice = normalizePrice(server.price);
+        const billingCycle = normalizeBillingCycle(detectBillingCycle(server.price));
+        const currency = normalizeCurrency(detectCurrencySymbol(server.price) || '¥');
+
+        await db.prepare(
+          `UPDATE servers SET price = ?, billing_cycle = ?, currency = ? WHERE id = ?`
+        ).bind(normalizedPrice, billingCycle, currency, server.id).run();
+        migratedPrices++;
+      }
+    }
     
-    return { success: true, added };
+    return { success: true, added, migratedPrices };
   } catch (e) {
     debug('添加 servers 表列失败:', e);
     return { success: false, error: e.message };
@@ -151,7 +182,7 @@ async function cleanupServerExtraColumns(db) {
     const { results: columns } = await db.prepare(`PRAGMA table_info(servers)`).all();
     const existingCols = columns.map(c => c.name);
     
-    const extraCols = ['cpu', 'ram', 'disk', 'load_avg', 'uptime', 'last_updated', 'ram_total', 'net_rx', 'net_tx', 'net_in_speed', 'net_out_speed', 'os', 'cpu_info', 'cpu_cores' , 'arch' ,'boot_time', 'ram_used', 'swap_total', 'swap_used', 'disk_total', 'disk_used', 'processes', 'tcp_conn', 'udp_conn', 'country', 'ip_v4', 'ip_v6', 'ping_ct', 'ping_cu', 'ping_cm', 'ping_bd', 'monthly_rx', 'monthly_tx', 'last_rx', 'last_tx', 'reset_month'];
+    const extraCols = ['cpu', 'ram', 'disk', 'load_avg', 'uptime', 'last_updated', 'ram_total', 'net_rx', 'net_tx', 'net_in_speed', 'net_out_speed', 'os', 'cpu_info', 'cpu_cores' , 'arch' ,'boot_time', 'ram_used', 'swap_total', 'swap_used', 'disk_total', 'disk_used', 'processes', 'tcp_conn', 'udp_conn', 'country', 'ip_v4', 'ip_v6', 'ping_ct', 'ping_cu', 'ping_cm', 'ping_bd', 'monthly_rx', 'monthly_tx', 'last_rx', 'last_tx', 'reset_month', 'bandwidth', 'ping_mode'];
     const colsToDrop = extraCols.filter(col => existingCols.includes(col));
     
     if (colsToDrop.length === 0) {
@@ -178,6 +209,7 @@ export async function addHistoryColumns(db) {
     const newHistoryCols = {
       cpu_cores: "INTEGER DEFAULT 0",
       cpu_info: "TEXT DEFAULT ''",
+      agent_version: "TEXT DEFAULT ''",
       gpu: "REAL DEFAULT NULL",
       gpu_info: "TEXT DEFAULT ''",
       arch: "TEXT DEFAULT ''",
@@ -250,7 +282,6 @@ export async function cleanupStaleSettings(db) {
       'is_public',
       'show_price',
       'show_expire',
-      'show_bw',
       'show_tf',
       'show_time',
       'show_long_history',

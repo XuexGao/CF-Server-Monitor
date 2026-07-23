@@ -25,6 +25,7 @@ pnpm-lock.yaml
 *~
 .trae/
 .mimocode/
+.vscode/
 
 # 日志
 *.log

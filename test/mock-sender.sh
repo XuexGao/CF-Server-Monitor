@@ -1,8 +1,11 @@
 #!/bin/bash
 # macOS模拟数据发送脚本
 # 用于测试 CF-Server-Monitor 工作原理
-# bash test/mock-sender.sh 550e8400-e29b-41d4-a716-446655440001 123456 http://localhost:8787/update 10
-# curl -X POST http://localhost:8787/update -H "Content-Type: application/json" -d '{"id":"550e8400-e29b-41d4-a716-446655440001","secret":"123456","metrics":{"cpu":"45.5","ram":"60.2","disk":"35.8"}}'
+# bash test/mock-sender.sh 550e8400-e29b-41d4-a716-446655440001 123456 http://localhost:8787/update 10 1.3.0
+# curl -k -i -X POST 'https://localhost:8787/update' \
+#   -H 'Content-Type: application/json' \
+#   -H 'X-Agent-Version: 1.2.0' \
+#   -d '{"id":"550e8400-e29b-41d4-a716-446655440001","secret":"123456","metrics":{"cpu":"45.5","ram":"60.2","disk":"35.8"}}'
 
 set -euo pipefail
 
@@ -21,6 +24,7 @@ SERVER_ID="${1:-550e8400-e29b-41d4-a716-446655440001}"
 SECRET="${2:-123456}"
 WORKER_URL="${3:-https://localhost:8787/update}"
 REPORT_INTERVAL="${4:-10}"
+AGENT_VERSION="${5:-1.3.0}"
 
 generate_random() {
     awk -v min="$1" -v max="$2" 'BEGIN{srand(); printf "%.2f", min + rand() * (max - min)}'
@@ -46,6 +50,7 @@ echo ""
 info "服务器ID: $SERVER_ID"
 info "上报地址: $WORKER_URL"
 info "上报间隔: ${REPORT_INTERVAL}秒"
+info "Agent版本: ${AGENT_VERSION}"
 echo ""
 
 RX_PREV=$(generate_int 0 100000000)
@@ -122,7 +127,7 @@ while true; do
 EOF
 )
     
-    RESPONSE=$(curl -s -k -o /dev/null -w "%{http_code}" -X POST -H "Content-Type: application/json" -d "$PAYLOAD" -m 5 --connect-timeout 2 "$WORKER_URL" 2>/dev/null || echo "000")
+    RESPONSE=$(curl -s -k -o /dev/null -w "%{http_code}" -X POST -H "Content-Type: application/json" -H "X-Agent-Version: ${AGENT_VERSION}" -d "$PAYLOAD" -m 5 --connect-timeout 2 "$WORKER_URL" 2>/dev/null || echo "000")
     
     if [ "$RESPONSE" = "200" ] || [ "$RESPONSE" = "201" ]; then
         info "[$(date '+%Y-%m-%d %H:%M:%S')] 数据上报成功 - CPU: ${CPU}% | GPU: ${GPU}% | Loss CT: ${LOSS_CT}% | RAM: ${RAM}% | Disk: ${DISK}%"

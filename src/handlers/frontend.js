@@ -1,4 +1,5 @@
 import { loadAppearanceOptions, DEFAULT_SITE_TITLE } from '../utils/settings.js';
+import { parseCspOrigins, buildApiDomainsWithWs, rebuildCsp, buildBackgroundStyle } from '../utils/csp.js';
 
 let filesCache = null;
 
@@ -40,10 +41,6 @@ function escapeHtml(str) {
   return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
-function escapeCssString(str) {
-  return String(str).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '\\"');
-}
-
 function injectAppearanceSettings(html, settings) {
   let modifiedHtml = html;
 
@@ -51,20 +48,32 @@ function injectAppearanceSettings(html, settings) {
   const siteTitle = escapeHtml(settings.site_title || DEFAULT_SITE_TITLE);
   modifiedHtml = modifiedHtml.replace(/<title>.*<\/title>/, `<title>${siteTitle}</title>`);
 
-  // 2. 注入 custom_head (在 </head> 标签前)
+  
+
+  // 2. 追加 CSP 白名单域名
+  const cspStatic = settings.csp_static || '';
+  const cspApi = settings.csp_api || '';
+  const staticDomains = parseCspOrigins(cspStatic);
+  const rawApiDomains = parseCspOrigins(cspApi);
+  const apiDomains = buildApiDomainsWithWs(rawApiDomains);
+
+  if (staticDomains.length > 0 || apiDomains.length > 0) {
+    modifiedHtml = rebuildCsp(modifiedHtml, { staticDomains, apiDomains });
+  }
+
+  // 3. 注入 custom_head (在 </head> 标签前)
   if (settings.custom_head) {
     modifiedHtml = modifiedHtml.replace('</head>', `${settings.custom_head}\n</head>`);
   }
 
-  // 3. 注入 custom_script (在 </body> 标签前)
+  // 4. 注入 custom_script (在 </body> 标签前)
   if (settings.custom_script) {
     modifiedHtml = modifiedHtml.replace('</body>', `<script>${settings.custom_script}</script>\n</body>`);
   }
 
-  // 4. 注入 custom_bg (添加背景样式到 body)
+  // 5. 注入 custom_bg (添加背景样式到 body)
   if (settings.custom_bg) {
-    const safeBg = escapeCssString(settings.custom_bg);
-    const bgStyle = `\n<style>\n  body { background-image: url('${safeBg}'); background-size: cover; background-attachment: fixed; background-position: center; }\n</style>\n`;
+    const bgStyle = buildBackgroundStyle(settings.custom_bg)
     modifiedHtml = modifiedHtml.replace('</head>', `${bgStyle}\n</head>`);
   }
 

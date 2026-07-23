@@ -1,6 +1,6 @@
 #!/bin/sh
 # ==============================================================================
-# V1.2.0
+# V1.3.2
 # CF-Server-Monitor 安装/卸载脚本 (OpenWrt 专用版)
 # 支持: OpenWrt / LEDE / ImmortalWrt (procd + opkg)
 # 纯 POSIX sh 实现，无 bash 依赖
@@ -10,6 +10,8 @@
 # ==============================================================================
 
 set -eu
+
+AGENT_VERSION="1.3.2"
 
 # 路径定义（配置文件系统）
 CONFIG_DIR="/etc/config/cf-probe"
@@ -63,18 +65,18 @@ print_usage() {
     echo "可选参数:"
     echo "  -interval=N    上报间隔(秒)，默认60"
     echo "  -collect_interval=N    采样间隔(秒)，默认0"
-    echo "  -ping=TYPE     探测类型: http | tcp，默认http"
     echo "  -ct=HOST       自定义CT测试节点"
     echo "  -cu=HOST       自定义CU测试节点"
     echo "  -cm=HOST       自定义CM测试节点"
     echo "  -bd=HOST       自定义BD测试节点"
     echo "  -reset_day=N   流量重置日(1-31, 0=不重置)，默认1"
+    echo "  -auto_update=0|1 自动更新探针，默认0"
     echo "  -rx_correction=N  下行流量校正(GB)，覆盖当月下行数据"
     echo "  -tx_correction=N  上行流量校正(GB)，覆盖当月上行数据"
     echo ""
     echo "示例:"
     echo "  sh $0 install -id=server123 -secret=abc123 -url=https://worker.example.com"
-    echo "  sh $0 install -id=server123 -secret=abc123 -url=https://worker.example.com -interval=30 -ping=tcp"
+    echo "  sh $0 install -id=server123 -secret=abc123 -url=https://worker.example.com -interval=30"
     echo "  sh $0 install -id=server123 -secret=abc123 -url=https://worker.example.com -reset_day=15"
     echo "  sh $0 install -id=server123 -secret=abc123 -url=https://worker.example.com -rx_correction=10 -tx_correction=5"
     exit 1
@@ -82,6 +84,15 @@ print_usage() {
 
 sed_escape() {
     printf '%s' "${1:-}" | sed 's/\\/\\\\/g; s/&/\\&/g; s/@/\\@/g; s/\//\\\//g; s/|/\\|/g; s/"/\\"/g'
+}
+
+normalize_binary_value() {
+    local _cf_binary_value="${1-}" _cf_binary_default="${2-}"
+    [ -z "$_cf_binary_value" ] && _cf_binary_value="$_cf_binary_default"
+    case "$_cf_binary_value" in
+        0|1) printf '%s' "$_cf_binary_value" ;;
+        *) return 1 ;;
+    esac
 }
 
 to_uint() {
@@ -193,20 +204,20 @@ install_deps() {
             opkg install $optional_ping_pkg >/dev/null 2>&1 || true
             ;;
         *)
-            error "未知的包管理器: $PKG_MGR"
+            error "未知的包管理器: ${PKG_MGR}"
             ;;
     esac
 
     required_cmds="curl awk grep sed"
-    for cmd in $required_cmds; do
-        if ! command -v "$cmd" >/dev/null 2>&1; then
-            warn "缺少依赖: $cmd，某些功能可能不可用。"
+    for cmd in ${required_cmds}; do
+        if ! command -v "${cmd}" >/dev/null 2>&1; then
+            warn "缺少依赖: ${cmd}，某些功能可能不可用。"
         fi
     done
 
     for cmd in pgrep pkill ss; do
-        if ! command -v "$cmd" >/dev/null 2>&1; then
-            warn "缺少可选依赖: $cmd（不影响核心监控功能）"
+        if ! command -v "${cmd}" >/dev/null 2>&1; then
+            warn "缺少可选依赖: ${cmd}（不影响核心监控功能）"
         fi
     done
 
@@ -224,112 +235,6 @@ install_deps() {
     esac
 }
 
-# ---------------------------------------------------------------
-# 从旧版本服务文件提取参数（兼容 procd 和 OpenRC）
-# ---------------------------------------------------------------
-extract_old_params() {
-    if [ -f "${PROCD_FILE}" ]; then
-        step "检测到旧版本服务文件，提取参数..."
-        
-        # 先获取原始行，避免 shell 解释
-        local raw_line
-        raw_line=$(grep -E "^(procd_set_param command|command_args=)" "${PROCD_FILE}" 2>/dev/null | head -1 || echo "")
-        
-        if [ -n "${raw_line}" ]; then
-            local args=""
-            
-            # 使用 printf + sed 处理，避免 shell 解释
-            if printf '%s' "$raw_line" | grep -q "^procd_set_param command"; then
-                # procd 格式: procd_set_param command /bin/sh /usr/local/bin/cf-probe.sh ...
-                args=$(printf '%s' "$raw_line" | sed 's/^procd_set_param command //')
-            else
-                # OpenRC 格式: command_args="/usr/local/bin/cf-probe.sh ..."
-                args=$(printf '%s' "$raw_line" | sed 's/^command_args=//' | sed 's/^"//; s/"$//')
-            fi
-            
-            # 移除反引号（如果有）
-            args=$(printf '%s' "$args" | tr -d '`')
-            
-            # 清理可能的残留引号
-            args=$(printf '%s' "$args" | sed 's/^"//; s/"$//' | sed "s/^'//; s/'$//")
-            
-            # 用 awk 按空格提取参数（完全避免 shell 解释）
-            # 注意：procd 格式中第一个参数是 /bin/sh，第二个是脚本路径，第三个才是 SERVER_ID
-            # OpenRC 格式中第一个参数就是 SERVER_ID
-            local is_procd=0
-            if printf '%s' "$raw_line" | grep -q "^procd_set_param command"; then
-                is_procd=1
-            fi
-            
-            if [ "$is_procd" -eq 1 ]; then
-                # procd 格式：跳过 /bin/sh 和脚本路径
-                OLD_SERVER_ID=$(printf '%s' "$args" | awk '{print $3}')
-                OLD_SECRET=$(printf '%s' "$args" | awk '{print $4}')
-                OLD_WORKER_URL=$(printf '%s' "$args" | awk '{print $5}')
-                OLD_REPORT_INTERVAL=$(printf '%s' "$args" | awk '{print $6}')
-                OLD_PING_TYPE=$(printf '%s' "$args" | awk '{print $7}')
-                OLD_CT_NODE=$(printf '%s' "$args" | awk '{print $8}')
-                OLD_CU_NODE=$(printf '%s' "$args" | awk '{print $9}')
-                OLD_CM_NODE=$(printf '%s' "$args" | awk '{print $10}')
-                OLD_BD_NODE=$(printf '%s' "$args" | awk '{print $11}')
-                OLD_RESET_DAY=$(printf '%s' "$args" | awk '{print $12}')
-            else
-                # OpenRC 格式：直接从第一个参数开始
-                OLD_SERVER_ID=$(printf '%s' "$args" | awk '{print $1}')
-                OLD_SECRET=$(printf '%s' "$args" | awk '{print $2}')
-                OLD_WORKER_URL=$(printf '%s' "$args" | awk '{print $3}')
-                OLD_REPORT_INTERVAL=$(printf '%s' "$args" | awk '{print $4}')
-                OLD_PING_TYPE=$(printf '%s' "$args" | awk '{print $5}')
-                OLD_CT_NODE=$(printf '%s' "$args" | awk '{print $6}')
-                OLD_CU_NODE=$(printf '%s' "$args" | awk '{print $7}')
-                OLD_CM_NODE=$(printf '%s' "$args" | awk '{print $8}')
-                OLD_BD_NODE=$(printf '%s' "$args" | awk '{print $9}')
-                OLD_RESET_DAY=$(printf '%s' "$args" | awk '{print $10}')
-            fi
-            
-            # 清理引号（如果有）
-            OLD_SERVER_ID=$(printf '%s' "$OLD_SERVER_ID" | sed 's/^"//; s/"$//' | sed "s/^'//; s/'$//")
-            OLD_SECRET=$(printf '%s' "$OLD_SECRET" | sed 's/^"//; s/"$//' | sed "s/^'//; s/'$//")
-            OLD_WORKER_URL=$(printf '%s' "$OLD_WORKER_URL" | sed 's/^"//; s/"$//' | sed "s/^'//; s/'$//")
-            OLD_REPORT_INTERVAL=$(printf '%s' "$OLD_REPORT_INTERVAL" | sed 's/^"//; s/"$//' | sed "s/^'//; s/'$//")
-            OLD_PING_TYPE=$(printf '%s' "$OLD_PING_TYPE" | sed 's/^"//; s/"$//' | sed "s/^'//; s/'$//")
-            OLD_CT_NODE=$(printf '%s' "$OLD_CT_NODE" | sed 's/^"//; s/"$//' | sed "s/^'//; s/'$//")
-            OLD_CU_NODE=$(printf '%s' "$OLD_CU_NODE" | sed 's/^"//; s/"$//' | sed "s/^'//; s/'$//")
-            OLD_CM_NODE=$(printf '%s' "$OLD_CM_NODE" | sed 's/^"//; s/"$//' | sed "s/^'//; s/'$//")
-            OLD_BD_NODE=$(printf '%s' "$OLD_BD_NODE" | sed 's/^"//; s/"$//' | sed "s/^'//; s/'$//")
-            OLD_RESET_DAY=$(printf '%s' "$OLD_RESET_DAY" | sed 's/^"//; s/"$//' | sed "s/^'//; s/'$//")
-
-            # 调试输出（可选）
-            if [ -n "${OLD_SERVER_ID}" ]; then
-                echo "提取的参数:"
-                echo "  SERVER_ID: '$OLD_SERVER_ID'"
-                echo "  SECRET: '$OLD_SECRET'"
-                echo "  WORKER_URL: '$OLD_WORKER_URL'"
-                echo "  INTERVAL: '$OLD_REPORT_INTERVAL'"
-                echo "  PING_TYPE: '$OLD_PING_TYPE'"
-                [ -n "$OLD_CT_NODE" ] && echo "  CT: '$OLD_CT_NODE'"
-                [ -n "$OLD_CU_NODE" ] && echo "  CU: '$OLD_CU_NODE'"
-                [ -n "$OLD_CM_NODE" ] && echo "  CM: '$OLD_CM_NODE'"
-                [ -n "$OLD_BD_NODE" ] && echo "  BD: '$OLD_BD_NODE'"
-                [ -n "$OLD_RESET_DAY" ] && echo "  RESET_DAY: '$OLD_RESET_DAY'"
-            fi
-
-            if [ -n "${OLD_SERVER_ID}" ] && [ -n "${OLD_SECRET}" ] && [ -n "${OLD_WORKER_URL}" ]; then
-                info "已从旧版本服务文件提取参数"
-                info "  Server ID: ${OLD_SERVER_ID}"
-                info "  Worker URL: ${OLD_WORKER_URL}"
-                return 0
-            else
-                warn "从旧服务文件提取参数失败，参数不完整"
-                warn "  提取到的 Server ID: '${OLD_SERVER_ID:-空}'"
-                warn "  提取到的 Secret: '${OLD_SECRET:-空}'"
-                warn "  提取到的 Worker URL: '${OLD_WORKER_URL:-空}'"
-                return 1
-            fi
-        fi
-    fi
-    return 0
-}
 
 # ---------------------------------------------------------------
 # 清理旧进程 / 旧服务
@@ -371,10 +276,11 @@ create_script() {
 
     mkdir -p /usr/local/bin 2>/dev/null || true
 
-    cat > "${SCRIPT_FILE}" << 'PROBE_EOF'
+    cat << 'PROBE_EOF' | sed "s|__AGENT_VERSION__|${AGENT_VERSION}|g" > "${SCRIPT_FILE}"
 #!/bin/sh
 set +eu
 
+AGENT_VERSION="__AGENT_VERSION__"
 PID_FILE="/var/run/cf-probe.pid"
 echo $$ > "$PID_FILE"
 
@@ -393,12 +299,12 @@ SECRET=""
 WORKER_URL=""
 COLLECT_INTERVAL=""
 REPORT_INTERVAL=""
-PING_TYPE=""
 CT_NODE=""
 CU_NODE=""
 CM_NODE=""
 BD_NODE=""
 RESET_DAY=""
+AUTO_UPDATE=""
 CONFIG_MD5=""
 
 while IFS='=' read -r key value; do
@@ -408,38 +314,37 @@ while IFS='=' read -r key value; do
         WORKER_URL) WORKER_URL="${value%\"}"; WORKER_URL="${WORKER_URL#\"}" ;;
         COLLECT_INTERVAL) COLLECT_INTERVAL="${value%\"}"; COLLECT_INTERVAL="${COLLECT_INTERVAL#\"}" ;;
         REPORT_INTERVAL) REPORT_INTERVAL="${value%\"}"; REPORT_INTERVAL="${REPORT_INTERVAL#\"}" ;;
-        PING_TYPE) PING_TYPE="${value%\"}"; PING_TYPE="${PING_TYPE#\"}" ;;
         CT_NODE) CT_NODE="${value%\"}"; CT_NODE="${CT_NODE#\"}" ;;
         CU_NODE) CU_NODE="${value%\"}"; CU_NODE="${CU_NODE#\"}" ;;
         CM_NODE) CM_NODE="${value%\"}"; CM_NODE="${CM_NODE#\"}" ;;
         BD_NODE) BD_NODE="${value%\"}"; BD_NODE="${BD_NODE#\"}" ;;
         RESET_DAY) RESET_DAY="${value%\"}"; RESET_DAY="${RESET_DAY#\"}" ;;
+        AUTO_UPDATE) AUTO_UPDATE="${value%\"}"; AUTO_UPDATE="${AUTO_UPDATE#\"}" ;;
         CONFIG_MD5) CONFIG_MD5="${value%\"}"; CONFIG_MD5="${CONFIG_MD5#\"}" ;;
     esac
 done < "${CONFIG_FILE}"
 
 to_uint() {
-    _cf_num=$(printf '%s' "${1:-0}" | sed 's/^0*//')
-    case "${_cf_num}" in
+    local num=$(printf '%s' "${1:-0}" | sed 's/^0*//')
+    case "${num}" in
         ''|*[!0-9]*) echo 0 ;;
-        ?|??|???|????|?????|??????|???????|????????|?????????) echo "${_cf_num}" ;;
+        ?|??|???|????|?????|??????|???????|????????|?????????) echo "${num}" ;;
         *) echo 0 ;;
     esac
 }
 
 normalize_reset_day() {
-    _cf_day=$(printf '%s' "${1:-1}" | sed 's/^0*//')
-    case "${_cf_day}" in
+    local day=$(printf '%s' "${1:-1}" | sed 's/^0*//')
+    case "${day}" in
         '') echo 0 ;;
         *[!0-9]*) echo 1 ;;
-        0|[1-9]|1[0-9]|2[0-9]|30|31) echo "${_cf_day}" ;;
+        0|[1-9]|1[0-9]|2[0-9]|30|31) echo "${day}" ;;
         *) echo 1 ;;
     esac
 }
 
 COLLECT_INTERVAL=$(to_uint "${COLLECT_INTERVAL:-0}")
 REPORT_INTERVAL=$(to_uint "${REPORT_INTERVAL:-60}")
-PING_TYPE=${PING_TYPE:-http}
 RESET_DAY=$(normalize_reset_day "${RESET_DAY:-1}")
 [ "$REPORT_INTERVAL" -lt 1 ] && REPORT_INTERVAL=60
 if [ "$COLLECT_INTERVAL" -gt 0 ] && [ "$REPORT_INTERVAL" -lt "$COLLECT_INTERVAL" ]; then
@@ -448,6 +353,11 @@ fi
 ACTIVE_INTERVAL="$REPORT_INTERVAL"
 [ "$COLLECT_INTERVAL" -gt 0 ] && ACTIVE_INTERVAL="$COLLECT_INTERVAL"
 CONFIG_MD5=${CONFIG_MD5:-none}
+AUTO_UPDATE=${AUTO_UPDATE:-0}
+case "$AUTO_UPDATE" in
+    0|1) ;;
+    *) AUTO_UPDATE=0 ;;
+esac
 DEBUG_MODE=${DEBUG_MODE:-0}
 
 SHM_DIR="/tmp"
@@ -461,20 +371,99 @@ log_info() {
 }
 
 log_debug() {
-    [ "$DEBUG_MODE" = "1" ] && echo "[DEBUG] $(log_ts) $*"
+    [ "$DEBUG_MODE" = "1" ] && echo "[DEBUG] $(log_ts) $*" >&2
 }
 
 log_warn_debug() {
     [ "$DEBUG_MODE" = "1" ] && echo "[WARN] $(log_ts) $*"
 }
 
+get_install_url() {
+    local url rest origin
+    url="${WORKER_URL%%\?*}"
+    case "$url" in
+        http://*)
+            rest="${url#http://}"
+            origin="http://${rest%%/*}"
+            ;;
+        https://*)
+            rest="${url#https://}"
+            origin="https://${rest%%/*}"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+    case "$origin" in
+        http://|https://) return 1 ;;
+    esac
+    printf '%s/install-openwrt.sh' "$origin"
+}
+
+schedule_agent_update() {
+    if [ "${AUTO_UPDATE}" != "1" ]; then
+        log_warn_debug "Auto update ignored: local AUTO_UPDATE=${AUTO_UPDATE}"
+        return 0
+    fi
+
+    local now last lock_file install_url tmp_dir
+    lock_file="${CONFIG_DIR}/auto_update.lock"
+    tmp_dir="${SHM_DIR:-/tmp}"
+
+    now=$(date +%s)
+    if [ -f "$lock_file" ]; then
+        last=$(cat "$lock_file" 2>/dev/null || echo 0)
+        case "$last" in ''|*[!0-9]*) last=0 ;; esac
+        if [ $((now - last)) -lt 1800 ]; then
+            log_warn_debug "Auto update already scheduled recently: age=$((now - last))s lock=${lock_file}"
+            return 0
+        fi
+    fi
+
+    mkdir -p "$tmp_dir" "${CONFIG_DIR}" 2>/dev/null || true
+    if ! install_url=$(get_install_url); then
+        log_warn_debug "Auto update skipped: invalid WORKER_URL=${WORKER_URL}"
+        return 1
+    fi
+    log_debug "Auto update requested: install_url=${install_url}"
+
+    nohup /bin/sh -c 'tmp="$2/auto_update_install.$$"; rm -f "$tmp"; if curl -fsSL --connect-timeout 5 -m 30 "$1" -o "$tmp"; then /bin/sh "$tmp" install; fi; rm -f "$tmp"' _ "$install_url" "$tmp_dir" >/dev/null 2>&1 &
+    printf '%s\n' "$now" > "$lock_file" 2>/dev/null || true
+    log_info "Auto update scheduled"
+    return 0
+}
+
+# 动态检测 stdout 指向的日志文件（procd 模式走 syslog 不写文件，此处为空）
+PROBE_LOG_FILE=""
+if [ -L /proc/self/fd/1 ]; then
+    _log_target=$(readlink /proc/self/fd/1 2>/dev/null || echo "")
+    [ -f "$_log_target" ] && [ -w "$_log_target" ] && PROBE_LOG_FILE="$_log_target"
+fi
+
+rotate_log_if_needed() {
+    [ -f "$1" ] || return 0
+    local _sz
+    _sz=$(wc -c < "$1" 2>/dev/null || echo 0)
+    [ "${_sz:-0}" -gt 1048576 ] || return 0
+    local _lines
+    _lines=$(wc -l < "$1" 2>/dev/null || echo 0)
+    if [ "${_lines}" -eq 1 ]; then
+        : > "$1" 2>/dev/null
+        return 0
+    fi
+    local _tmp="${1}.rot.$$"
+    tail -c 102400 "$1" > "$_tmp" 2>/dev/null || { rm -f "$_tmp"; return 0; }
+    : > "$1" 2>/dev/null
+    cat "$_tmp" >> "$1" 2>/dev/null || true
+    rm -f "$_tmp" 2>/dev/null || true
+}
+
 persist_dynamic_config() {
-    _cf_tmp_file="${CONFIG_FILE}.tmp.$$"
-    awk -v collect="$1" -v report="$2" -v ping="$3" -v reset="$4" -v md5="$5" -v ct="$6" -v cu="$7" -v cm="$8" -v bd="$9" '
-        BEGIN { c=0; r=0; p=0; d=0; m=0; tct=0; tcu=0; tcm=0; tbd=0 }
+    local tmp_file="${CONFIG_FILE}.tmp.$$"
+    awk -v collect="$1" -v report="$2" -v reset="$3" -v md5="$4" -v ct="$5" -v cu="$6" -v cm="$7" -v bd="$8" '
+        BEGIN { c=0; r=0; d=0; m=0; tct=0; tcu=0; tcm=0; tbd=0 }
         /^COLLECT_INTERVAL=/ { print "COLLECT_INTERVAL=\"" collect "\""; c=1; next }
         /^REPORT_INTERVAL=/ { print "REPORT_INTERVAL=\"" report "\""; r=1; next }
-        /^PING_TYPE=/ { print "PING_TYPE=\"" ping "\""; p=1; next }
         /^RESET_DAY=/ { print "RESET_DAY=\"" reset "\""; d=1; next }
         /^CONFIG_MD5=/ { print "CONFIG_MD5=\"" md5 "\""; m=1; next }
         /^CT_NODE=/ { print "CT_NODE=\"" ct "\""; tct=1; next }
@@ -485,7 +474,6 @@ persist_dynamic_config() {
         END {
             if (!c) print "COLLECT_INTERVAL=\"" collect "\""
             if (!r) print "REPORT_INTERVAL=\"" report "\""
-            if (!p) print "PING_TYPE=\"" ping "\""
             if (!d) print "RESET_DAY=\"" reset "\""
             if (!m) print "CONFIG_MD5=\"" md5 "\""
             if (!tct) print "CT_NODE=\"" ct "\""
@@ -493,90 +481,164 @@ persist_dynamic_config() {
             if (!tcm) print "CM_NODE=\"" cm "\""
             if (!tbd) print "BD_NODE=\"" bd "\""
         }
-    ' "$CONFIG_FILE" > "$_cf_tmp_file" || { rm -f "$_cf_tmp_file"; return 1; }
-    chmod 600 "$_cf_tmp_file" 2>/dev/null || true
-    mv "$_cf_tmp_file" "$CONFIG_FILE"
+    ' "$CONFIG_FILE" > "$tmp_file" || { rm -f "$tmp_file"; return 1; }
+    chmod 600 "$tmp_file" 2>/dev/null || true
+    mv "$tmp_file" "$CONFIG_FILE"
 }
 
 apply_remote_config() {
-    _cf_response_file="$1"
-    _cf_header_file="$2"
-    _cf_bytes=$(wc -c < "$_cf_response_file" 2>/dev/null || echo 9999)
-    [ "$_cf_bytes" -le 1024 ] || return 1
-    _cf_body=$(cat "$_cf_response_file" 2>/dev/null) || return 1
-    case "$_cf_body" in ''|*[!a-z0-9_=\&.\-]*) return 1 ;; esac
-    _cf_md5=$(awk 'tolower($1)=="x-agent-config-md5:" { gsub("\r", "", $2); print tolower($2); exit }' "$_cf_header_file")
-    [ "${#_cf_md5}" -eq 32 ] || return 1
-    case "$_cf_md5" in *[!0-9a-f]*) return 1 ;; esac
-    _cf_collect=$(printf '%s' "$_cf_body" | cut -d '&' -f 1); _cf_collect=${_cf_collect#collect_interval=}
-    _cf_ping=$(printf '%s' "$_cf_body" | cut -d '&' -f 2); _cf_ping=${_cf_ping#ping_mode=}
-    _cf_report=$(printf '%s' "$_cf_body" | cut -d '&' -f 3); _cf_report=${_cf_report#report_interval=}
-    _cf_reset=$(printf '%s' "$_cf_body" | cut -d '&' -f 4); _cf_reset=${_cf_reset#reset_day=}
-    _cf_schema=$(printf '%s' "$_cf_body" | cut -d '&' -f 5); _cf_schema=${_cf_schema#schema_version=}
-    _cf_ct=$(printf '%s' "$_cf_body" | cut -d '&' -f 6); _cf_ct=${_cf_ct#custom_ct=}
-    _cf_cu=$(printf '%s' "$_cf_body" | cut -d '&' -f 7); _cf_cu=${_cf_cu#custom_cu=}
-    _cf_cm=$(printf '%s' "$_cf_body" | cut -d '&' -f 8); _cf_cm=${_cf_cm#custom_cm=}
-    _cf_bd=$(printf '%s' "$_cf_body" | cut -d '&' -f 9); _cf_bd=${_cf_bd#custom_bd=}
-    case "$_cf_collect" in 0|1|2|5|10) ;; *) return 1 ;; esac
-    case "$_cf_report" in 30|60|120|180) ;; *) return 1 ;; esac
-    case "$_cf_ping" in http|tcp) ;; *) return 1 ;; esac
-    case "$_cf_reset" in 0|[1-9]|1[0-9]|2[0-9]|30|31) ;; *) return 1 ;; esac
-    [ "$_cf_schema" = "1" ] || return 1
-    [ "$_cf_report" -ge "$_cf_collect" ] || return 1
-    _cf_rx_corr=""
-    _cf_tx_corr=""
-    _cf_field_count=$(printf '%s' "$_cf_body" | awk -F'&' '{print NF}')
-    if [ "$_cf_field_count" -ge 11 ]; then
-        _cf_f10=$(printf '%s' "$_cf_body" | cut -d '&' -f 10)
-        _cf_f11=$(printf '%s' "$_cf_body" | cut -d '&' -f 11)
-        case "$_cf_f10" in rx_correction=*) _cf_rx_corr="${_cf_f10#rx_correction=}" ;; esac
-        case "$_cf_f11" in tx_correction=*) _cf_tx_corr="${_cf_f11#tx_correction=}" ;; esac
+    local response_file="$1"
+    local header_file="$2"
+    local bytes=$(wc -c < "$response_file" 2>/dev/null || echo 9999)
+    if [ "$bytes" -gt 1024 ]; then
+        log_warn_debug "Remote config rejected: response too large bytes=${bytes}"
+        return 1
     fi
-    persist_dynamic_config "$_cf_collect" "$_cf_report" "$_cf_ping" "$_cf_reset" "$_cf_md5" "$_cf_ct" "$_cf_cu" "$_cf_cm" "$_cf_bd" || return 1
-    COLLECT_INTERVAL="$_cf_collect"
-    REPORT_INTERVAL="$_cf_report"
-    PING_TYPE="$_cf_ping"
-    RESET_DAY="$_cf_reset"
-    CT_NODE="$_cf_ct"
-    CU_NODE="$_cf_cu"
-    CM_NODE="$_cf_cm"
-    BD_NODE="$_cf_bd"
-    CONFIG_MD5="$_cf_md5"
-    ACTIVE_INTERVAL="$REPORT_INTERVAL"
-    [ "$COLLECT_INTERVAL" -gt 0 ] && ACTIVE_INTERVAL="$COLLECT_INTERVAL"
-    log_info "Dynamic configuration applied: md5=${CONFIG_MD5} ct=${CT_NODE:-} cu=${CU_NODE:-} cm=${CM_NODE:-} bd=${BD_NODE:-}"
-    if [ -n "$_cf_rx_corr" ] || [ -n "$_cf_tx_corr" ]; then
-        if apply_traffic_correction "$_cf_rx_corr" "$_cf_tx_corr"; then
-            send_correction_confirm "$_cf_rx_corr" "$_cf_tx_corr" || true
+    local body=$(cat "$response_file" 2>/dev/null) || return 1
+    log_debug "Remote config raw: bytes=${bytes} body=${body}"
+    case "$body" in
+        '') log_warn_debug "Remote config rejected: empty body"; return 1 ;;
+        *[!a-z0-9_=\&.\-:]*) log_warn_debug "Remote config rejected: invalid characters body=${body}"; return 1 ;;
+    esac
+
+    local collect=""
+    local report=""
+    local reset=""
+    local schema=""
+    local ct=""
+    local cu=""
+    local cm=""
+    local bd=""
+    local rx_corr=""
+    local tx_corr=""
+    local update=""
+    local saved_ifs="$IFS"
+    IFS='&'
+    for _f in $body; do
+        _k="${_f%%=*}"; _v="${_f#*=}"
+        case "$_k" in
+            collect_interval) collect="$_v" ;;
+            report_interval)  report="$_v" ;;
+            reset_day)        reset="$_v" ;;
+            schema_version)   schema="$_v" ;;
+            custom_ct)        ct="$_v" ;;
+            custom_cu)        cu="$_v" ;;
+            custom_cm)        cm="$_v" ;;
+            custom_bd)        bd="$_v" ;;
+            rx_correction)    rx_corr="$_v" ;;
+            tx_correction)    tx_corr="$_v" ;;
+            update)           update="$_v" ;;
+            '')               ;;
+            *)                IFS="$saved_ifs"; log_warn_debug "Remote config rejected: unknown field=${_k}"; return 1 ;;
+        esac
+    done
+    IFS="$saved_ifs"
+
+    local has_config=0
+    if [ -n "$collect" ] || [ -n "$report" ] || [ -n "$reset" ] || [ -n "$schema" ]; then
+        has_config=1
+    fi
+    log_debug "Remote config parsed: has_config=${has_config} update=${update:-} collect=${collect:-} report=${report:-} reset=${reset:-} schema=${schema:-} rx_corr=${rx_corr:-} tx_corr=${tx_corr:-}"
+
+    if [ "$has_config" = "0" ]; then
+        if [ "$update" = "1" ]; then
+            log_debug "Remote update-only instruction received"
+            schedule_agent_update
+            return 0
+        fi
+        log_warn_debug "Remote config rejected: no config fields and update=${update:-}"
+        return 1
+    fi
+
+    local md5=$(awk 'tolower($1)=="x-agent-config-md5:" { gsub("\r", "", $2); print tolower($2); exit }' "$header_file")
+    if [ "${#md5}" -ne 32 ]; then
+        log_warn_debug "Remote config rejected: invalid md5 length md5=${md5:-}"
+        return 1
+    fi
+    case "$md5" in *[!0-9a-f]*) log_warn_debug "Remote config rejected: invalid md5 chars md5=${md5}"; return 1 ;; esac
+    log_debug "Remote config md5: current=${CONFIG_MD5:-none} remote=${md5}"
+
+    case "$collect" in 0|1|2|5|10) ;; *) log_warn_debug "Remote config rejected: invalid collect_interval=${collect:-}"; return 1 ;; esac
+    case "$report" in 30|60|120|180) ;; *) log_warn_debug "Remote config rejected: invalid report_interval=${report:-}"; return 1 ;; esac
+    case "$reset" in 0|[1-9]|1[0-9]|2[0-9]|30|31) ;; *) log_warn_debug "Remote config rejected: invalid reset_day=${reset:-}"; return 1 ;; esac
+    case "$update" in ''|0|1) ;; *) log_warn_debug "Remote config rejected: invalid update=${update}"; return 1 ;; esac
+    if [ "$schema" != "2" ]; then
+        log_warn_debug "Remote config rejected: invalid schema_version=${schema:-}"
+        return 1
+    fi
+    if [ "$report" -lt "$collect" ]; then
+        log_warn_debug "Remote config rejected: report_interval=${report} less than collect_interval=${collect}"
+        return 1
+    fi
+
+    if [ "$md5" != "${CONFIG_MD5:-none}" ]; then
+        persist_dynamic_config "$collect" "$report" "$reset" "$md5" "$ct" "$cu" "$cm" "$bd" || return 1
+        COLLECT_INTERVAL="$collect"
+        REPORT_INTERVAL="$report"
+        RESET_DAY="$reset"
+        CT_NODE="$ct"
+        CU_NODE="$cu"
+        CM_NODE="$cm"
+        BD_NODE="$bd"
+        CONFIG_MD5="$md5"
+        ACTIVE_INTERVAL="$REPORT_INTERVAL"
+        [ "$COLLECT_INTERVAL" -gt 0 ] && ACTIVE_INTERVAL="$COLLECT_INTERVAL"
+        log_info "Dynamic configuration applied: md5=${CONFIG_MD5} ct=${CT_NODE:-} cu=${CU_NODE:-} cm=${CM_NODE:-} bd=${BD_NODE:-}"
+
+        if kill -0 "$WORKER_PID" 2>/dev/null; then
+            pkill -P "$WORKER_PID" 2>/dev/null || true
+            kill "$WORKER_PID" 2>/dev/null || true
+            wait "$WORKER_PID" 2>/dev/null || true
+        fi
+        rm -f /tmp/.cf_probe_* 2>/dev/null || true
+        run_network_worker &
+        WORKER_PID=$!
+
+        if [ "$COLLECT_INTERVAL" -gt 0 ]; then
+            SAMPLES_JSON=""
+            SAMPLE_COUNT=0
+        fi
+        LAST_REPORT_TIME=0
+    fi
+
+    if [ -n "$rx_corr" ] || [ -n "$tx_corr" ]; then
+        if apply_traffic_correction "$rx_corr" "$tx_corr"; then
+            send_correction_confirm "$rx_corr" "$tx_corr" || true
         fi
     fi
+
+    if [ "$update" = "1" ]; then
+        log_debug "Remote config includes update=1"
+        schedule_agent_update || true
+    fi
+    return 0
 }
 
 normalize_correction_value() {
-    _cf_corr_val="${1:-0}"
-    [ -z "$_cf_corr_val" ] && _cf_corr_val=0
-    printf '%s' "$_cf_corr_val"
+    local corr_val="${1:-0}"
+    [ -z "$corr_val" ] && local corr_val=0
+    printf '%s' "$corr_val"
 }
 
 is_valid_correction_value() {
-    _cf_check_val=$(normalize_correction_value "$1")
-    awk -v v="$_cf_check_val" -v max="$MAX_TRAFFIC_CORRECTION_GB" 'BEGIN { exit !(v ~ /^[0-9]+([.][0-9]+)?$/ && v + 0 >= 0 && v + 0 <= max) }'
+    local check_val=$(normalize_correction_value "$1")
+    awk -v v="$check_val" -v max="$MAX_TRAFFIC_CORRECTION_GB" 'BEGIN { exit !(v ~ /^[0-9]+([.][0-9]+)?$/ && v + 0 >= 0 && v + 0 <= max) }'
 }
 
 send_correction_confirm() {
-    _cf_ack_rx=$(normalize_correction_value "$1")
-    _cf_ack_tx=$(normalize_correction_value "$2")
-    is_valid_correction_value "$_cf_ack_rx" && is_valid_correction_value "$_cf_ack_tx" || return 1
-    _cf_ack_payload="{\"id\":\"$SERVER_ID\",\"secret\":\"$SECRET\",\"rx_correction\":$_cf_ack_rx,\"tx_correction\":$_cf_ack_tx}"
-    _cf_ack_http=$(curl -sS -o /dev/null -w "%{http_code}" -X POST \
+    local ack_rx=$(normalize_correction_value "$1")
+    local ack_tx=$(normalize_correction_value "$2")
+    is_valid_correction_value "$ack_rx" && is_valid_correction_value "$ack_tx" || return 1
+    local ack_payload="{\"id\":\"$SERVER_ID\",\"secret\":\"$SECRET\",\"rx_correction\":$ack_rx,\"tx_correction\":$ack_tx}"
+    local ack_http=$(curl -sS -o /dev/null -w "%{http_code}" -X POST \
         -H "Content-Type: application/json" \
-        -d "$_cf_ack_payload" -m 4 --connect-timeout 2 "$WORKER_URL" 2>/dev/null || echo 000)
-    case "$_cf_ack_http" in ''|*[!0-9]*) _cf_ack_http=000 ;; esac
-    if [ "$_cf_ack_http" -ge 200 ] && [ "$_cf_ack_http" -lt 300 ]; then
-        log_info "Traffic correction confirm sent: RX=${_cf_ack_rx}GB TX=${_cf_ack_tx}GB"
+        -d "$ack_payload" -m 4 --connect-timeout 2 "$WORKER_URL" 2>/dev/null || echo 000)
+    case "$ack_http" in ''|*[!0-9]*) local ack_http=000 ;; esac
+    if [ "$ack_http" -ge 200 ] && [ "$ack_http" -lt 300 ]; then
+        log_info "Traffic correction confirm sent: RX=${ack_rx}GB TX=${ack_tx}GB"
         return 0
     fi
-    log_warn_debug "Traffic correction confirm failed: http=${_cf_ack_http} RX=${_cf_ack_rx}GB TX=${_cf_ack_tx}GB"
+    log_warn_debug "Traffic correction confirm failed: http=${ack_http} RX=${ack_rx}GB TX=${ack_tx}GB"
     return 1
 }
 
@@ -608,7 +670,7 @@ apply_traffic_correction() {
     saved_tx_period=${tx_bytes}
     log_info "Traffic correction applied: RX=${rx_val}GB (${rx_bytes} bytes) TX=${tx_val}GB (${tx_bytes} bytes)"
     mkdir -p "${CONFIG_DIR}" 2>/dev/null || true
-    cat > "${TRAFFIC_DATA_FILE}" << EOF
+    cat > "${TRAFFIC_DATA_FILE}.tmp" << EOF
 RX_PREV=${saved_rx_prev}
 TX_PREV=${saved_tx_prev}
 RX_PERIOD=${saved_rx_period}
@@ -616,16 +678,27 @@ TX_PERIOD=${saved_tx_period}
 LAST_CHECK=${now_ts}
 PERIOD_START=${saved_period_start}
 EOF
+    mv "${TRAFFIC_DATA_FILE}.tmp" "${TRAFFIC_DATA_FILE}" 2>/dev/null || true
 }
 
 escape_json() {
     printf '%s' "${1:-}" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr '\n\r' '  '
 }
 
+json_probe_value() {
+    local node="${1:-}"
+    local value="${2:-}"
+    if [ -z "$node" ]; then
+        printf 'false'
+    else
+        printf '"%s"' "$(escape_json "$value")"
+    fi
+}
+
 safe_div() {
-    num="${1:-0}"
-    den="${2:-0}"
-    def="${3:-0}"
+    local num="${1:-0}"
+    local den="${2:-0}"
+    local def="${3:-0}"
     if [ "${den}" -eq 0 ]; then echo "${def}"; else echo $(( num / den )); fi
 }
 
@@ -634,28 +707,29 @@ get_net_bytes() {
 }
 
 is_leap_year() {
-    year=$1
-    [ $((year % 4)) -eq 0 ] && [ $((year % 100)) -ne 0 ] || [ $((year % 400)) -eq 0 ]
+    local ly_year=$1
+    [ $((ly_year % 4)) -eq 0 ] && [ $((ly_year % 100)) -ne 0 ] || [ $((ly_year % 400)) -eq 0 ]
 }
 
 get_period_start_ts() {
+    local reset_day
     reset_day=$(normalize_reset_day "${1:-1}")
     [ "$reset_day" -eq 0 ] 2>/dev/null && { echo "0"; return; }
-    now_ts="$2"
+    local now_ts="$2"
+    local year month day _date_parts
 
-    # 只用 epoch 秒
-    year=$(date +%Y 2>/dev/null || echo 1970)
-    month=$(date +%m 2>/dev/null || echo 1)
-    day=$(to_uint "$(date +%d 2>/dev/null || echo 1)")
+    # 用 awk 将 epoch 秒转换为 year month day（UTC），避免 BusyBox date -d 不可用
+    _date_parts=$(awk 'BEGIN{
+        t='"${now_ts}"'; d=int(t/86400)+719468; y=int((d-122.1)/365.25);
+        m=int((d-365.25*y+122.1)/30.6001); day=d-int(30.6001*(m+(m>2?1:0)-3)+1.5);
+        if(m<14) m=m-1; else { m=m-13; if(m>2) y=y+1 }
+        printf "%04d %02d %02d\n", y, m, day
+    }')
+    year=$(echo "$_date_parts" | awk '{print $1}')
+    month=$(echo "$_date_parts" | awk '{print $2}')
+    day=$(echo "$_date_parts" | awk '{print $3}')
 
-    # BusyBox fallback（无 date -d 时）
-    if [ "${year}" = "1970" ]; then
-        # 退化方案：直接按 30 天周期（OpenWrt 保底逻辑）
-        echo $((now_ts - 30 * 86400))
-        return
-    fi
-
-    target_day="$reset_day"
+    local target_day="$reset_day"
 
     case "$month" in
         02)
@@ -670,34 +744,56 @@ get_period_start_ts() {
             ;;
     esac
 
-    # 用 epoch 回算（避免 date -d）
-    # 直接算“本月 reset_day 00:00”的近似值
-
-    # 当前月1号时间
-    month_start=$((now_ts - ( (day - 1) * 86400 )))
-
-    reset_ts=$((month_start + (target_day - 1) * 86400))
-
-    if [ "$day" -lt "$target_day" ]; then
-        reset_ts=$((reset_ts - 30 * 86400))
+    local period_start_ts
+    if [ "$day" -ge "$target_day" ]; then
+        # 用 awk 将年月日转为 epoch 秒（UTC），兼容 BusyBox date -d 不可用
+        period_start_ts=$(awk 'BEGIN{
+            y='"${year}"'; m='"${month}"'; d='"${target_day}"';
+            if(m<=2){y=y-1;m=m+12}
+            A=int(y/100);B=2-A+int(A/4);
+            JD=int(365.25*(y+4716))+int(30.6001*(m+1))+d+B-1524.5;
+            printf "%d", (JD-2440587.5)*86400
+        }')
+    else
+        local prev_month=$((month - 1))
+        [ "$prev_month" -eq 0 ] && { prev_month=12; year=$((year - 1)); }
+        local prev_month_str=$(printf "%02d" "$prev_month")
+        case "$prev_month" in
+            02)
+                if is_leap_year "$year"; then
+                    [ "$target_day" -gt 29 ] && target_day=29
+                else
+                    [ "$target_day" -gt 28 ] && target_day=28
+                fi
+                ;;
+            04|06|09|11) [ "$target_day" -gt 30 ] && target_day=30 ;;
+        esac
+        period_start_ts=$(awk 'BEGIN{
+            y='"${year}"'; m='"${prev_month}"'; d='"${target_day}"';
+            if(m<=2){y=y-1;m=m+12}
+            A=int(y/100);B=2-A+int(A/4);
+            JD=int(365.25*(y+4716))+int(30.6001*(m+1))+d+B-1524.5;
+            printf "%d", (JD-2440587.5)*86400
+        }')
     fi
 
-    echo "$reset_ts"
+    echo "$period_start_ts"
 }
 
 calc_monthly_traffic() {
-    current_rx="$1"
-    current_tx="$2"
-    reset_day="${RESET_DAY:-1}"
+    local current_rx="$1"
+    local current_tx="$2"
+    local reset_day="${RESET_DAY:-1}"
+    local now_ts
     now_ts=$(date '+%s')
 
     mkdir -p "${CONFIG_DIR}" 2>/dev/null || true
 
-    saved_rx_prev=0; saved_tx_prev=0; saved_rx_period=0; saved_tx_period=0
-    saved_last_check=0; saved_period_start=0
+    local saved_rx_prev=0 saved_tx_prev=0 saved_rx_period=0 saved_tx_period=0
+    local saved_last_check=0 saved_period_start=0
     if [ -f "${TRAFFIC_DATA_FILE}" ]; then
-        tmp_rx_prev=''; tmp_tx_prev=''; tmp_rx_period=''; tmp_tx_period=''
-        tmp_last_check=''; tmp_period_start=''
+        local tmp_rx_prev='' tmp_tx_prev='' tmp_rx_period='' tmp_tx_period=''
+        local tmp_last_check='' tmp_period_start=''
         while IFS='=' read -r key value; do
             case "$key" in
                 RX_PREV) tmp_rx_prev="$value" ;;
@@ -713,9 +809,10 @@ calc_monthly_traffic() {
         saved_last_check=${tmp_last_check:-0}; saved_period_start=${tmp_period_start:-0}
     fi
 
+    local period_start_ts
     period_start_ts=$(get_period_start_ts "$reset_day" "$now_ts")
 
-    rx_delta=0; tx_delta=0
+    local rx_delta=0 tx_delta=0
     if [ "$saved_last_check" -ne 0 ]; then
         if [ "$current_rx" -lt "$saved_rx_prev" ] || [ "$current_tx" -lt "$saved_tx_prev" ]; then
             rx_delta=0; tx_delta=0
@@ -752,79 +849,125 @@ get_cpu_stat() {
     awk '/^cpu /{total=$2+$3+$4+$5+$6+$7+$8+$9;idle=$5+$6;printf "%.0f %.0f\n",total,idle}' /proc/stat 2>/dev/null || echo "0 0";
 }
 
-get_http_ping() {
-    rtt=$(curl -o /dev/null -s -m 3 --connect-timeout 2 -w "%{time_total}" "http://${1:-}" 2>/dev/null | awk '{printf "%.0f", $1*1000}')
-    if [ -n "$rtt" ] && [ "$rtt" -gt 0 ] 2>/dev/null; then
-        echo "$rtt"
-    else
-        echo ""
+get_time_ms() {
+    local ts
+    ts=$(date +%s%3N 2>/dev/null || true)
+    case "${ts}" in
+        ''|*[!0-9]*) ;;
+        ?????????????) echo "${ts}"; return 0 ;;
+        ??????????????*) echo "${ts:0:13}"; return 0 ;;
+    esac
+
+    ts=$(date +%s%N 2>/dev/null || true)
+    case "${ts}" in
+        ''|*[!0-9]*) ;;
+        ???????????????????) echo "${ts:0:13}"; return 0 ;;
+    esac
+
+    if command -v perl >/dev/null 2>&1; then
+        perl -MTime::HiRes=time -e 'printf "%.0f\n", time() * 1000' 2>/dev/null && return 0
     fi
+    return 1
 }
 
-get_tcp_ping() {
-    host="${1:-}"
-    port="${2:-443}"
-    scheme="http"
-    timing=''
+has_nc_zero_io() {
+    command -v nc >/dev/null 2>&1 || return 1
+    nc -h 2>&1 | grep -q -e '-z' || return 1
+    nc -h 2>&1 | grep -q -e '-w' || return 1
+}
 
-    if [ -z "${host}" ]; then
-        echo ""
+get_tcp_ping_nc() {
+    local host="${1:-}"
+    local port="${2:-443}"
+    local start end ms
+
+    start=$(get_time_ms) || return 1
+    if nc -z -w 2 "${host}" "${port}" >/dev/null 2>&1; then
+        end=$(get_time_ms) || return 1
+        ms=$((end - start))
+        [ "${ms}" -lt 1 ] && ms=1
+        echo "${ms}"
+        return 0
+    fi
+    return 1
+}
+
+split_probe_target() (
+    target="${1:-}"
+    default_port="${2:-443}"
+    probe_host="$target"
+    probe_port="$default_port"
+
+    case "$target" in
+        ''|*[!A-Za-z0-9._:-]*) exit 1 ;;
+        *:*)
+            case "${target#*:}" in *:*) exit 1 ;; esac
+            probe_host="${target%:*}"
+            probe_port="${target##*:}"
+            ;;
+    esac
+
+    case "$probe_host" in ''|-*) exit 1 ;; esac
+    case "$probe_port" in ''|*[!0-9]*|??????*) exit 1 ;; esac
+    [ "$probe_port" -ge 1 ] && [ "$probe_port" -le 65535 ] || exit 1
+
+    printf '%s %s\n' "$probe_host" "$probe_port"
+)
+
+get_probe() {
+    local target="${1:-}"
+    local count="${2:-4}"
+    local port="${3:-443}"
+
+    if [ -z "$target" ]; then
+        echo "null 100"
         return
     fi
 
-    if [ "${port}" = "443" ]; then
-        scheme="https"
-    fi
-
-    timing=$(curl -k -o /dev/null -s \
-        --connect-timeout 2 \
-        --max-time 3 \
-        -w "%{time_namelookup} %{time_connect}" \
-        "${scheme}://${host}:${port}/" 2>/dev/null || true)
-
-    awk -v t="${timing}" 'BEGIN{
-        split(t, a, " ")
-        dns = a[1] + 0
-        conn = a[2] + 0
-        if (conn <= 0 || conn < dns) {
-            print ""
-            exit
-        }
-        ms = int((conn - dns) * 1000 + 0.5)
-        if (ms < 1) ms = 1
-        print ms
-    }'
-}
-
-get_ping() {
-    host="$1"
-    port="${2:-443}"
-
-    if [ "${PING_TYPE}" = "tcp" ]; then
-        get_tcp_ping "$host" "$port"
-    else
-        get_http_ping "$host"
-    fi
-}
-
-get_packet_loss() {
-    host="${1:-}"
-    count="${2:-4}"
-
-    if [ -z "$host" ]; then
-        echo ""
+    local host probe_target
+    if ! probe_target=$(split_probe_target "$target" "$port"); then
+        echo "null 100"
         return
     fi
+    host="${probe_target% *}"
+    port="${probe_target##* }"
 
-    ok=0
-    i=1
-    while [ "$i" -le "$count" ]; do
-        if get_ping "$host" 2>/dev/null | grep -qE '^[0-9]+$'; then
-            ok=$((ok + 1))
+    if has_nc_zero_io && get_time_ms >/dev/null 2>&1; then
+        local ok=0 values="" i=1 rtt
+        while [ "$i" -le "$count" ]; do
+            rtt=$(get_tcp_ping_nc "$host" "$port" 2>/dev/null)
+            if [ -n "$rtt" ]; then
+                ok=$((ok + 1))
+                values="$values $rtt"
+            fi
+            i=$((i + 1))
+        done
+        if [ "$ok" -gt 0 ]; then
+            local sorted median_val n=$ok
+            sorted=$(echo "$values" | tr ' ' '\n' | grep -v '^$' | sort -n)
+            if [ $((n % 2)) -eq 1 ]; then
+                median_val=$(echo "$sorted" | sed -n "$(( (n + 1) / 2 ))p")
+            else
+                local a b
+                a=$(echo "$sorted" | sed -n "$(( n / 2 ))p")
+                b=$(echo "$sorted" | sed -n "$(( n / 2 + 1 ))p")
+                median_val=$(( (a + b) / 2 ))
+            fi
+            echo "$median_val $(( (count - ok) * 100 / count ))"
+        else
+            echo "null 100"
         fi
-        i=$((i + 1))
-    done
-    echo $(( (count - ok) * 100 / count ))
+        return
+    fi
+
+    local icmp_out
+    icmp_out=$(ping -c "$count" -W 2 "$host" 2>/dev/null)
+    local avg_rtt loss
+    avg_rtt=$(echo "$icmp_out" | awk -F'[/ ]' '/^rtt/{print $8}' | cut -d. -f1)
+    loss=$(echo "$icmp_out" | awk '/packet loss/{for(i=1;i<=NF;i++) if($i~/[0-9]+%/){gsub(/%/,"",$i);printf "%d",$i;exit}}')
+    [ -z "$avg_rtt" ] && avg_rtt="null"
+    [ -z "$loss" ] && loss=100
+    echo "$avg_rtt $loss"
 }
 
 CT_NODE="${CT_NODE:-}"
@@ -836,28 +979,31 @@ write_probe_result() {
     local dest="$1"
     shift
     local tmp="${dest}.tmp"
-    if "$@" > "$tmp"; then
+    rm -f "$tmp"
+    "$@" > "$tmp" 2>/dev/null || true
+    if [ -s "$tmp" ]; then
         mv "$tmp" "$dest"
     else
         rm -f "$tmp" "$dest"
     fi
 }
 
-refresh_latency_async() {
-    [ -n "$CT_NODE" ] && write_probe_result /tmp/.cf_ping_ct get_ping "$CT_NODE" &
-    [ -n "$CU_NODE" ] && write_probe_result /tmp/.cf_ping_cu get_ping "$CU_NODE" &
-    [ -n "$CM_NODE" ] && write_probe_result /tmp/.cf_ping_cm get_ping "$CM_NODE" &
-    [ -n "$BD_NODE" ] && write_probe_result /tmp/.cf_ping_bd get_ping "$BD_NODE" &
-    [ -n "$CT_NODE" ] && write_probe_result /tmp/.cf_loss_ct get_packet_loss "$CT_NODE" &
-    [ -n "$CU_NODE" ] && write_probe_result /tmp/.cf_loss_cu get_packet_loss "$CU_NODE" &
-    [ -n "$CM_NODE" ] && write_probe_result /tmp/.cf_loss_cm get_packet_loss "$CM_NODE" &
-    [ -n "$BD_NODE" ] && write_probe_result /tmp/.cf_loss_bd get_packet_loss "$BD_NODE" &
+refresh_probe_async() {
+    [ -n "$CT_NODE" ] && write_probe_result /tmp/.cf_probe_ct get_probe "$CT_NODE" 4 443 &
+    [ -n "$CU_NODE" ] && write_probe_result /tmp/.cf_probe_cu get_probe "$CU_NODE" 4 443 &
+    [ -n "$CM_NODE" ] && write_probe_result /tmp/.cf_probe_cm get_probe "$CM_NODE" 4 443 &
+    [ -n "$BD_NODE" ] && write_probe_result /tmp/.cf_probe_bd get_probe "$BD_NODE" 4 443 &
+    wait
 }
 
 run_network_worker() {
     set -eu
     last_ip=0
-    last_ping=0
+    last_probe=0
+    probe_interval="${REPORT_INTERVAL:-60}"
+    case "$probe_interval" in ''|*[!0-9]*) probe_interval=60 ;; esac
+    [ "$probe_interval" -lt 30 ] && probe_interval=30
+    [ "$probe_interval" -gt 60 ] && probe_interval=60
 
     while true; do
         now=$(date +%s)
@@ -868,9 +1014,9 @@ run_network_worker() {
             last_ip="$now"
         fi
 
-        if [ $((now - last_ping)) -ge 30 ] || [ "$last_ping" -eq 0 ]; then
-            refresh_latency_async
-            last_ping="$now"
+        if [ $((now - last_probe)) -ge "$probe_interval" ] || [ "$last_probe" -eq 0 ]; then
+            refresh_probe_async
+            last_probe="$now"
         fi
         sleep 5
     done
@@ -896,6 +1042,7 @@ LAST_REPORT_TIME=0
 
 while true; do
     LOOP_START_TIME=$(date +%s)
+    rotate_log_if_needed "$PROBE_LOG_FILE"
 
     if ! kill -0 "$WORKER_PID" 2>/dev/null; then
         run_network_worker &
@@ -1008,21 +1155,25 @@ while true; do
 
     [ -f /tmp/.cf_ipv4 ] && IPV4=$(cat /tmp/.cf_ipv4) || IPV4="0"
     [ -f /tmp/.cf_ipv6 ] && IPV6=$(cat /tmp/.cf_ipv6) || IPV6="0"
-    [ -f /tmp/.cf_ping_ct ] && PING_CT=$(cat /tmp/.cf_ping_ct) || PING_CT=""
-    [ -f /tmp/.cf_ping_cu ] && PING_CU=$(cat /tmp/.cf_ping_cu) || PING_CU=""
-    [ -f /tmp/.cf_ping_cm ] && PING_CM=$(cat /tmp/.cf_ping_cm) || PING_CM=""
-    [ -f /tmp/.cf_ping_bd ] && PING_BD=$(cat /tmp/.cf_ping_bd) || PING_BD=""
-    [ -f /tmp/.cf_loss_ct ] && LOSS_CT=$(cat /tmp/.cf_loss_ct) || LOSS_CT=""
-    [ -f /tmp/.cf_loss_cu ] && LOSS_CU=$(cat /tmp/.cf_loss_cu) || LOSS_CU=""
-    [ -f /tmp/.cf_loss_cm ] && LOSS_CM=$(cat /tmp/.cf_loss_cm) || LOSS_CM=""
-    [ -f /tmp/.cf_loss_bd ] && LOSS_BD=$(cat /tmp/.cf_loss_bd) || LOSS_BD=""
+    if [ -f /tmp/.cf_probe_ct ]; then _p=$(cat /tmp/.cf_probe_ct); PING_CT=${_p%% *}; LOSS_CT=${_p##* }; else PING_CT=""; LOSS_CT=""; fi
+    if [ -f /tmp/.cf_probe_cu ]; then _p=$(cat /tmp/.cf_probe_cu); PING_CU=${_p%% *}; LOSS_CU=${_p##* }; else PING_CU=""; LOSS_CU=""; fi
+    if [ -f /tmp/.cf_probe_cm ]; then _p=$(cat /tmp/.cf_probe_cm); PING_CM=${_p%% *}; LOSS_CM=${_p##* }; else PING_CM=""; LOSS_CM=""; fi
+    if [ -f /tmp/.cf_probe_bd ]; then _p=$(cat /tmp/.cf_probe_bd); PING_BD=${_p%% *}; LOSS_BD=${_p##* }; else PING_BD=""; LOSS_BD=""; fi
 
     EOS=$(escape_json "${OS}")
     EARCH=$(escape_json "${ARCH}")
     ECPU=$(escape_json "${CPU_INFO}")
+    PING_CT_JSON=$(json_probe_value "$CT_NODE" "$PING_CT")
+    PING_CU_JSON=$(json_probe_value "$CU_NODE" "$PING_CU")
+    PING_CM_JSON=$(json_probe_value "$CM_NODE" "$PING_CM")
+    PING_BD_JSON=$(json_probe_value "$BD_NODE" "$PING_BD")
+    LOSS_CT_JSON=$(json_probe_value "$CT_NODE" "$LOSS_CT")
+    LOSS_CU_JSON=$(json_probe_value "$CU_NODE" "$LOSS_CU")
+    LOSS_CM_JSON=$(json_probe_value "$CM_NODE" "$LOSS_CM")
+    LOSS_BD_JSON=$(json_probe_value "$BD_NODE" "$LOSS_BD")
 
     METRICS_JSON=$(cat <<EOF
-{"cpu":"$CPU","ram_total":"$RAM_TOTAL","ram_used":"$RAM_USED","swap_total":"$SWAP_TOTAL","swap_used":"$SWAP_USED","disk_total":"$DISK_TOTAL","disk_used":"$DISK_USED","load_avg":"$LOAD_AVG","boot_time":"$BOOT_TIME","net_rx":"$RX_NOW","net_tx":"$TX_NOW","net_rx_monthly":"$RX_MONTHLY","net_tx_monthly":"$TX_MONTHLY","net_in_speed":"$RX_SPEED","net_out_speed":"$TX_SPEED","os":"$EOS","arch":"$EARCH","cpu_info":"$ECPU","cpu_cores":"$CPU_CORES","processes":"$PROCESSES","tcp_conn":"$TCP_CONN","udp_conn":"$UDP_CONN","ip_v4":"$IPV4","ip_v6":"$IPV6","ping_ct":"$PING_CT","ping_cu":"$PING_CU","ping_cm":"$PING_CM","ping_bd":"$PING_BD","loss_ct":"$LOSS_CT","loss_cu":"$LOSS_CU","loss_cm":"$LOSS_CM","loss_bd":"$LOSS_BD"}
+{"cpu":"$CPU","ram_total":"$RAM_TOTAL","ram_used":"$RAM_USED","swap_total":"$SWAP_TOTAL","swap_used":"$SWAP_USED","disk_total":"$DISK_TOTAL","disk_used":"$DISK_USED","load_avg":"$LOAD_AVG","boot_time":"$BOOT_TIME","net_rx":"$RX_NOW","net_tx":"$TX_NOW","net_rx_monthly":"$RX_MONTHLY","net_tx_monthly":"$TX_MONTHLY","net_in_speed":"$RX_SPEED","net_out_speed":"$TX_SPEED","os":"$EOS","arch":"$EARCH","cpu_info":"$ECPU","cpu_cores":"$CPU_CORES","processes":"$PROCESSES","tcp_conn":"$TCP_CONN","udp_conn":"$UDP_CONN","ip_v4":"$IPV4","ip_v6":"$IPV6","ping_ct":$PING_CT_JSON,"ping_cu":$PING_CU_JSON,"ping_cm":$PING_CM_JSON,"ping_bd":$PING_BD_JSON,"loss_ct":$LOSS_CT_JSON,"loss_cu":$LOSS_CU_JSON,"loss_cm":$LOSS_CM_JSON,"loss_bd":$LOSS_BD_JSON}
 EOF
 )
     if [ "$COLLECT_INTERVAL" -gt 0 ]; then
@@ -1052,7 +1203,8 @@ EOF
         REPORT_HEADER_FILE="/tmp/.cf_probe_headers.$$"
         REPORT_HTTP_CODE=$(curl -sS -D "$REPORT_HEADER_FILE" -o "$REPORT_RESPONSE_FILE" -w "%{http_code}" -X POST \
             -H "Content-Type: application/json" \
-            -H "X-Agent-Config-Schema: 1" \
+            -H "X-Agent-Config-Schema: 2" \
+            -H "X-Agent-Version: ${AGENT_VERSION}" \
             -H "X-Agent-Config-Md5: ${CONFIG_MD5:-none}" \
             -d "$PAYLOAD" -m 8 --connect-timeout 3 "$WORKER_URL" 2>/dev/null || echo 000)
         case "$REPORT_HTTP_CODE" in ''|*[!0-9]*) REPORT_HTTP_CODE=000 ;; esac
@@ -1065,11 +1217,7 @@ EOF
         LAST_REPORT_TIME=$LOOP_START_TIME
     fi
 
-    LOOP_END_TIME=$(date +%s)
-    EXEC_DURATION=$((LOOP_END_TIME - LOOP_START_TIME))
-    SLEEP_TIME=$((ACTIVE_INTERVAL - EXEC_DURATION))
-    [ "${SLEEP_TIME}" -le 0 ] && SLEEP_TIME=1
-    sleep "${SLEEP_TIME}"
+    sleep "${ACTIVE_INTERVAL}"
 done
 PROBE_EOF
 
@@ -1081,16 +1229,6 @@ PROBE_EOF
 # 创建 procd 服务脚本 / 手动启停入口
 # ---------------------------------------------------------------
 create_service() {
-    esc_id=$(printf '%s' "$SERVER_ID" | sed 's/\\/\\\\/g; s/"/\\"/g')
-    esc_sec=$(printf '%s' "$SECRET" | sed 's/\\/\\\\/g; s/"/\\"/g; s/%/%%/g')
-    esc_url=$(printf '%s' "$WORKER_URL" | sed 's/\\/\\\\/g; s/"/\\"/g')
-    esc_ping=$(printf '%s' "$PING_TYPE" | sed 's/\\/\\\\/g; s/"/\\"/g')
-    esc_ct=$(printf '%s' "$CT_NODE" | sed 's/\\/\\\\/g; s/"/\\"/g')
-    esc_cu=$(printf '%s' "$CU_NODE" | sed 's/\\/\\\\/g; s/"/\\"/g')
-    esc_cm=$(printf '%s' "$CM_NODE" | sed 's/\\/\\\\/g; s/"/\\"/g')
-    esc_bd=$(printf '%s' "$BD_NODE" | sed 's/\\/\\\\/g; s/"/\\"/g')
-    esc_reset_day=$(printf '%s' "$RESET_DAY" | sed 's/\\/\\\\/g; s/"/\\"/g')
-
     exec_line="/bin/sh \"${SCRIPT_FILE}\""
 
     if [ "$INIT_SYSTEM" = "procd" ]; then
@@ -1259,26 +1397,14 @@ install_probe() {
     WORKER_URL=""
     COLLECT_INTERVAL=""
     REPORT_INTERVAL=""
-    PING_TYPE=""
     CT_NODE=""
     CU_NODE=""
     CM_NODE=""
     BD_NODE=""
     RESET_DAY=""
+    AUTO_UPDATE=""
     RX_CORRECTION=""
     TX_CORRECTION=""
-
-    # 用于保存从旧服务文件提取的参数
-    OLD_SERVER_ID=""
-    OLD_SECRET=""
-    OLD_WORKER_URL=""
-    OLD_REPORT_INTERVAL=""
-    OLD_PING_TYPE=""
-    OLD_CT_NODE=""
-    OLD_CU_NODE=""
-    OLD_CM_NODE=""
-    OLD_BD_NODE=""
-    OLD_RESET_DAY=""
 
     for arg in "$@"; do
         case "$arg" in
@@ -1287,12 +1413,12 @@ install_probe() {
             -url=*) WORKER_URL="${arg#-url=}" ;;
             -collect_interval=*|-collect=*) COLLECT_INTERVAL="${arg#*=}" ;;
             -interval=*) REPORT_INTERVAL="${arg#-interval=}" ;;
-            -ping=*) PING_TYPE="${arg#-ping=}" ;;
             -ct=*) CT_NODE="${arg#-ct=}" ;;
             -cu=*) CU_NODE="${arg#-cu=}" ;;
             -cm=*) CM_NODE="${arg#-cm=}" ;;
             -bd=*) BD_NODE="${arg#-bd=}" ;;
             -reset_day=*) RESET_DAY="${arg#-reset_day=}" ;;
+            -auto_update=*|-auto-update=*) AUTO_UPDATE=$(normalize_binary_value "${arg#*=}") || error "auto_update 参数非法，仅支持 0 或 1" ;;
             -rx_correction=*) RX_CORRECTION="${arg#-rx_correction=}" ;;
             -tx_correction=*) TX_CORRECTION="${arg#-tx_correction=}" ;;
         esac
@@ -1303,9 +1429,6 @@ install_probe() {
     detect_os
     install_deps
 
-    # 在停止旧服务之前，先提取旧参数
-    extract_old_params
-
     stop_old_service
 
     if [ -f "${CONFIG_FILE}" ]; then
@@ -1314,9 +1437,9 @@ install_probe() {
         if [ -n "${SERVER_ID}" ] && [ -n "${SECRET}" ] && [ -n "${WORKER_URL}" ]; then
             COLLECT_INTERVAL=${COLLECT_INTERVAL:-0}
             REPORT_INTERVAL=${REPORT_INTERVAL:-60}
-            PING_TYPE=${PING_TYPE:-http}
             [ -z "$RESET_DAY" ] && RESET_DAY=1
             normalize_probe_config
+            AUTO_UPDATE=$(normalize_binary_value "$AUTO_UPDATE" 0) || error "auto_update 参数非法，仅支持 0 或 1"
             
             step "更新配置文件..."
             cat > "${CONFIG_FILE}" << EOF
@@ -1325,12 +1448,12 @@ SECRET="${SECRET}"
 WORKER_URL="${WORKER_URL}"
 COLLECT_INTERVAL="${COLLECT_INTERVAL}"
 REPORT_INTERVAL="${REPORT_INTERVAL}"
-PING_TYPE="${PING_TYPE}"
 CT_NODE="${CT_NODE:-}"
 CU_NODE="${CU_NODE:-}"
 CM_NODE="${CM_NODE:-}"
 BD_NODE="${BD_NODE:-}"
 RESET_DAY="${RESET_DAY}"
+AUTO_UPDATE="${AUTO_UPDATE}"
 CONFIG_MD5="none"
 EOF
             chmod 600 "${CONFIG_FILE}" 2>/dev/null || true
@@ -1344,41 +1467,25 @@ EOF
                     WORKER_URL) WORKER_URL="${value%\"}"; WORKER_URL="${WORKER_URL#\"}" ;;
                     COLLECT_INTERVAL) COLLECT_INTERVAL="${value%\"}"; COLLECT_INTERVAL="${COLLECT_INTERVAL#\"}" ;;
                     REPORT_INTERVAL) REPORT_INTERVAL="${value%\"}"; REPORT_INTERVAL="${REPORT_INTERVAL#\"}" ;;
-                    PING_TYPE) PING_TYPE="${value%\"}"; PING_TYPE="${PING_TYPE#\"}" ;;
                     CT_NODE) CT_NODE="${value%\"}"; CT_NODE="${CT_NODE#\"}" ;;
                     CU_NODE) CU_NODE="${value%\"}"; CU_NODE="${CU_NODE#\"}" ;;
                     CM_NODE) CM_NODE="${value%\"}"; CM_NODE="${CM_NODE#\"}" ;;
                     BD_NODE) BD_NODE="${value%\"}"; BD_NODE="${BD_NODE#\"}" ;;
                     RESET_DAY) RESET_DAY="${value%\"}"; RESET_DAY="${RESET_DAY#\"}" ;;
+                    AUTO_UPDATE) AUTO_UPDATE="${value%\"}"; AUTO_UPDATE="${AUTO_UPDATE#\"}" ;;
                 esac
             done < "${CONFIG_FILE}"
         fi
     else
         if [ -z "${SERVER_ID}" ] || [ -z "${SECRET}" ] || [ -z "${WORKER_URL}" ]; then
-            # 使用从旧服务文件提取的参数
-            if [ -n "${OLD_SERVER_ID}" ] && [ -n "${OLD_SECRET}" ] && [ -n "${OLD_WORKER_URL}" ]; then
-                step "使用从旧服务文件提取的参数..."
-                SERVER_ID="${OLD_SERVER_ID}"
-                SECRET="${OLD_SECRET}"
-                WORKER_URL="${OLD_WORKER_URL}"
-                REPORT_INTERVAL="${OLD_REPORT_INTERVAL:-60}"
-                PING_TYPE="${OLD_PING_TYPE:-http}"
-                CT_NODE="${OLD_CT_NODE:-}"
-                CU_NODE="${OLD_CU_NODE:-}"
-                CM_NODE="${OLD_CM_NODE:-}"
-                BD_NODE="${OLD_BD_NODE:-}"
-                [ -z "${OLD_RESET_DAY}" ] && RESET_DAY=1 || RESET_DAY="${OLD_RESET_DAY}"
-                info "已从旧版本服务文件恢复参数"
-            else
-                print_usage
-            fi
+            print_usage
         fi
 
         COLLECT_INTERVAL=${COLLECT_INTERVAL:-0}
         REPORT_INTERVAL=${REPORT_INTERVAL:-60}
-        PING_TYPE=${PING_TYPE:-http}
         [ -z "$RESET_DAY" ] && RESET_DAY=1
         normalize_probe_config
+        AUTO_UPDATE=$(normalize_binary_value "$AUTO_UPDATE" 0) || error "auto_update 参数非法，仅支持 0 或 1"
 
         step "创建配置目录..."
         mkdir -p "${CONFIG_DIR}" 2>/dev/null || true
@@ -1400,12 +1507,12 @@ SECRET="${SECRET}"
 WORKER_URL="${WORKER_URL}"
 COLLECT_INTERVAL="${COLLECT_INTERVAL}"
 REPORT_INTERVAL="${REPORT_INTERVAL}"
-PING_TYPE="${PING_TYPE}"
 CT_NODE="${CT_NODE:-}"
 CU_NODE="${CU_NODE:-}"
 CM_NODE="${CM_NODE:-}"
 BD_NODE="${BD_NODE:-}"
 RESET_DAY="${RESET_DAY}"
+AUTO_UPDATE="${AUTO_UPDATE}"
 CONFIG_MD5="none"
 EOF
         chmod 600 "${CONFIG_FILE}" 2>/dev/null || true
@@ -1415,6 +1522,7 @@ EOF
     COLLECT_INTERVAL=${COLLECT_INTERVAL:-0}
     REPORT_INTERVAL=${REPORT_INTERVAL:-60}
     normalize_probe_config
+    AUTO_UPDATE=$(normalize_binary_value "$AUTO_UPDATE" 0) || error "auto_update 参数非法，仅支持 0 或 1"
 
     if [ -n "${RX_CORRECTION}" ] || [ -n "${TX_CORRECTION}" ]; then
         step "应用流量校正..."
@@ -1445,7 +1553,7 @@ EOF
     start_service
 
     printf '\n%b=============================================%b\n' "${GREEN}" "${NC}"
-    printf  '         CF-Server-Monitor 安装成功\n'
+    printf  '         CF-Server-Monitor %s 安装成功\n' "${AGENT_VERSION}"
     printf  '%b=============================================%b\n' "${GREEN}" "${NC}"
     printf  '  服务状态 : %bActive (Running)%b\n' "${GREEN}" "${NC}"
     printf  '  配置参数 :\n'
@@ -1454,7 +1562,7 @@ EOF
     printf  '    ● Worker URL  : %s\n' "${WORKER_URL}"
     printf  '    ● 上报间隔    : %s秒\n' "${REPORT_INTERVAL}"
     printf  '    ● 采样间隔    : %s秒\n' "${COLLECT_INTERVAL}"
-    printf  '    ● 探测类型    : %s\n' "${PING_TYPE}"
+    printf  '    ● 自动更新    : %s\n' "${AUTO_UPDATE}"
     [ -n "${RX_CORRECTION}" ] && printf  '    ● 下行校正    : %sGB\n' "${RX_CORRECTION}"
     [ -n "${TX_CORRECTION}" ] && printf  '    ● 上行校正    : %sGB\n' "${TX_CORRECTION}"
     if [ "${RESET_DAY}" = "0" ]; then
@@ -1470,7 +1578,7 @@ EOF
     case "$INIT_SYSTEM" in
         procd) echo "procd 系统服务 (${PROCD_FILE})" ;;
         openrc) echo "OpenRC 系统服务 (${PROCD_FILE})" ;;
-        *)     echo "手动后台进程 (PID: $(cat "$PID_FILE"))" ;;
+        *)     if [ -f "$PID_FILE" ]; then echo "手动后台进程 (PID: $(cat "$PID_FILE"))"; else echo "手动后台进程"; fi ;;
     esac
     printf  '  管理指令 :\n'
     if [ "$INIT_SYSTEM" = "procd" ]; then
@@ -1510,7 +1618,7 @@ uninstall_probe() {
     rm -f "${SCRIPT_FILE}.ctl"
 
     step "抹除共享内存高速缓存区..."
-    rm -f /tmp/.cf_ipv4 /tmp/.cf_ipv6 /tmp/.cf_ping_* /tmp/.cf_loss_* 2>/dev/null || true
+    rm -f /tmp/.cf_ipv4 /tmp/.cf_ipv6 /tmp/.cf_probe_* 2>/dev/null || true
 
     step "抹除流量追踪数据..."
     rm -rf /var/lib/${SERVICE_NAME}

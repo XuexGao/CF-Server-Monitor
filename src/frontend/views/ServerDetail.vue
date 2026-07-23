@@ -31,10 +31,14 @@
       <div class="host-card-header">
         <div class="host-name">
           <span class="prompt">root@</span>
-          <span v-if="server.region && server.region !== 'xx'">
-          <img :src="'https://flagcdn.com/24x18/' + getFlagRegionCode(server.region) + '.png'" :alt="server.region" class="flag-img" style="margin-right:6px;">
-        </span>
-          <span v-else>🏳️</span>
+          <span v-if="server.region && server.region !== 'xx'" class="country-os-icons">
+            <img :src="getPublicAssetUrl('flags/' + getFlagRegionCode(server.region) + '.svg')" :alt="server.region" class="flag-img">
+            <OsIcon :os="server.os" />
+          </span>
+          <span v-else class="country-os-icons">
+            <span class="flag-fallback">🏳️</span>
+            <OsIcon :os="server.os" />
+          </span>
           <span>{{ server.name || 'Loading...' }}</span>
           <span style="color: var(--text-muted);">:~#</span>
         </div>
@@ -224,17 +228,16 @@
         </div>
       </div>
 
-      <div class="chart-card">
+      <div class="chart-card" v-show="hasPingData">
         <div class="chart-card-header">
           <span class="chart-title">
             <span class="chart-title-icon">▸</span>
             {{ trans.latencyMonitor }}
           </span>
           <div class="ping-indicator">
-            <span class="ping-ct">{{ trans.pingCt }} <b>{{ formatPing(server.ping_ct) }}</b></span>
-            <span class="ping-cu">{{ trans.pingCu }} <b>{{ formatPing(server.ping_cu) }}</b></span>
-            <span class="ping-cm">{{ trans.pingCm }} <b>{{ formatPing(server.ping_cm) }}</b></span>
-            <span class="ping-bd">{{ trans.pingBd }} <b>{{ formatPing(server.ping_bd) }}</b></span>
+            <span v-for="item in visiblePingStats" :key="item.field" :class="item.className">
+              {{ item.label }} <b>{{ item.value !== null ? item.value + 'ms' : 'Timeout' }}</b>
+            </span>
           </div>
         </div>
         <div class="chart-body">
@@ -249,10 +252,10 @@
             {{ trans.packetLoss || 'Packet Loss' }}
           </span>
           <div class="ping-indicator">
-            <span v-if="isLossValid(server.loss_ct)" class="ping-ct">{{ trans.pingCt }} <b>{{ formatLoss(server.loss_ct) }}</b></span>
-            <span v-if="isLossValid(server.loss_cu)" class="ping-cu">{{ trans.pingCu }} <b>{{ formatLoss(server.loss_cu) }}</b></span>
-            <span v-if="isLossValid(server.loss_cm)" class="ping-cm">{{ trans.pingCm }} <b>{{ formatLoss(server.loss_cm) }}</b></span>
-            <span v-if="isLossValid(server.loss_bd)" class="ping-bd">{{ trans.pingBd }} <b>{{ formatLoss(server.loss_bd) }}</b></span>
+            <span v-if="avgLossCt !== null" class="ping-ct">{{ trans.pingCt }} <b>{{ avgLossCt }}%</b></span>
+            <span v-if="avgLossCu !== null" class="ping-cu">{{ trans.pingCu }} <b>{{ avgLossCu }}%</b></span>
+            <span v-if="avgLossCm !== null" class="ping-cm">{{ trans.pingCm }} <b>{{ avgLossCm }}%</b></span>
+            <span v-if="avgLossBd !== null" class="ping-bd">{{ trans.pingBd }} <b>{{ avgLossBd }}%</b></span>
           </div>
         </div>
         <div class="chart-body">
@@ -287,14 +290,16 @@ import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import TerminalHeader from '../components/TerminalHeader.vue'
 import Footer from '../components/Footer.vue'
+import OsIcon from '../components/OsIcon.vue'
 import { fetchServerDetail, fetchAllHistory, formatBytes, isAdminLoggedIn, createLiveSocket, getFlagRegionCode, isServerOnline } from '../utils/api.js'
-import { hasMultipleApiBases } from '../utils/config.js'
+import { hasMultipleApiBases, getPublicAssetUrl } from '../utils/config.js'
 import Chart from 'chart.js/auto'
 import 'chartjs-adapter-date-fns'
 import { t, currentLang, useTranslation } from '../utils/i18n'
 import { CHART } from '../utils/constants'
 import { formatDateTime } from '../utils/time.js'
 import useTheme from '../composables/useTheme'
+import { isDisabledProbeMetric } from '../../utils/metrics.js'
 
 const route = useRoute()
 const router = useRouter()
@@ -323,6 +328,13 @@ const showLoginModal = ref(false)
 const loading = ref(true)
 
 const trans = useTranslation()
+
+const PING_FIELD_DEFS = [
+  { field: 'ping_ct', lossField: 'loss_ct', labelKey: 'pingCt', className: 'ping-ct', datasetIndex: 0 },
+  { field: 'ping_cu', lossField: 'loss_cu', labelKey: 'pingCu', className: 'ping-cu', datasetIndex: 1 },
+  { field: 'ping_cm', lossField: 'loss_cm', labelKey: 'pingCm', className: 'ping-cm', datasetIndex: 2 },
+  { field: 'ping_bd', lossField: 'loss_bd', labelKey: 'pingBd', className: 'ping-bd', datasetIndex: 3 }
+]
 
 const isMultipleMode = computed(() => hasMultipleApiBases())
 
@@ -394,9 +406,32 @@ const historyLoaded = ref(false)
 
 const charts = {}
 const chartsReady = ref(false)
-const hasLossHistoryData = ref(false)
+const lossHistoryFields = ref({})
+const avgPingCt = ref(null)
+const avgPingCu = ref(null)
+const avgPingCm = ref(null)
+const avgPingBd = ref(null)
+const avgLossCt = ref(null)
+const avgLossCu = ref(null)
+const avgLossCm = ref(null)
+const avgLossBd = ref(null)
 let isInitializingCharts = false
 let databaseUpgradeAlertShown = false
+
+const avgPingRefs = {
+  ping_ct: avgPingCt,
+  ping_cu: avgPingCu,
+  ping_cm: avgPingCm,
+  ping_bd: avgPingBd
+}
+
+const visiblePingFields = computed(() => PING_FIELD_DEFS.filter(item => !isDisabledProbeMetric(server.value[item.field])))
+const hasPingData = computed(() => visiblePingFields.value.length > 0)
+const visiblePingStats = computed(() => visiblePingFields.value.map(item => ({
+  ...item,
+  label: trans.value[item.labelKey],
+  value: avgPingRefs[item.field].value
+})))
 
 const safeDestroyCharts = () => {
   try {
@@ -415,9 +450,9 @@ const parseLoadAvg = (loadAvgStr) => {
   return [load1, load5, load15]
 }
 
-const isLossValid = (value) => value !== null && value !== undefined && value !== '' && !Number.isNaN(parseFloat(value))
+const isLossValid = (value) => !isDisabledProbeMetric(value) && value !== null && value !== undefined && value !== '' && !Number.isNaN(parseFloat(value))
 const formatLoss = (value) => isLossValid(value) ? `${Math.max(0, Math.min(100, parseFloat(value))).toFixed(0)}%` : ''
-const hasLossData = computed(() => hasLossHistoryData.value || ['loss_ct', 'loss_cu', 'loss_cm', 'loss_bd'].some(key => isLossValid(server.value[key])))
+const hasLossData = computed(() => visiblePingFields.value.some(item => lossHistoryFields.value[item.lossField] || isLossValid(server.value[item.lossField])))
 const formatPing = (value) => (value === null || value === undefined || value === '' || value === 'null') ? 'Timeout' : `${value}ms`
 
 const parseBootTimeToMs = (bootTime) => {
@@ -493,6 +528,25 @@ const CHART_DEFS = [
   { key: 'load', ref: () => loadChartRef.value, datasets: [ds(trans.value.load1m || '1 Min', '#00d4aa', { tension: 0.3 }), ds(trans.value.load5m || '5 Min', '#ffb870', { tension: 0.3 }), ds(trans.value.load15m || '15 Min', '#4da6ff', { tension: 0.3 })], legend: true }
 ]
 
+const syncProbeChartVisibility = () => {
+  for (const chartKey of ['ping', 'loss']) {
+    const chart = charts[chartKey]
+    if (!chart) continue
+
+    for (const item of PING_FIELD_DEFS) {
+      const dataset = chart.data.datasets[item.datasetIndex]
+      if (!dataset) continue
+      const disabled = isDisabledProbeMetric(server.value[item.field])
+      dataset.disabledProbe = disabled
+      dataset.hidden = disabled
+      if (typeof chart.setDatasetVisibility === 'function') {
+        chart.setDatasetVisibility(item.datasetIndex, !disabled)
+      }
+    }
+    chart.update('none')
+  }
+}
+
 const initCharts = () => {
   safeDestroyCharts()
 
@@ -526,7 +580,8 @@ const initCharts = () => {
           padding: 12,
           font: { size: 10, family: "'JetBrains Mono', monospace" },
           usePointStyle: true,
-          color: axisLabelColor
+          color: axisLabelColor,
+          filter: (legendItem, chartData) => !chartData.datasets[legendItem.datasetIndex]?.disabledProbe
         }
       },
       tooltip: {
@@ -612,6 +667,8 @@ const initCharts = () => {
       options: createChartOptions(def.unit || '', def.legend, def.formatValue, def.tickFormat)
     })
   }
+
+  syncProbeChartVisibility()
 }
 
 const updateChartsTheme = (theme) => {
@@ -642,10 +699,13 @@ const updateChartsTheme = (theme) => {
   })
 }
 
-// ≤1h: gap超过5分钟断线; >1h: 总时长/80，最低5分钟基础阈值
+const { onThemeChange } = useTheme()
+onThemeChange(updateChartsTheme)
+
+// ≤1h: gap超过5分钟断线; >1h: 总时长/160，最低5分钟基础阈值
 const getHistoryGapBreakMs = (hours = currentHours.value) => {
   if (hours <= 1) return 5 * 60 * 1000
-  return Math.max(5 * 60 * 1000, Math.ceil(hours * 60 * 60 * 1000 / 80))
+  return Math.max(5 * 60 * 1000, Math.ceil(hours * 60 * 60 * 1000 / 160))
 }
 
 const shouldBreakGap = (prevPoint, nextPoint) => {
@@ -781,10 +841,12 @@ const updateLoadChart = (chart, dataPoints) => {
 const loadAllHistory = async (hours) => {
   try {
     const allData = await fetchAllHistory(serverId, hours, apiIndex.value)
+    lossHistoryFields.value = Object.fromEntries(PING_FIELD_DEFS.map(item => [
+      item.lossField,
+      allData.some(row => isLossValid(row[item.lossField]))
+    ]))
 
     if (allData.length > 0) {
-      hasLossHistoryData.value = allData.some(item => ['loss_ct', 'loss_cu', 'loss_cm', 'loss_bd'].some(key => isLossValid(item[key])))
-
       updateChartDataset(charts.cpu, 0, allData, fieldAccessor('cpu'))
       updateChartDataset(charts.gpu, 0, allData, fieldAccessor('gpu', true))
       updateChartDataset(charts.ram, 0, allData, percentAccessor('ram_used', 'ram_total'))
@@ -804,6 +866,20 @@ const loadAllHistory = async (hours) => {
       updateChartDataset(charts.loss, 2, allData, fieldAccessor('loss_cm', true))
       updateChartDataset(charts.loss, 3, allData, fieldAccessor('loss_bd', true))
       updateLoadChart(charts.load, allData)
+
+      const avg = (arr, field, skipZero = true) => {
+        const vals = arr.map(d => parseFloat(d[field])).filter(v => !isNaN(v) && (skipZero ? v !== 0 : true))
+        return vals.length ? Math.round(vals.reduce((s, v) => s + v, 0) / vals.length) : null
+      }
+      avgPingCt.value = avg(allData, 'ping_ct')
+      avgPingCu.value = avg(allData, 'ping_cu')
+      avgPingCm.value = avg(allData, 'ping_cm')
+      avgPingBd.value = avg(allData, 'ping_bd')
+      avgLossCt.value = avg(allData, 'loss_ct', false)
+      avgLossCu.value = avg(allData, 'loss_cu', false)
+      avgLossCm.value = avg(allData, 'loss_cm', false)
+      avgLossBd.value = avg(allData, 'loss_bd', false)
+      syncProbeChartVisibility()
     }
 
     updateAllChartTimeUnits(hours)
@@ -818,6 +894,13 @@ const loadAllHistory = async (hours) => {
       })
     })
   } catch (e) {
+    if (e && e.status === 401) {
+      showLoginModal.value = true
+      currentHours.value = 0.167
+      historyLoaded.value = true
+      return
+    }
+
     if (e && e.message === 'databaseUpgradeRequired') {
       if (!databaseUpgradeAlertShown) {
         databaseUpgradeAlertShown = true
@@ -933,6 +1016,7 @@ const fetchCurrentStatus = async (incomingData) => {
       server.value = data
       loading.value = false
     }
+    syncProbeChartVisibility()
 
     if (data.last_updated) {
       const dataTimestamp = new Date(data.last_updated).getTime()
@@ -1021,9 +1105,6 @@ const init = async () => {
   await initChartsOnMount()
 
   loadAllHistory(currentHours.value)
-
-  const { onThemeChange } = useTheme()
-  onThemeChange(updateChartsTheme)
 
   liveSocket = createLiveSocket(String(serverId), {
     onUpdate: ({ serverId: sid, data }) => {

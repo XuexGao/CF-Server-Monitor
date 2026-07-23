@@ -73,9 +73,13 @@ const servers = [
     id: '550e8400-e29b-41d4-a716-446655440001',
     name: 'US-East-Fast',
     server_group: 'Production',
-    price: '$15/mo',
+    tags: 'production,us-east,edge',
+    note: 'Primary production node',
+    price: '15.00',
+    billing_cycle: 'month',
+    auto_renewal: '1',
+    currency: '$',
     expire_date: '2026-12-31',
-    bandwidth: '1Gbps',
     traffic_limit: '2TB',
     is_hidden: '0',
     sort_order: 0
@@ -84,9 +88,13 @@ const servers = [
     id: '550e8400-e29b-41d4-a716-446655440002',
     name: 'JP-Tokyo-Stable',
     server_group: 'Production',
-    price: '$10/mo',
+    tags: 'production,jp-tokyo',
+    note: 'Hidden standby node',
+    price: '10.00',
+    billing_cycle: 'month',
+    auto_renewal: '0',
+    currency: '$',
     expire_date: '2026-06-30',
-    bandwidth: '500Mbps',
     traffic_limit: '1TB',
     is_hidden: '1',
     sort_order: 1
@@ -111,15 +119,19 @@ CREATE TABLE IF NOT EXISTS servers (
   id TEXT PRIMARY KEY,
   name TEXT,
   server_group TEXT DEFAULT 'Default',
+  tags TEXT DEFAULT '',
+  note TEXT DEFAULT '',
   price TEXT DEFAULT '',
+  billing_cycle TEXT DEFAULT 'month',
+  auto_renewal TEXT DEFAULT '0',
+  currency TEXT DEFAULT '¥',
   expire_date TEXT DEFAULT '',
-  bandwidth TEXT DEFAULT '',
   traffic_limit TEXT DEFAULT '',
   traffic_calc_type TEXT DEFAULT 'total',
   reset_day INTEGER DEFAULT 1,
   collect_interval INTEGER DEFAULT 0,
   report_interval INTEGER DEFAULT 60,
-  ping_mode TEXT DEFAULT 'http',
+  auto_update TEXT DEFAULT '0',
   is_hidden TEXT DEFAULT '0',
   sort_order INTEGER DEFAULT 0
 );
@@ -176,7 +188,9 @@ const appearanceOptions = {
   site_title: 'Test',
   custom_bg: 'https://cdn.nodeimage.com/i/fux0OSoFzVZQsn9uZmSDbIpKzZw2r8GW.webp',
   custom_head: '<meta content="test">',
-  custom_script: 'console.log("Hello, World!");'
+  custom_script: 'console.log("Hello, World!");',
+  display_mode: 'bar',
+  theme_options: { a: 1, b: 2 }
 };
 
 const siteOptions = {
@@ -184,7 +198,6 @@ const siteOptions = {
   is_public: 'true',
   show_price: 'true',
   show_expire: 'true',
-  show_bw: 'true',
   show_tf: 'true',
   show_time: 'true',
   show_long_history: 'true',
@@ -203,10 +216,11 @@ const serverLatestMetrics = {};
 
 for (const server of servers) {
   sql += `INSERT INTO servers (
-    id, name, server_group, price, expire_date, bandwidth, traffic_limit, is_hidden, sort_order
+    id, name, server_group, tags, note, price, billing_cycle, auto_renewal, currency, expire_date, traffic_limit, is_hidden, sort_order
   ) VALUES (
-    '${server.id}', '${server.name}', '${server.server_group}', '${server.price}', 
-    '${server.expire_date}', '${server.bandwidth}', '${server.traffic_limit}', 
+    '${server.id}', '${server.name}', '${server.server_group}', '${server.tags}', '${server.note}', '${server.price}',
+    '${server.billing_cycle}', '${server.auto_renewal}', '${server.currency}',
+    '${server.expire_date}', '${server.traffic_limit}',
     '${server.is_hidden}', ${server.sort_order}
   );\n`;
 }

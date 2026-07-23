@@ -5,6 +5,7 @@
 const DEFAULT_BASE_URL = 'http://localhost:8787';
 const MOCK_PUBLIC_SERVER_ID = '550e8400-e29b-41d4-a716-446655440001';
 const MOCK_HIDDEN_SERVER_ID = '550e8400-e29b-41d4-a716-446655440002';
+const AGENT_VERSION = '1.3.0';
 
 const args = new Set(process.argv.slice(2));
 const baseUrl = normalizeBaseUrl(getArgValue('--base-url') || process.env.BASE_URL || DEFAULT_BASE_URL);
@@ -156,8 +157,8 @@ async function bootstrap() {
     { name: 'POST /clearHistory', method: 'POST', path: '/clearHistory', expectedStatus: 401 },
     { name: 'GET /__do/health', method: 'GET', path: '/__do/health', expectedStatus: 200 },
     { name: 'POST /update 无效 secret', method: 'POST', path: '/update', expectedStatus: 401, body: { id: MOCK_PUBLIC_SERVER_ID, secret: '__invalid__', metrics: {} } },
-    { name: 'POST /update 公开服务器上报成功', method: 'POST', path: '/update', expectedStatus: 200, body: { id: MOCK_PUBLIC_SERVER_ID, secret: apiSecret, metrics: buildMockMetrics() } },
-    { name: 'POST /update 隐藏服务器上报成功', method: 'POST', path: '/update', expectedStatus: 200, body: { id: MOCK_HIDDEN_SERVER_ID, secret: apiSecret, metrics: buildMockMetrics() } },
+    { name: 'POST /update 公开服务器上报成功', method: 'POST', path: '/update', expectedStatus: 200, body: { id: MOCK_PUBLIC_SERVER_ID, secret: apiSecret, metrics: buildMockMetrics() }, headers: { 'X-Agent-Version': AGENT_VERSION } },
+    { name: 'POST /update 隐藏服务器上报成功', method: 'POST', path: '/update', expectedStatus: 200, body: { id: MOCK_HIDDEN_SERVER_ID, secret: apiSecret, metrics: buildMockMetrics() }, headers: { 'X-Agent-Version': AGENT_VERSION } },
     { name: 'GET /api/server 公开服务器（未登录）', method: 'GET', path: `/api/server?id=${encodeURIComponent(MOCK_PUBLIC_SERVER_ID)}`, expectedStatus: 200 },
     { name: 'GET /api/server 隐藏服务器（未登录）', method: 'GET', path: `/api/server?id=${encodeURIComponent(MOCK_HIDDEN_SERVER_ID)}`, expectedStatus: 404 },
     { name: 'GET 不存在路径', method: 'GET', path: '/__api_check_not_found__', expectedStatus: 200, note: 'Worker 未命中 API 路由时会回退前端' }
@@ -204,7 +205,7 @@ async function bootstrap() {
       note: c.note,
       run: () => request(c.path, {
         method: c.method,
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(c.headers || {}) },
         body: c.body ? jsonBody(c.body) : undefined
       }),
       after: c.name === 'GET /api/config' ? async result => {
@@ -265,15 +266,26 @@ async function bootstrap() {
         expectedStatus: c.expectedStatus,
         run: () => request(c.path, {
           method: c.method,
-          headers,
+          headers: { ...headers, ...(c.headers || {}) },
           body: body ? jsonBody(body) : undefined
         }),
-        after: c.name === 'POST /admin/api add 成功' ? async result => {
-          if (result.status === 200 && result.data && result.data.id) {
+        after: async result => {
+          if (c.name === 'POST /admin/api list' && result.ok && result.status === 200) {
+            const payload = result.data && result.data.data ? result.data.data : result.data;
+            const servers = Array.isArray(payload?.servers) ? payload.servers : [];
+            const hasVersion = servers.some(server => server && server.agent_version === AGENT_VERSION);
+            if (hasVersion) {
+              record('pass', 'POST /admin/api list agent_version 校验', '-', AGENT_VERSION);
+            } else {
+              record('fail', 'POST /admin/api list agent_version 校验', '-', '未找到预期版本号');
+            }
+          }
+
+          if (c.name === 'POST /admin/api add 成功' && result.status === 200 && result.data && result.data.id) {
             state.createdServerId = result.data.id;
             console.log('add 成功，服务器 ID:', state.createdServerId);
           }
-        } : undefined
+        }
       });
     }
   }

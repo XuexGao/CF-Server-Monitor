@@ -1,13 +1,15 @@
 import { md5Hash } from './common.js';
 
-export const AGENT_CONFIG_SCHEMA_VERSION = 1;
+export const AGENT_CONFIG_SCHEMA_VERSION = 2;
 export const AGENT_CONFIG_SCHEMA_HEADER = 'X-Agent-Config-Schema';
 export const AGENT_CONFIG_MD5_HEADER = 'X-Agent-Config-Md5';
 export const MAX_TRAFFIC_CORRECTION_GB = 1000000;
 
 const ALLOWED_COLLECT_INTERVALS = new Set([0, 1, 2, 5, 10]);
 const ALLOWED_REPORT_INTERVALS = new Set([30, 60, 120, 180]);
-const ALLOWED_PING_MODES = new Set(['http', 'tcp']);
+const PING_NODE_HOST_PATTERN = /^[a-zA-Z0-9._-]+$/;
+const IPV4_PATTERN = /^(?:\d{1,3}\.){3}\d{1,3}$/;
+const IPV4_LIKE_PATTERN = /^(?:\d+\.){3}\d+$/;
 
 function validateInteger(name, value, allowedValues = null, min = null, max = null) {
   if (typeof value !== 'number' || !Number.isInteger(value)) {
@@ -39,10 +41,6 @@ export function validateAgentConfigInput(input) {
   const resetError = validateInteger('reset_day', input.reset_day, null, 0, 31);
   if (resetError) return { valid: false, error: resetError };
 
-  if (typeof input.ping_mode !== 'string' || !ALLOWED_PING_MODES.has(input.ping_mode)) {
-    return { valid: false, error: 'ping_mode must be http or tcp' };
-  }
-
   if (input.collect_interval > 0 && input.report_interval < input.collect_interval) {
     return { valid: false, error: 'report_interval must be greater than or equal to collect_interval' };
   }
@@ -58,7 +56,6 @@ export function validateAgentConfigInput(input) {
     valid: true,
     config: {
       collect_interval: input.collect_interval,
-      ping_mode: input.ping_mode,
       report_interval: input.report_interval,
       reset_day: input.reset_day,
       schema_version: AGENT_CONFIG_SCHEMA_VERSION
@@ -71,9 +68,84 @@ function storedInteger(value, allowedValues, fallback) {
   return Number.isInteger(number) && allowedValues.has(number) ? number : fallback;
 }
 
-function sanitizePingNode(value) {
-  if (typeof value !== 'string') return '';
-  return value.replace(/[^a-zA-Z0-9.\-_]/g, '').slice(0, 50);
+function normalizeAgentVersionForCompare(value) {
+  if (value === null || value === undefined) return '';
+  return String(value)
+    .trim()
+    .replace(/[^0-9A-Za-z.+_-]/g, '')
+    .replace(/^v(?=\d)/i, '')
+    .toLowerCase()
+    .slice(0, 64);
+}
+
+export function isAgentAutoUpdateEnabled(value) {
+  return String(value ?? '').trim() === '1';
+}
+
+export function shouldSendAgentUpdate(clientAgentVersion, latestAgentVersion) {
+  const current = normalizeAgentVersionForCompare(clientAgentVersion);
+  const latest = normalizeAgentVersionForCompare(latestAgentVersion);
+  return !!current && !!latest && current !== latest;
+}
+
+export function appendAgentUpdateParam(body, shouldUpdate) {
+  if (!shouldUpdate) return body;
+  return `${body ? `${body}&` : ''}update=1`;
+}
+
+function isValidIpv4(host) {
+  if (!IPV4_PATTERN.test(host)) return false;
+  return host.split('.').every(part => {
+    const number = Number(part);
+    return Number.isInteger(number) && number >= 0 && number <= 255;
+  });
+}
+
+function isValidHostname(host) {
+  if (!PING_NODE_HOST_PATTERN.test(host) || host.length > 50) return false;
+  if (IPV4_LIKE_PATTERN.test(host)) return false;
+  if (host.startsWith('.') || host.endsWith('.') || host.includes('..')) return false;
+  return host.split('.').every(label => {
+    if (!label || label.length > 63) return false;
+    return /^[a-zA-Z0-9_](?:[a-zA-Z0-9_-]*[a-zA-Z0-9_])?$/.test(label);
+  });
+}
+
+export function validatePingNode(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return { valid: true, value: '' };
+  if (raw.length > 60 || raw.includes('://') || /[\s/@?#\\[\]]/.test(raw)) {
+    return { valid: false };
+  }
+
+  const colonCount = (raw.match(/:/g) || []).length;
+  if (colonCount > 1) return { valid: false };
+
+  let host = raw;
+  let port = '';
+  if (colonCount === 1) {
+    const parts = raw.split(':');
+    host = parts[0];
+    port = parts[1];
+    if (!port || !/^\d{1,5}$/.test(port)) return { valid: false };
+    const portNumber = Number(port);
+    if (!Number.isInteger(portNumber) || portNumber < 1 || portNumber > 65535) {
+      return { valid: false };
+    }
+    port = String(portNumber);
+  }
+
+  host = host.toLowerCase();
+  if (!host) return { valid: false };
+  if (isValidIpv4(host) || isValidHostname(host)) {
+    return { valid: true, value: port ? `${host}:${port}` : host };
+  }
+  return { valid: false };
+}
+
+export function sanitizePingNode(value) {
+  const result = validatePingNode(value);
+  return result.valid ? result.value : '';
 }
 
 export function isValidTrafficCorrection(value) {
@@ -104,8 +176,6 @@ export function buildAgentConfig(server, settings = null) {
     ? resetNumber
     : 1;
 
-  const pingMode = ALLOWED_PING_MODES.has(server?.ping_mode) ? server.ping_mode : 'http';
-
   const customCt = sanitizePingNode(server?.custom_ct || settings?.custom_ct || '');
   const customCu = sanitizePingNode(server?.custom_cu || settings?.custom_cu || '');
   const customCm = sanitizePingNode(server?.custom_cm || settings?.custom_cm || '');
@@ -113,7 +183,6 @@ export function buildAgentConfig(server, settings = null) {
 
   return {
     collect_interval: collectInterval,
-    ping_mode: pingMode,
     report_interval: reportInterval,
     reset_day: resetDay,
     custom_ct: customCt,
@@ -126,7 +195,6 @@ export function buildAgentConfig(server, settings = null) {
 
 export function serializeAgentConfig(config) {
   return `collect_interval=${config.collect_interval}` +
-    `&ping_mode=${config.ping_mode}` +
     `&report_interval=${config.report_interval}` +
     `&reset_day=${config.reset_day}` +
     `&schema_version=${config.schema_version}` +
