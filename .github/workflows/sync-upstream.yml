@@ -11,25 +11,47 @@ permissions:
 jobs:
   sync:
     runs-on: ubuntu-latest
-    name: Sync upstream to main
     steps:
       - name: 📥 Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          # 确保检出当前默认分支（通常是 main）
+          ref: ${{ github.head_ref || 'main' }}
 
       - name: ⬆️ Sync upstream
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git remote add upstream https://github.com/huilang-me/CF-Server-Monitor.git
+
+          # 安全处理 upstream remote
+          if git remote get-url upstream >/dev/null 2>&1; then
+            git remote set-url upstream https://github.com/huilang-me/CF-Server-Monitor.git
+          else
+            git remote add upstream https://github.com/huilang-me/CF-Server-Monitor.git
+          fi
+
           git fetch upstream
-          # 备份本 workflow 自身（reset 后会被上游覆盖删除）
+
+          # 自动检测上游默认分支（不硬编码 main）
+          UPSTREAM_BRANCH=$(git remote show upstream | grep 'HEAD branch' | cut -d' ' -f5)
+          echo "Upstream default branch: $UPSTREAM_BRANCH"
+
+          # 备份当前 workflow 文件（自身）
           cp .github/workflows/sync-upstream.yml /tmp/sync-upstream.yml
-          git reset --hard upstream/main
-          # 恢复本 workflow，避免下次定时任务丢失
+
+          # 强制重置到上游最新
+          git reset --hard upstream/$UPSTREAM_BRANCH
+
+          # 恢复本 workflow 文件
           mkdir -p .github/workflows
           cp /tmp/sync-upstream.yml .github/workflows/sync-upstream.yml
           git add .github/workflows/sync-upstream.yml
-          git diff --cached --quiet || git commit -m "chore: keep sync-upstream workflow"
-          git push origin main --force
+
+          # 只有真正有变更时才提交
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: keep sync-upstream workflow"
+          fi
+
+          # 使用 --force-with-lease 更安全，且指定本地分支为当前分支
+          git push origin HEAD:main --force-with-lease
