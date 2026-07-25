@@ -53,7 +53,6 @@ export function mergeMetricsIntoServer(server, metrics) {
   server.disk_used = metrics.disk_used || 0;
   server.cpu_cores = metrics.cpu_cores || 0;
   server.cpu_info = metrics.cpu_info || '';
-  server.gpu = metrics.gpu;
   server.gpu_info = metrics.gpu_info || '';
   server.arch = metrics.arch || '';
   server.os = metrics.os || '';

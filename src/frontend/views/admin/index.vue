@@ -92,6 +92,11 @@
             :class="{ active: activeTab === 'database' }"
             @click="activeTab = 'database'"
           >▸ {{ trans.dbManagement }}</button>
+          <button
+            class="tab-btn"
+            :class="{ active: activeTab === 'themeStore' }"
+            @click="activeTab = 'themeStore'"
+          >▸ {{ trans.themeStore }}</button>
         </div>
 
         <ServerTable
@@ -145,6 +150,11 @@
           :db-loading="dbLoading"
           :selected-api-index="selectedApiIndex"
           @open-db-modal="openDbModal"
+        />
+
+        <ThemeStorePanel
+          :trans="trans"
+          :active-tab="activeTab"
         />
       </div>
 
@@ -442,6 +452,7 @@ import AdminLogin from './components/AdminLogin.vue'
 import ServerTable from './components/ServerTable.vue'
 import SettingsPanel from './components/SettingsPanel.vue'
 import DatabasePanel from './components/DatabasePanel.vue'
+import ThemeStorePanel from './components/ThemeStorePanel.vue'
 import EditServerModal from './components/EditServerModal.vue'
 import DeleteServerModal from './components/DeleteServerModal.vue'
 import CopyCommandModal from './components/CopyCommandModal.vue'
@@ -465,6 +476,20 @@ const getMessage = (msg) => {
   }
   return ''
 }
+
+const normalizeTgNotifySetting = (value) => {
+  if (value === true || value === 'true') return '5'
+  if (value === false || value === 'false' || value === undefined || value === null || value === '') return '0'
+
+  const minutes = Number(value)
+  if (Number.isInteger(minutes) && (minutes === 0 || (minutes >= 2 && minutes <= 30))) {
+    return String(minutes)
+  }
+
+  return '0'
+}
+
+const isTgNotifyEnabled = (value) => normalizeTgNotifySetting(value) !== '0'
 
 const isPlainObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value)
 
@@ -549,7 +574,7 @@ const settings = ref({
   show_tf: true,
   show_time: true,
   show_long_history: false,
-  tg_notify: 'false',
+  tg_notify: '0',
   expire_reminder: 'false',
   tg_bot_token: '',
   tg_chat_id: '',
@@ -865,7 +890,7 @@ const loadSettings = async () => {
         show_tf: settingsData.show_tf === 'true',
         show_time: settingsData.show_time === 'true',
         show_long_history: settingsData.show_long_history === 'true',
-        tg_notify: settingsData.tg_notify || 'false',
+        tg_notify: normalizeTgNotifySetting(settingsData.tg_notify),
         expire_reminder: settingsData.expire_reminder || 'false',
         tg_bot_token: settingsData.tg_bot_token || '',
         tg_chat_id: settingsData.tg_chat_id || '',
@@ -938,7 +963,7 @@ const saveSettings = async () => {
     }
   }
 
-  if (settings.value.tg_notify === 'true' || settings.value.expire_reminder === 'true') {
+  if (isTgNotifyEnabled(settings.value.tg_notify) || settings.value.expire_reminder === 'true') {
     if (!settings.value.tg_bot_token || settings.value.tg_bot_token.trim().length === 0) {
       validationError.value = trans.value.tgBotTokenRequired
       return
@@ -985,7 +1010,7 @@ const saveSettings = async () => {
       show_tf: settings.value.show_tf ? 'true' : 'false',
       show_time: settings.value.show_time ? 'true' : 'false',
       show_long_history: settings.value.show_long_history ? 'true' : 'false',
-      tg_notify: settings.value.tg_notify,
+      tg_notify: normalizeTgNotifySetting(settings.value.tg_notify),
       expire_reminder: settings.value.expire_reminder,
       tg_bot_token: settings.value.tg_bot_token,
       tg_chat_id: settings.value.tg_chat_id,

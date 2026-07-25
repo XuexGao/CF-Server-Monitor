@@ -569,7 +569,7 @@ interface Settings {
   show_tf: 'true' | 'false';
   show_time: 'true' | 'false';
   show_long_history: 'true' | 'false';
-  tg_notify: 'true' | 'false';
+  tg_notify: '0' | '2' ... '30'; // 0 = 关闭；旧值 false 兼容为 0，true 兼容为 5
   tg_bot_token: string;
   tg_chat_id: string;
   turnstile_enabled: 'true' | 'false';

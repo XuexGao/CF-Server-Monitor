@@ -201,7 +201,7 @@ const siteOptions = {
   show_tf: 'true',
   show_time: 'true',
   show_long_history: 'true',
-  tg_notify: 'false',
+  tg_notify: '0',
   tg_bot_token: '',
   tg_chat_id: '',
   turnstile_site_key: '0x4AAAAAADnx_ErgRBFcm5Il'

@@ -1,10 +1,19 @@
 import { getLatestMetricsForAllServers } from '../database/schema.js';
 import { clearServersListCache, getAllServers } from '../utils/cache.js';
-import { loadSiteSettings, debug } from '../utils/settings.js';
+import { getTgNotifyMinutes, loadSiteSettings, debug } from '../utils/settings.js';
 import { detectBillingCycle, normalizeBillingCycle, renewExpireDateIfNeeded } from '../utils/serverBilling.js';
 
 const MAX_RETRIES = 3;
 const RETRY_DELAY = 1000;
+
+function formatLastReportTime(timestamp) {
+  if (!timestamp) return '无上报记录';
+
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return '无效时间';
+
+  return date.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
+}
 
 async function fetchWithRetry(url, options, retries = MAX_RETRIES) {
   for (let i = 0; i < retries; i++) {
@@ -31,21 +40,27 @@ export async function sendNotification(settings, msg) {
   if(!settings.tg_bot_token) return;
   const title = "💌 Cloudflare Server Monitor";
   if(settings.tg_bot_token.indexOf("onebot:") == 0) {
-    // OneBot 协议 (QQ 等)，格式: onebot:http://127.0.0.1:3000
+    // OneBot 协议 (QQ 等)，私聊格式: onebot:http://127.0.0.1:3000/send_private_msg?access_token=xxx
+    // 群聊格式: onebot:http://127.0.0.1:3000/send_group_msg?access_token=xxx
     let onebotUrl = settings.tg_bot_token.replace("onebot:", "");
-    const chatId = settings.tg_chat_id || '';
-    const isGroup = chatId.startsWith('group:');
-    const targetId = isGroup ? chatId.replace('group:', '') : chatId;
+    const targetId = settings.tg_chat_id || '';
+    const isGroup = onebotUrl.indexOf("send_group_msg") != -1;
     if (!targetId) {
       return "OneBot 通知失败: 缺少 tg_chat_id（私人: QQ号，群: group:群号）";
     }
     try {
-      const endpoint = isGroup
-        ? onebotUrl.replace(/\/$/, '') + '/send_group_msg'
-        : onebotUrl.replace(/\/$/, '') + '/send_private_msg';
-      const body = isGroup
-        ? { group_id: parseInt(targetId), message: msg }
-        : { user_id: parseInt(targetId), message: msg };
+      const endpoint = onebotUrl.trim();
+      const body = {
+        [isGroup ? 'group_id' : 'user_id']: targetId,
+        message: [
+          {
+            type: 'text',
+            data: {
+              text: `${title}\n${String(msg || '').replace(/\*/g, '')}\n`
+            }
+          }
+        ]
+      };
       await fetchWithRetry(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -188,8 +203,9 @@ export async function sendNotification(settings, msg) {
 
 export async function checkOfflineNodes(db) {
   const siteSettings = await loadSiteSettings(db);
+  const tgNotifyMinutes = getTgNotifyMinutes(siteSettings.tg_notify);
 
-  if (siteSettings.tg_notify !== 'true'|| !siteSettings.tg_bot_token) return;
+  if (tgNotifyMinutes === 0 || !siteSettings.tg_bot_token) return;
 
   try {
     const allServers = await getAllServers(db);
@@ -210,6 +226,7 @@ export async function checkOfflineNodes(db) {
     }
 
     const now = Date.now();
+    const offlineThreshold = tgNotifyMinutes * 60 * 1000;
     const offlineNodes = [];
     const recoveredNodes = [];
 
@@ -221,11 +238,14 @@ export async function checkOfflineNodes(db) {
       let isOffline = true;
       if (latestMetrics) {
         const diff = now - latestMetrics.timestamp;
-        isOffline = diff > 300000;
+        isOffline = diff > offlineThreshold;
       }
 
       if (isOffline && !alertState[s.id]) {
-        offlineNodes.push(s);
+        offlineNodes.push({
+          name: s.name,
+          lastReportTime: latestMetrics?.timestamp
+        });
         alertState[s.id] = true;
       } else if (!isOffline && alertState[s.id]) {
         recoveredNodes.push(s);
@@ -234,8 +254,10 @@ export async function checkOfflineNodes(db) {
     }
 
     if (offlineNodes.length > 0) {
-      const nodeList = offlineNodes.map(n => `• ${n.name}`).join('\n');
-      const msg = `⚠️ **节点离线告警** (${offlineNodes.length}个)\n\n${nodeList}\n\n**时间:** ${new Date().toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai'})}`;
+      const nodeList = offlineNodes
+        .map(n => `• ${n.name} - ${formatLastReportTime(n.lastReportTime)}`)
+        .join('\n');
+      const msg = `⚠️ **节点离线告警** (${offlineNodes.length}个)\n\n${nodeList}`;
       await sendNotification(siteSettings, msg);
     }
 

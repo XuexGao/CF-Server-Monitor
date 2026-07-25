@@ -4,7 +4,7 @@
 
 **演示地址**：<https://demo.huilang.me/>
 
-**当前Workers版本：V2.7.13 Beta3; Agent版本：1.3.2**
+**当前Workers版本：V2.7.13 Beta5; Agent版本：1.3.2**
 
 > [!IMPORTANT]
 > V2.7.10 加入了 CSP 内容安全策略。默认只允许同源资源和必要的 Cloudflare/Google Fonts 资源；
@@ -24,7 +24,7 @@
 <details>
 <summary>更新记录</summary>
 
-- V2.7.13 Beta 新增显示模式选择功能，添加环形图模式，添加服务器导入导出功能，修复部分系统硬盘获取失败的bug，ping获取改成中位数。添加钉钉、OneBot (QQ) 通知支持，新增服务器计费相关字段与自动续费功能。
+- V2.7.13 Beta 新增显示模式选择功能，添加环形图模式，添加服务器导入导出功能，修复部分系统硬盘获取失败的bug，ping获取改成中位数。添加钉钉、OneBot (QQ) 通知支持，新增服务器计费相关字段与自动续费功能。新增JWT自动生成，修复Macos兼容，重构通知告警，简化首次安装流程。
 - V2.7.12 新增Agent自动更新功能，默认关闭，谨慎开启。（本次更新需要手动升级agent安装脚本后才生效）
 - V2.7.11 优化客户端探针脚本，减少服务器流量消耗，添加GitHub自动同步功能，实现Workers自动升级。增加了Workers/Agent版本升级提示。增加OS图标显示（本次更新需要手动升级agent安装脚本）
 - V2.7.10 加入了 CSP 内容安全策略。重构前端 admin 模块，新增 iOS Scriptable 小组件，新增 tags、note 字段
@@ -97,7 +97,7 @@
 4. 选择 Continue with GitHub（第一次使用需要连接 GitHub 账户），选择本项目
 5. Project Name填写：`cf-server-monitor`
 6. Build command 填写：`npm run build:frontend`
-7. Deploy command 填写：`npx wrangler deploy --keep-vars`
+7. Deploy command 保留默认值：`npx wrangler deploy`
 8. 点击 **Deploy**，成功会在底部显示`✨ Success! Build completed.`
 
 ### 第三步：配置环境变量
@@ -463,8 +463,8 @@ Content Security Policy (CSP) 是一种安全层，用于检测和缓解某些�
 ### OneBot (QQ)
 
 1. 部署 OneBot 协议实现（如 go-cqhttp、Lagrange 等），获取 HTTP API 地址
-2. 将 API 地址填入 **Bot Token** 字段，格式为 `onebot:http://127.0.0.1:3000`
-3. **Chat ID** 填入目标用户 ID（如 `123456`）或群 ID（如 `group:789012`）
+2. 将 API 地址填入 **Bot Token** 字段，格式为 `onebot:http://127.0.0.1:3000/send_private_msg?access_token=xxx`，或 `onebot:http://127.0.0.1:3000/send_group_msg?access_token=xxx`
+3. **Chat ID** 填入目标用户 ID（如 `123456`）或群 ID（如 `789012`）
 
 ### 企业微信
 
@@ -502,7 +502,7 @@ Content Security Policy (CSP) 是一种安全层，用于检测和缓解某些�
 
 | 类型   | 说明                       |
 | ---- | ------------------------ |
-| 离线告警 | 节点离线 5 分钟后发送告警，恢复后发送恢复通知 |
+| 离线告警 | 节点离线达到设置的 2-30 分钟阈值后发送告警，恢复后发送恢复通知 |
 | 到期提醒 | 服务器到期前 7 天内每天发送提醒        |
 
 ### 测试通知
@@ -762,19 +762,15 @@ CF-Server-Monitor/
 <details>
 <summary>常见问题</summary>
 
-**Q: 部署后返回API\_SECRET is required**
+**Q: 部署后返回API_SECRET is required**
 
-如果是部署后丢失API\_SECRET，请在Workers & Pages页面，点击 **Settings**，修改Build configuration的Deploy command为：`npx wrangler deploy --keep-vars`，重新设置API\_SECRET，下次部署会继续保留。旧key可用通过`cat /etc/systemd/system/cf-probe.service`或者`cat /etc/init.d/cf-probe`获取。
-
-如果是GitHub Action 自动部署，确保在 GitHub Secrets 中设置了 API\_SECRET 密钥。
-
-如果是一键部署，确保在Cloudflare Workers & Pages 中设置了 API\_SECRET 密钥。
+如果是部署后丢失`API_SECRET`，请在Workers & Pages页面，点击 **Settings**，删除原有`API_SECRET`（如有），重新添加`API_SECRET`保存触发重新部署，等待部署完成即可。
 
 **Q: 探针安装后不显示数据？**
 
 检查服务器是否能访问 Worker URL，在安装命令参数后面加入 ` -debug=1`（目前仅支持linux系统），再查看探针日志：`journalctl -u cf-probe -f`，将错误信息发到Issue或者TG群，调试结束后删掉debug=1参数重新安装，避免日志过大。
 
-**Q: 如何更换 API\_SECRET？**
+**Q: 如何更换 API_SECRET？**
 
 更新 Cloudflare Workers & Pages 中的 `API_SECRET`，重新部署，并在所有服务器上重新安装探针。如果是GitHub Action 自动部署，需要在 GitHub Secrets 中更新 `API_SECRET`。
 

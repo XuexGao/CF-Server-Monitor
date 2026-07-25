@@ -1,11 +1,12 @@
 #!/bin/bash
-# macOS模拟数据发送脚本
+# 模拟数据发送脚本
 # 用于测试 CF-Server-Monitor 工作原理
-# bash test/mock-sender.sh 550e8400-e29b-41d4-a716-446655440001 123456 http://localhost:8787/update 10 1.3.0
+# bash test/mock-sender.sh 550e8400-e29b-41d4-a716-446655440001 123456 http://localhost:8787/update 10 1.3.0 2
+# 第6个参数为GPU数量，默认1
 # curl -k -i -X POST 'https://localhost:8787/update' \
 #   -H 'Content-Type: application/json' \
-#   -H 'X-Agent-Version: 1.2.0' \
-#   -d '{"id":"550e8400-e29b-41d4-a716-446655440001","secret":"123456","metrics":{"cpu":"45.5","ram":"60.2","disk":"35.8"}}'
+#   -H 'X-Agent-Version: 1.3.0' \
+#   -d '{"id":"550e8400-e29b-41d4-a716-446655440001","secret":"123456","metrics":{"cpu":"45.5","gpu_info":[{"name":"Mock GPU","info":60.5,"id":"0"}],"ram_total":"16","ram_used":"8","disk_total":"256","disk_used":"128","load_avg":"1.50 1.20 0.80","boot_time":"1700000000000","net_rx":"1000000000","net_tx":"500000000","net_rx_monthly":"5000000000","net_tx_monthly":"2000000000","net_in_speed":"10000000","net_out_speed":"5000000","os":"Ubuntu 22.04","arch":"x86_64","cpu_info":"Intel Core i7-12700K","cpu_cores":"8","processes":"256","tcp_conn":"128","udp_conn":"32","ip_v4":"1","ip_v6":"0","ping_ct":"35","ping_cu":"45","ping_cm":"55","ping_bd":"75","loss_ct":"0","loss_cu":"1","loss_cm":"2","loss_bd":"3"}}'
 
 set -euo pipefail
 
@@ -25,6 +26,7 @@ SECRET="${2:-123456}"
 WORKER_URL="${3:-https://localhost:8787/update}"
 REPORT_INTERVAL="${4:-10}"
 AGENT_VERSION="${5:-1.3.0}"
+GPU_COUNT="${6:-1}"
 
 generate_random() {
     awk -v min="$1" -v max="$2" 'BEGIN{srand(); printf "%.2f", min + rand() * (max - min)}'
@@ -44,13 +46,14 @@ escape_json() {
 }
 
 echo -e "${BLUE}╔══════════════════════════════════════════════════╗${NC}"
-echo -e "${BLUE}║     CF-Server-Monitor Mock Data Sender (macOS)   ║${NC}"
+echo -e "${BLUE}║       CF-Server-Monitor Mock Data Sender         ║${NC}"
 echo -e "${BLUE}╚══════════════════════════════════════════════════╝${NC}"
 echo ""
 info "服务器ID: $SERVER_ID"
 info "上报地址: $WORKER_URL"
 info "上报间隔: ${REPORT_INTERVAL}秒"
 info "Agent版本: ${AGENT_VERSION}"
+info "GPU数量: ${GPU_COUNT}"
 echo ""
 
 RX_PREV=$(generate_int 0 100000000)
@@ -61,7 +64,6 @@ while true; do
     LOOP_START_TIME=$(date +%s)
     
     CPU=$(generate_random 5 85)
-    GPU=$(generate_random 0 95)
     RAM=$(generate_random 20 80)
     RAM_TOTAL=$(generate_int 8 64)
     RAM_USED=$(awk -v total="$RAM_TOTAL" -v pct="$RAM" 'BEGIN{printf "%d", total * pct / 100}')
@@ -75,14 +77,13 @@ while true; do
     
     BOOT_TIME=$(($(date +%s) - $(generate_int 3600 86400)))000
     
-    OS="$(sw_vers -productName 2>/dev/null || echo "macOS") $(sw_vers -productVersion 2>/dev/null || echo "14.0")"
-    ARCH=$(uname -m)
-    CPU_INFO=$(sysctl -n machdep.cpu.brand_string 2>/dev/null | head -n1 || echo "$ARCH")
-    GPU_INFO=$(system_profiler SPDisplaysDataType 2>/dev/null | awk -F': ' '/Chipset Model|GPU/{print $2; exit}' || echo "Mock GPU")
-    [ -z "${GPU_INFO:-}" ] && GPU_INFO="Mock GPU"
-    CPU_CORES=$(sysctl -n hw.ncpu 2>/dev/null || echo "4")
-    PROCESSES=$(ps aux | wc -l | tr -d ' ')
-    TCP_CONN=$(netstat -an -p tcp 2>/dev/null | grep -c ESTABLISHED || generate_int 10 100)
+    OS="Ubuntu 22.04 LTS"
+    ARCH="x86_64"
+    CPU_INFO="Intel Core i7-12700K"
+    GPU_INFO_BASE="NVIDIA GeForce RTX 4090"
+    CPU_CORES="8"
+    PROCESSES=$(generate_int 200 400)
+    TCP_CONN=$(generate_int 50 200)
     UDP_CONN=$(generate_int 5 50)
     
     TIME_DELTA=$((LOOP_START_TIME - PREV_LOOP_TIME))
@@ -120,17 +121,34 @@ while true; do
     EOS=$(escape_json "${OS}")
     EARCH=$(escape_json "${ARCH}")
     ECPU=$(escape_json "${CPU_INFO}")
-    EGPU=$(escape_json "${GPU_INFO}")
-    
+
+    # 生成多卡GPU信息数组
+    GPU_INFO_ARRAY=""
+    GPU_UTIL_LOG=""
+    for ((g=0; g<GPU_COUNT; g++)); do
+        GUTIL=$(awk -v min=0 -v max=95 -v seed="$((g + 1 + LOOP_START_TIME))" 'BEGIN{srand(seed); printf "%.2f", min + rand() * (max - min)}')
+        GNAME="${GPU_INFO_BASE}"
+        [ "${GPU_COUNT}" -gt 1 ] && GNAME="${GPU_INFO_BASE} #${g}"
+        EGNAME=$(escape_json "${GNAME}")
+        GPU_ENTRY="{\"name\":\"${EGNAME}\",\"info\":${GUTIL},\"id\":\"${g}\"}"
+        if [ -n "${GPU_INFO_ARRAY}" ]; then
+            GPU_INFO_ARRAY="${GPU_INFO_ARRAY},${GPU_ENTRY}"
+        else
+            GPU_INFO_ARRAY="${GPU_ENTRY}"
+        fi
+        [ -n "${GPU_UTIL_LOG}" ] && GPU_UTIL_LOG="${GPU_UTIL_LOG} "
+        GPU_UTIL_LOG="${GPU_UTIL_LOG}${GUTIL}%"
+    done
+
     PAYLOAD=$(cat <<EOF
-{"id":"$SERVER_ID","secret":"$SECRET","metrics":{"cpu":"$CPU","gpu":"$GPU","gpu_info":"$EGPU","ram":"$RAM","ram_total":"$RAM_TOTAL","ram_used":"$RAM_USED","swap_total":"$SWAP_TOTAL","swap_used":"$SWAP_USED","disk":"$DISK","disk_total":"$DISK_TOTAL","disk_used":"$DISK_USED","load_avg":"$LOAD_AVG","boot_time":"$BOOT_TIME","net_rx":"$RX_NOW","net_tx":"$TX_NOW","net_rx_monthly":"$NET_RX_MONTHLY","net_tx_monthly":"$NET_TX_MONTHLY","net_in_speed":"$RX_SPEED","net_out_speed":"$TX_SPEED","os":"$EOS","arch":"$EARCH","cpu_info":"$ECPU","cpu_cores":"$CPU_CORES","processes":"$PROCESSES","tcp_conn":"$TCP_CONN","udp_conn":"$UDP_CONN","ip_v4":"$IPV4","ip_v6":"$IPV6","ping_ct":"$PING_CT","ping_cu":"$PING_CU","ping_cm":"$PING_CM","ping_bd":"$PING_BD","loss_ct":"$LOSS_CT","loss_cu":"$LOSS_CU","loss_cm":"$LOSS_CM","loss_bd":"$LOSS_BD"}}
+{"id":"$SERVER_ID","secret":"$SECRET","metrics":{"cpu":"$CPU","gpu_info":[${GPU_INFO_ARRAY}],"ram":"$RAM","ram_total":"$RAM_TOTAL","ram_used":"$RAM_USED","swap_total":"$SWAP_TOTAL","swap_used":"$SWAP_USED","disk":"$DISK","disk_total":"$DISK_TOTAL","disk_used":"$DISK_USED","load_avg":"$LOAD_AVG","boot_time":"$BOOT_TIME","net_rx":"$RX_NOW","net_tx":"$TX_NOW","net_rx_monthly":"$NET_RX_MONTHLY","net_tx_monthly":"$NET_TX_MONTHLY","net_in_speed":"$RX_SPEED","net_out_speed":"$TX_SPEED","os":"$EOS","arch":"$EARCH","cpu_info":"$ECPU","cpu_cores":"$CPU_CORES","processes":"$PROCESSES","tcp_conn":"$TCP_CONN","udp_conn":"$UDP_CONN","ip_v4":"$IPV4","ip_v6":"$IPV6","ping_ct":"$PING_CT","ping_cu":"$PING_CU","ping_cm":"$PING_CM","ping_bd":"$PING_BD","loss_ct":"$LOSS_CT","loss_cu":"$LOSS_CU","loss_cm":"$LOSS_CM","loss_bd":"$LOSS_BD"}}
 EOF
 )
     
     RESPONSE=$(curl -s -k -o /dev/null -w "%{http_code}" -X POST -H "Content-Type: application/json" -H "X-Agent-Version: ${AGENT_VERSION}" -d "$PAYLOAD" -m 5 --connect-timeout 2 "$WORKER_URL" 2>/dev/null || echo "000")
     
     if [ "$RESPONSE" = "200" ] || [ "$RESPONSE" = "201" ]; then
-        info "[$(date '+%Y-%m-%d %H:%M:%S')] 数据上报成功 - CPU: ${CPU}% | GPU: ${GPU}% | Loss CT: ${LOSS_CT}% | RAM: ${RAM}% | Disk: ${DISK}%"
+        info "[$(date '+%Y-%m-%d %H:%M:%S')] 数据上报成功 - CPU: ${CPU}% | GPU: [${GPU_UTIL_LOG}] | Loss CT: ${LOSS_CT}% | RAM: ${RAM}% | Disk: ${DISK}%"
     else
         warn "[$(date '+%Y-%m-%d %H:%M:%S')] 数据上报失败 (HTTP: $RESPONSE)"
     fi

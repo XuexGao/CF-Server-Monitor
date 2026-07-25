@@ -20,6 +20,7 @@ export const getTrafficUsageBytes = (server) => {
   const calcType = server.traffic_calc_type || 'total'
   if (calcType === 'dl') return rx
   if (calcType === 'ul') return tx
+  if (calcType === 'max') return Math.max(rx, tx)
   return rx + tx
 }
 

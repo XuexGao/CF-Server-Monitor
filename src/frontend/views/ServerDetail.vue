@@ -66,7 +66,7 @@
         </div>
         <div class="sysinfo-item" v-if="hasGpuData">
           <span class="sysinfo-label">🎮 {{ trans.gpuInfo || 'GPU Info' }}</span>
-          <span class="sysinfo-value sysinfo-small">{{ server.gpu_info }}</span>
+          <span class="sysinfo-value sysinfo-small">{{ gpuInfoText }}</span>
         </div>
         <div class="sysinfo-item">
           <span class="sysinfo-label">💾 {{ trans.totalDiskRam }}</span>
@@ -91,8 +91,8 @@
         <div class="sysinfo-item" v-if="server.net_rx_monthly">
           <span class="sysinfo-label">📦 {{ trans.monthlyTrafficLimit }}</span>
           <span class="sysinfo-value sysinfo-small">
-            {{ server.traffic_calc_type === 'dl' ? formatBytes(server.net_rx_monthly) : (server.traffic_calc_type === 'ul' ? formatBytes(server.net_tx_monthly) : formatBytes(server.net_rx_monthly + server.net_tx_monthly)) }} 
-            / 
+            {{ formatBytes(trafficUsageBytes) }}
+            /
             {{ server.traffic_limit ? formatBytes(server.traffic_limit * 1024 * 1024 * 1024) : 'Unlimited' }}
           </span>
         </div>
@@ -176,7 +176,7 @@
             <span class="chart-title-icon">▸</span>
             {{ trans.gpuUsage || 'GPU Usage' }}
           </span>
-          <span class="chart-current-value">{{ gpuPercent }}%</span>
+          <span class="chart-current-value">{{ gpuPercentText }}</span>
         </div>
         <div class="chart-body">
           <canvas ref="gpuChartRef"></canvas>
@@ -292,6 +292,7 @@ import TerminalHeader from '../components/TerminalHeader.vue'
 import Footer from '../components/Footer.vue'
 import OsIcon from '../components/OsIcon.vue'
 import { fetchServerDetail, fetchAllHistory, formatBytes, isAdminLoggedIn, createLiveSocket, getFlagRegionCode, isServerOnline } from '../utils/api.js'
+import { getTrafficUsageBytes } from '../composables/useServerCardData'
 import { hasMultipleApiBases, getPublicAssetUrl } from '../utils/config.js'
 import Chart from 'chart.js/auto'
 import 'chartjs-adapter-date-fns'
@@ -362,7 +363,39 @@ const timeOptions = computed(() => {
 const isOnline = computed(() => isServerOnline(server.value))
 
 const cpuPercent = computed(() => (parseFloat(server.value.cpu) || 0).toFixed(1))
-const gpuPercent = computed(() => (parseFloat(server.value.gpu) || 0).toFixed(1))
+
+const parseGpuInfo = (raw) => {
+  if (!raw) return []
+  if (Array.isArray(raw)) return raw
+  if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw)
+      return Array.isArray(parsed) ? parsed : []
+    } catch { return [] }
+  }
+  return []
+}
+
+const gpuInfoList = computed(() => parseGpuInfo(server.value.gpu_info))
+
+const gpuInfoText = computed(() => {
+  const list = gpuInfoList.value
+  if (list.length === 0) return server.value.gpu_info || 'N/A'
+  return list.map(g => g.name || g.id || 'GPU').join(' / ')
+})
+
+const gpuPercentText = computed(() => {
+  const list = gpuInfoList.value
+  if (list.length === 0) return '0.0%'
+  const formatUtil = (info) => {
+    if (info === null || info === undefined) return 'N/A'
+    const v = parseFloat(info)
+    return Number.isNaN(v) ? 'N/A' : `${v.toFixed(1)}%`
+  }
+  if (list.length === 1) return formatUtil(list[0].info)
+  return list.map(g => formatUtil(g.info)).join(' / ')
+})
+
 const ramPercent = computed(() => {
   if (server.value.ram_total > 0) {
     return ((server.value.ram_used / server.value.ram_total) * 100).toFixed(2)
@@ -375,7 +408,7 @@ const diskPercent = computed(() => {
   }
   return '0.00'
 })
-const hasGpuData = computed(() => server.value.gpu !== null && server.value.gpu !== undefined && server.value.gpu !== '' && !!server.value.gpu_info)
+const hasGpuData = computed(() => gpuInfoList.value.length > 0)
 
 const isExpired = computed(() => {
   if (!server.value.expire_date) return false
@@ -432,6 +465,8 @@ const visiblePingStats = computed(() => visiblePingFields.value.map(item => ({
   label: trans.value[item.labelKey],
   value: avgPingRefs[item.field].value
 })))
+
+const trafficUsageBytes = computed(() => getTrafficUsageBytes(server.value))
 
 const safeDestroyCharts = () => {
   try {
@@ -515,9 +550,11 @@ const ds = (label, color, opts = {}) => ({
   pointRadius: 0, hoverRadius: 5, spanGaps: false, ...opts
 })
 
+const GPU_COLORS = ['#ff7b72', '#79c0ff', '#d2a8ff', '#7ee787', '#ffa657', '#ff7b72', '#56d4dd', '#e3b341']
+
 const CHART_DEFS = [
   { key: 'cpu', ref: () => cpuChartRef.value, datasets: [ds('CPU', '#00d4aa', { fill: true })], unit: '%' },
-  { key: 'gpu', ref: () => gpuChartRef.value, datasets: [ds('GPU', '#ff7b72', { fill: true })], unit: '%' },
+  { key: 'gpu', ref: () => gpuChartRef.value, datasets: [], unit: '%', legend: true },
   { key: 'ram', ref: () => ramChartRef.value, datasets: [ds('Memory', '#b392f0', { fill: true }), ds('Swap', '#ffb870', { fill: true })], unit: '%', legend: true },
   { key: 'disk', ref: () => diskChartRef.value, datasets: [ds('Disk', '#39d2c0', { fill: true })], unit: '%' },
   { key: 'proc', ref: () => procChartRef.value, datasets: [ds('Processes', '#f778ba', { fill: true })] },
@@ -538,13 +575,38 @@ const syncProbeChartVisibility = () => {
       if (!dataset) continue
       const disabled = isDisabledProbeMetric(server.value[item.field])
       dataset.disabledProbe = disabled
-      dataset.hidden = disabled
-      if (typeof chart.setDatasetVisibility === 'function') {
-        chart.setDatasetVisibility(item.datasetIndex, !disabled)
+      // Only force hide if disabled by config; otherwise preserve user's legend toggle
+      if (disabled) {
+        dataset.hidden = true
+        if (typeof chart.setDatasetVisibility === 'function') {
+          chart.setDatasetVisibility(item.datasetIndex, false)
+        }
       }
     }
     chart.update('none')
   }
+}
+
+let lastGpuSignature = ''
+
+const rebuildGpuChartDatasets = () => {
+  const chart = charts.gpu
+  if (!chart) return
+  const list = gpuInfoList.value
+  const signature = list.map(g => String(g.id ?? '')).join(',')
+  if (signature === lastGpuSignature) return
+  lastGpuSignature = signature
+
+  const newDatasets = list.map((g, i) => {
+    const dataset = ds(g.name || `GPU ${i}`, GPU_COLORS[i % GPU_COLORS.length], { fill: true })
+    dataset.gpuId = String(g.id ?? i)
+    return dataset
+  })
+  if (newDatasets.length === 0) {
+    newDatasets.push(ds('GPU', '#ff7b72', { fill: true }))
+  }
+  chart.data.datasets = newDatasets
+  chart.update('none')
 }
 
 const initCharts = () => {
@@ -668,6 +730,7 @@ const initCharts = () => {
     })
   }
 
+  rebuildGpuChartDatasets()
   syncProbeChartVisibility()
 }
 
@@ -848,7 +911,21 @@ const loadAllHistory = async (hours) => {
 
     if (allData.length > 0) {
       updateChartDataset(charts.cpu, 0, allData, fieldAccessor('cpu'))
-      updateChartDataset(charts.gpu, 0, allData, fieldAccessor('gpu', true))
+      rebuildGpuChartDatasets()
+      for (let i = 0; i < charts.gpu.data.datasets.length; i++) {
+        const dataset = charts.gpu.data.datasets[i]
+        const gpuId = dataset.gpuId
+        const accessor = gpuId
+          ? (d) => {
+              const list = parseGpuInfo(d.gpu_info)
+              const found = list.find(g => String(g.id) === String(gpuId))
+              if (!found) return null
+              const val = parseFloat(found.info)
+              return Number.isNaN(val) ? null : val
+            }
+          : () => null
+        updateChartDataset(charts.gpu, i, allData, accessor)
+      }
       updateChartDataset(charts.ram, 0, allData, percentAccessor('ram_used', 'ram_total'))
       updateChartDataset(charts.ram, 1, allData, percentAccessor('swap_used', 'swap_total'))
       updateChartDataset(charts.disk, 0, allData, percentAccessor('disk_used', 'disk_total'))
@@ -1018,10 +1095,22 @@ const fetchCurrentStatus = async (incomingData) => {
     }
     syncProbeChartVisibility()
 
-    if (data.last_updated) {
+    if (data.last_updated && chartsReady.value) {
       const dataTimestamp = new Date(data.last_updated).getTime()
       appendDataToChart(charts.cpu, 0, dataTimestamp, data.cpu)
-      appendDataToChart(charts.gpu, 0, dataTimestamp, data.gpu)
+      rebuildGpuChartDatasets()
+      const latestGpuList = parseGpuInfo(data.gpu_info)
+      for (let i = 0; i < charts.gpu.data.datasets.length; i++) {
+        const dataset = charts.gpu.data.datasets[i]
+        const gpuId = dataset.gpuId
+        const found = latestGpuList.find(g => String(g.id) === String(gpuId))
+        const gpuVal = found ? found.info : null
+        if (gpuVal === null || gpuVal === undefined) {
+          appendDataToChart(charts.gpu, i, dataTimestamp, null, false, true)
+        } else {
+          appendDataToChart(charts.gpu, i, dataTimestamp, gpuVal)
+        }
+      }
       const ramPercent = (parseFloat(data.ram_total) > 0) ? (parseFloat(data.ram_used) / parseFloat(data.ram_total)) * 100 : 0
       appendDataToChart(charts.ram, 0, dataTimestamp, ramPercent)
       const swapPercent = (parseFloat(data.swap_total) > 0) ? (parseFloat(data.swap_used) / parseFloat(data.swap_total)) * 100 : 0
@@ -1042,7 +1131,9 @@ const fetchCurrentStatus = async (incomingData) => {
       appendDataToChart(charts.loss, 2, dataTimestamp, data.loss_cm, false, true)
       appendDataToChart(charts.loss, 3, dataTimestamp, data.loss_bd, false, true)
       appendLoadChartData(dataTimestamp, data.load_avg)
+    }
 
+    if (data.last_updated) {
       lastUpdateText.value = formatTimestamp(data.last_updated)
     }
   } catch (e) {
@@ -1130,6 +1221,7 @@ onMounted(() => {
 onUnmounted(() => {
   document.removeEventListener('visibilitychange', handleVisibility)
   if (liveSocket) liveSocket.close()
+  lastGpuSignature = ''
   safeDestroyCharts()
 })
 </script>

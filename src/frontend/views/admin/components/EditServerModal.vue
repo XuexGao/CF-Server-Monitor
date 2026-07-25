@@ -37,9 +37,10 @@
 
         <div class="form-group flex-1">
           <label class="form-label">{{ trans.currency }}</label>
-          <select v-model="editForm.currency" class="form-select">
+          <input type="text" v-model="editForm.currency" class="form-input" list="currency-list" placeholder="e.g. $, ¥, €">
+          <datalist id="currency-list">
             <option v-for="item in currencyOptions" :key="item.symbol" :value="item.symbol">{{ currencyLabel(item) }}</option>
-          </select>
+          </datalist>
         </div>
 
         <div class="form-group flex-1">
@@ -79,6 +80,7 @@
             <option value="total">{{ trans.trafficCalcTotal }}</option>
             <option value="ul">{{ trans.trafficCalcUl }}</option>
             <option value="dl">{{ trans.trafficCalcDl }}</option>
+            <option value="max">{{ trans.trafficCalcMax }}</option>
           </select>
         </div>
         <div class="form-group flex-1">
@@ -137,7 +139,7 @@
         </div>
         <div class="form-group flex-1">
           <label class="form-label">{{ trans.customBd }} <span class="text-xs text-muted">({{ trans.serverLevel }})</span></label>
-          <input type="text" name="edit_custom_bd" autocomplete="off" v-model.trim="editForm.custom_bd" :class="['form-input', { 'input-invalid': pingNodeErrors.custom_bd }]" :placeholder="settings.custom_bd || 'lf3-ips.zstaticcdn.com'">
+          <input type="text" name="edit_custom_bd" autocomplete="off" v-model.trim="editForm.custom_bd" :class="['form-input', { 'input-invalid': pingNodeErrors.custom_bd }]" :placeholder="settings.custom_bd || 'ip.zstaticcdn.com'">
           <p v-if="pingNodeErrors.custom_bd" class="text-red text-sm mt-1">{{ pingNodeErrors.custom_bd }}</p>
         </div>
       </div>
@@ -174,7 +176,7 @@
           </div>
         </div>
 
-        <div v-if="settings.tg_notify === 'true' && settings.tg_bot_token" class="form-group">
+        <div v-if="isOfflineNotifyEnabled && settings.tg_bot_token" class="form-group">
           <div class="checkbox-item no-margin">
             <input type="checkbox" v-model="editForm.offline_notify_disabled">
             <label>
@@ -227,6 +229,20 @@ const cycleLabel = (item) => currentLang.value === 'zh' ? item.labelZh : item.la
 const currencyLabel = (item) => currentLang.value === 'zh'
   ? `${item.symbol} ${item.nameZh}`
   : `${item.symbol} ${item.nameEn}`
+
+const normalizeTgNotifySetting = (value) => {
+  if (value === true || value === 'true') return '5'
+  if (value === false || value === 'false' || value === undefined || value === null || value === '') return '0'
+
+  const minutes = Number(value)
+  if (Number.isInteger(minutes) && (minutes === 0 || (minutes >= 2 && minutes <= 30))) {
+    return String(minutes)
+  }
+
+  return '0'
+}
+
+const isOfflineNotifyEnabled = computed(() => normalizeTgNotifySetting(props.settings.tg_notify) !== '0')
 
 const normalizePriceInput = () => {
   editForm.value.price = normalizePrice(editForm.value.price)

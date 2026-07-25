@@ -115,7 +115,7 @@ $TRAFFIC_FILE = Join-Path $CONFIG_DIR "cf_probe_traffic.dat"
 $DEFAULT_CT = "gd-ct-dualstack.ip.zstaticcdn.com"
 $DEFAULT_CU = "gd-cu-dualstack.ip.zstaticcdn.com"
 $DEFAULT_CM = "gd-cm-dualstack.ip.zstaticcdn.com"
-$DEFAULT_BD = "lf3-ips.zstaticcdn.com"
+$DEFAULT_BD = "ip.zstaticcdn.com"
 $MAX_TRAFFIC_CORRECTION_GB = 1000000
 
 $MAX_LOG_SIZE = 1MB

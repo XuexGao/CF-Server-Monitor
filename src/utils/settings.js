@@ -1,4 +1,4 @@
-const CURRENT_VERSION = '2.7.13 Beta3';
+const CURRENT_VERSION = '2.7.13 Beta5';
 export const AGENT_VERSION = '1.3.2';
 export const DEFAULT_SITE_TITLE = 'Cloudflare Server Monitor';
 export const APPEARANCE_FIELDS = ['site_title', 'custom_bg', 'custom_head', 'custom_script', 'csp_static', 'csp_api', 'display_mode', 'theme_options'];
@@ -6,6 +6,12 @@ export const APPEARANCE_FIELDS = ['site_title', 'custom_bg', 'custom_head', 'cus
 export const SITE_FIELDS = ['is_public', 'show_price', 'show_expire', 'show_tf', 'show_time', 'show_long_history', 'tg_notify', 'tg_bot_token', 'tg_chat_id', 'turnstile_enabled', 'turnstile_login_enabled', 'turnstile_site_key', 'turnstile_secret_key', 'jwt_secret', 'username', 'password', 'cloudflare_account_id', 'cloudflare_token', 'custom_ct', 'custom_cu', 'custom_cm', 'custom_bd', 'expire_reminder','history_id_optimized','servers_optimized'];
 
 const SITE_SETTINGS_TTL = 120 * 1000;
+const JWT_SECRET_MIN_LENGTH = 32;
+const LEGACY_CUSTOM_BD = 'lf3-ips.zstaticcdn.com';
+const CURRENT_CUSTOM_BD = 'ip.zstaticcdn.com';
+export const TG_NOTIFY_MINUTES_MIN = 2;
+export const TG_NOTIFY_MINUTES_MAX = 30;
+export const TG_NOTIFY_LEGACY_TRUE_MINUTES = 5;
 let cachedSiteSettings = null;
 let siteSettingsCacheExpiry = 0;
 let cachedAppearanceOptions = null;
@@ -26,23 +32,65 @@ const defaults = {
   show_tf: 'true',
   show_time: 'true',
   show_long_history: 'false',
-  tg_notify: 'false',
+  tg_notify: '0',
   tg_bot_token: '',
   tg_chat_id: '',
   turnstile_enabled: 'false',
   turnstile_login_enabled: 'false',
   turnstile_site_key: '',
   turnstile_secret_key: '',
+  jwt_secret: '',
   cloudflare_account_id: '',
   cloudflare_token: '',
   custom_ct: 'gd-ct-dualstack.ip.zstaticcdn.com',
   custom_cu: 'gd-cu-dualstack.ip.zstaticcdn.com',
   custom_cm: 'gd-cm-dualstack.ip.zstaticcdn.com',
-  custom_bd: 'lf3-ips.zstaticcdn.com',
+  custom_bd: 'ip.zstaticcdn.com',
   expire_reminder: 'false',
   history_id_optimized: 'false',
   servers_optimized: 'false'
 };
+
+export function normalizeTgNotify(value) {
+  if (value === true || value === 'true') return String(TG_NOTIFY_LEGACY_TRUE_MINUTES);
+  if (
+    value === false ||
+    value === 'false' ||
+    value === undefined ||
+    value === null ||
+    value === ''
+  ) {
+    return '0';
+  }
+
+  const minutes = Number(value);
+  if (
+    Number.isInteger(minutes) &&
+    (minutes === 0 || (minutes >= TG_NOTIFY_MINUTES_MIN && minutes <= TG_NOTIFY_MINUTES_MAX))
+  ) {
+    return String(minutes);
+  }
+
+  return '0';
+}
+
+export function getTgNotifyMinutes(value) {
+  return Number(normalizeTgNotify(value));
+}
+
+export function generateRandomSecret(byteLength = 32) {
+  const bytes = new Uint8Array(byteLength);
+  crypto.getRandomValues(bytes);
+  let result = '';
+  for (const byte of bytes) {
+    result += byte.toString(16).padStart(2, '0');
+  }
+  return result;
+}
+
+export function isValidJwtSecret(secret) {
+  return typeof secret === 'string' && secret.length >= JWT_SECRET_MIN_LENGTH;
+}
 
 function tryParseJSON(str) {
   if (!str) return null;
@@ -60,6 +108,10 @@ function copyFields(target, source, fields) {
       target[field] = source[field];
     }
   }
+}
+
+function normalizeCustomBd(value) {
+  return value === LEGACY_CUSTOM_BD ? CURRENT_CUSTOM_BD : value;
 }
 
 export function normalizeDisplayMode(value, fallback = 'bar') {
@@ -88,6 +140,43 @@ async function loadLegacySettings(db, fields) {
   return legacy;
 }
 
+async function saveJwtSecretIfMissing(db, secret) {
+  await db.prepare(`
+    INSERT INTO settings (key, value)
+    VALUES ('site_options', json_object('jwt_secret', ?))
+    ON CONFLICT(key) DO UPDATE SET value = CASE
+      WHEN json_valid(value)
+        AND typeof(json_extract(value, '$.jwt_secret')) = 'text'
+        AND length(json_extract(value, '$.jwt_secret')) >= ?
+      THEN value
+      WHEN json_valid(value)
+      THEN json_set(value, '$.jwt_secret', ?)
+      ELSE json_object('jwt_secret', ?)
+    END
+  `).bind(secret, JWT_SECRET_MIN_LENGTH, secret, secret).run();
+
+  const siteRow = await db.prepare(
+    "SELECT value FROM settings WHERE key = 'site_options'"
+  ).first();
+  const siteOptions = siteRow && siteRow.value
+    ? tryParseJSON(siteRow.value)
+    : null;
+
+  return isValidJwtSecret(siteOptions?.jwt_secret) ? siteOptions.jwt_secret : secret;
+}
+
+async function ensurePersistedJwtSecret(db, result, siteOptions) {
+  if (isValidJwtSecret(siteOptions?.jwt_secret)) {
+    return siteOptions.jwt_secret;
+  }
+
+  const secret = isValidJwtSecret(result.jwt_secret)
+    ? result.jwt_secret
+    : generateRandomSecret(32);
+
+  return saveJwtSecretIfMissing(db, secret);
+}
+
 export async function loadSiteSettings(db) {
   const now = Date.now();
   if (cachedSiteSettings && now < siteSettingsCacheExpiry) {
@@ -114,6 +203,18 @@ export async function loadSiteSettings(db) {
       copyFields(result, await loadLegacySettings(db, SITE_FIELDS), SITE_FIELDS);
     }
     copyFields(result, siteOptions, SITE_FIELDS);
+
+    if (!isValidJwtSecret(siteOptions?.jwt_secret) || !isValidJwtSecret(result.jwt_secret)) {
+      result.jwt_secret = await ensurePersistedJwtSecret(db, result, siteOptions);
+    }
+    result.tg_notify = normalizeTgNotify(result.tg_notify);
+    const normalizedCustomBd = normalizeCustomBd(result.custom_bd);
+    if (normalizedCustomBd !== result.custom_bd) {
+      result.custom_bd = normalizedCustomBd;
+      await saveSiteOptions(db, { custom_bd: normalizedCustomBd });
+    } else {
+      result.custom_bd = normalizedCustomBd;
+    }
   } catch (e) {
     console.error('加载站点设置失败:', e);
   }
@@ -192,6 +293,8 @@ export async function saveSiteOptions(db, updates) {
     : {};
   
   const siteOptions = { ...legacySiteOptions, ...existingSiteOptions, ...updates };
+  siteOptions.tg_notify = normalizeTgNotify(siteOptions.tg_notify);
+  siteOptions.custom_bd = normalizeCustomBd(siteOptions.custom_bd);
   
   await db.prepare(
     'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'

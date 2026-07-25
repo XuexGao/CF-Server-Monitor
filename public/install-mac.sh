@@ -120,6 +120,8 @@ stop_old_service() {
 create_script() {
     step "注入 macOS 监控采集探针..."
 
+    mkdir -p /usr/local/bin
+
     cat << 'PROBE_EOF' | sed "s|__AGENT_VERSION__|${AGENT_VERSION}|g" > "${SCRIPT_FILE}"
 #!/bin/bash
 set -u

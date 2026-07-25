@@ -1,5 +1,6 @@
 const ALGORITHM = { name: 'HMAC', hash: 'SHA-256' };
 import { verifyPasswordHash } from '../utils/common.js';
+import { isValidJwtSecret } from '../utils/settings.js';
 
 async function generateKeyFromSecret(secret) {
   const encoder = new TextEncoder();
@@ -61,14 +62,12 @@ async function verifyJwt(token, secret) {
 }
 
 function getJwtSecret(env, sys) {
-  if (sys && sys.jwt_secret && sys.jwt_secret.length >= 32) {
+  if (isValidJwtSecret(sys?.jwt_secret)) {
     return sys.jwt_secret;
   }
-  
+
   const fallback = env.API_SECRET || 'default_jwt_secret_for_server_monitor';
-  const padded = fallback.padEnd(32, 'x');
-  
-  return padded.substring(0, 64);
+  return fallback.padEnd(32, 'x').substring(0, 64);
 }
 
 export async function generateToken(env, sys) {
@@ -77,7 +76,7 @@ export async function generateToken(env, sys) {
     iat: Math.floor(Date.now() / 1000),
     exp: Math.floor(Date.now() / 1000) + 604800
   };
-  
+
   const secret = getJwtSecret(env, sys);
   return signJwt(payload, secret);
 }
@@ -97,7 +96,7 @@ export async function checkAuth(request, env, sys) {
   }
 
   const secret = getJwtSecret(env, sys);
-  
+
   try {
     const payload = await verifyJwt(token, secret);
     return payload !== null;

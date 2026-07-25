@@ -1,7 +1,7 @@
 import { checkAuth, simpleAuthResponse, validateCredentials, generateToken } from '../middleware/auth.js';
 import { getLatestMetricsForAllServers } from '../database/schema.js';
 import { getAllServers, clearServersListCache } from '../utils/cache.js';
-import { clearAppearanceSettingsCache, normalizeDisplayMode, saveSiteOptions, SITE_FIELDS, APPEARANCE_FIELDS } from '../utils/settings.js';
+import { clearAppearanceSettingsCache, normalizeDisplayMode, normalizeTgNotify, saveSiteOptions, SITE_FIELDS, APPEARANCE_FIELDS } from '../utils/settings.js';
 import { mergeMetricsIntoServer } from '../utils/metrics.js';
 import { verifyTurnstileToken, hashPassword } from '../utils/common.js';
 import { AppError, createSuccessResponse, createBadRequestResponse, createUnauthorizedResponse, createErrorResponse } from '../utils/errors.js';
@@ -257,8 +257,8 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null)
 
       try {
         const token = await generateToken(env, sys);
-        return createSuccessResponse({ 
-          success: true, 
+        return createSuccessResponse({
+          success: true,
           token: token,
           message: 'loginSuccessful'
         });
@@ -391,7 +391,8 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null)
       }
 
       // 如果 tg_notify 或 expire_reminder 开启，验证 tg_bot_token 不为空
-      if (settings.tg_notify === 'true' || settings.expire_reminder === 'true') {
+      const tgNotify = normalizeTgNotify(settings.tg_notify);
+      if (tgNotify !== '0' || settings.expire_reminder === 'true') {
         if (!settings.tg_bot_token || settings.tg_bot_token.trim().length === 0) {
           return createBadRequestResponse('tgBotTokenRequired');
         }
@@ -444,6 +445,8 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null)
             }
           } else if (PING_NODE_FIELDS.includes(field)) {
             siteOptions[field] = pingNodes.values[field];
+          } else if (field === 'tg_notify') {
+            siteOptions[field] = tgNotify;
           } else {
             siteOptions[field] = settings[field];
           }

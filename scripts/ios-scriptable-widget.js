@@ -102,6 +102,7 @@ function trafficUsedBytes(server) {
   const type = server.traffic_calc_type || "total";
   if (type === "dl") return rx;
   if (type === "ul") return tx;
+  if (type === "max") return Math.max(rx, tx);
   return rx + tx;
 }
 

@@ -10,15 +10,45 @@ export const BILLING_CYCLES = Object.freeze([
 ]);
 
 export const CURRENCY_OPTIONS = Object.freeze([
-  { symbol: '¥', nameZh: '人民币', nameEn: 'Chinese Yuan' },
+  // 主流货币
   { symbol: '$', nameZh: '美元', nameEn: 'US Dollar' },
+  { symbol: '¥', nameZh: '人民币', nameEn: 'Chinese Yuan' },
   { symbol: '€', nameZh: '欧元', nameEn: 'Euro' },
   { symbol: '£', nameZh: '英镑', nameEn: 'British Pound' },
-  { symbol: '₽', nameZh: '卢布', nameEn: 'Russian Ruble' },
-  { symbol: '₣', nameZh: '法郎', nameEn: 'Franc' },
-  { symbol: '₹', nameZh: '卢比', nameEn: 'Rupee' },
+  { symbol: '¥JPY', nameZh: '日元', nameEn: 'Japanese Yen' },
+  { symbol: 'HK$', nameZh: '港币', nameEn: 'Hong Kong Dollar' },
+  { symbol: 'A$', nameZh: '澳元', nameEn: 'Australian Dollar' },
+  { symbol: 'C$', nameZh: '加拿大元', nameEn: 'Canadian Dollar' },
+  { symbol: 'S$', nameZh: '新加坡元', nameEn: 'Singapore Dollar' },
+  { symbol: 'NZ$', nameZh: '新西兰元', nameEn: 'New Zealand Dollar' },
+  { symbol: '₣', nameZh: '瑞士法郎', nameEn: 'Swiss Franc' },
+  { symbol: '₩', nameZh: '韩元', nameEn: 'Korean Won' },
+  { symbol: '₹', nameZh: '印度卢比', nameEn: 'Indian Rupee' },
+  // 亚太货币
+  { symbol: '฿', nameZh: '泰铢', nameEn: 'Thai Baht' },
   { symbol: '₫', nameZh: '越南盾', nameEn: 'Vietnamese Dong' },
-  { symbol: '฿', nameZh: '泰铢', nameEn: 'Thai Baht' }
+  { symbol: '₱', nameZh: '菲律宾比索', nameEn: 'Philippine Peso' },
+  { symbol: 'Rp', nameZh: '印尼盾', nameEn: 'Indonesian Rupiah' },
+  { symbol: 'RM', nameZh: '马来西亚林吉特', nameEn: 'Malaysian Ringgit' },
+  { symbol: '₺', nameZh: '土耳其里拉', nameEn: 'Turkish Lira' },
+  { symbol: '₪', nameZh: '以色列新谢克尔', nameEn: 'Israeli Shekel' },
+  { symbol: '৳', nameZh: '孟加拉塔卡', nameEn: 'Bangladeshi Taka' },
+  { symbol: '₨', nameZh: '巴基斯坦卢比', nameEn: 'Pakistani Rupee' },
+  { symbol: 'LKR', nameZh: '斯里兰卡卢比', nameEn: 'Sri Lankan Rupee' },
+  { symbol: '₮', nameZh: '蒙古图格里克', nameEn: 'Mongolian Tugrik' },
+  // 其他地区
+  { symbol: '₽', nameZh: '卢布', nameEn: 'Russian Ruble' },
+  { symbol: 'R$', nameZh: '巴西雷亚尔', nameEn: 'Brazilian Real' },
+  { symbol: 'kr', nameZh: '克朗', nameEn: 'Krona (SEK/NOK/DKK)' },
+  { symbol: 'zł', nameZh: '波兰兹罗提', nameEn: 'Polish Zloty' },
+  { symbol: '₴', nameZh: '乌克兰格里夫纳', nameEn: 'Ukrainian Hryvnia' },
+  { symbol: '₸', nameZh: '哈萨克坦戈', nameEn: 'Kazakhstani Tenge' },
+  { symbol: 'R', nameZh: '南非兰特', nameEn: 'South African Rand' },
+  { symbol: '₦', nameZh: '尼日利亚奈拉', nameEn: 'Nigerian Naira' },
+  { symbol: 'EGP', nameZh: '埃及镑', nameEn: 'Egyptian Pound' },
+  { symbol: 'د.إ', nameZh: '阿联酋迪拉姆', nameEn: 'UAE Dirham' },
+  { symbol: '﷼', nameZh: '沙特里亚尔', nameEn: 'Saudi Riyal' },
+  { symbol: 'Q', nameZh: '危地马拉格查尔', nameEn: 'Guatemalan Quetzal' }
 ]);
 
 const CYCLE_ALIASES = new Map([
@@ -83,7 +113,18 @@ export function normalizeCurrency(value) {
   const raw = String(value || '').trim();
   if (!raw) return '';
 
-  const symbol = raw === '￥' ? '¥' : raw[0];
+  // Normalize common variants
+  const normalized = raw === '￥' ? '¥' : raw;
+
+  // Try matching multi-char symbols first (HK$, A$, C$, S$, NZ$, R$, RM, zł)
+  for (const item of CURRENCY_OPTIONS) {
+    if (item.symbol.length > 1 && normalized.startsWith(item.symbol)) {
+      return item.symbol;
+    }
+  }
+
+  // Fallback to single-char match
+  const symbol = normalized[0];
   return NORMALIZED_CURRENCIES.has(symbol) ? symbol : '';
 }
 
@@ -91,7 +132,16 @@ export function detectCurrencySymbol(value) {
   const raw = String(value || '');
   if (!raw) return '';
   if (raw.includes('￥')) return '¥';
-  return CURRENCY_OPTIONS.find(item => raw.includes(item.symbol))?.symbol || '';
+
+  // Try matching multi-char symbols first (HK$, A$, C$, S$, NZ$, R$, RM, zł)
+  for (const item of CURRENCY_OPTIONS) {
+    if (item.symbol.length > 1 && raw.includes(item.symbol)) {
+      return item.symbol;
+    }
+  }
+
+  // Fallback to single-char match
+  return CURRENCY_OPTIONS.find(item => item.symbol.length === 1 && raw.includes(item.symbol))?.symbol || '';
 }
 
 export function detectBillingCycle(value) {

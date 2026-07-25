@@ -36,7 +36,7 @@ let batchQueue = new Map();
 let flushingPromise = null;
 
 // 用于过滤不需要实时更新的字段
-const BROADCAST_DELETE_FIELDS = ['id', 'name', 'region', 'arch', 'os', 'cpu_info', 'cpu_cores', 'gpu_info', 'expire_date', 'server_group', 'traffic_limit', 'net_rx_monthly', 'net_tx_monthly', 'boot_time', 'timestamp', 'ip_v4', 'ip_v6'];
+const BROADCAST_DELETE_FIELDS = ['id', 'name', 'region', 'arch', 'os', 'cpu_info', 'cpu_cores', 'expire_date', 'server_group', 'traffic_limit', 'net_rx_monthly', 'net_tx_monthly', 'boot_time', 'timestamp', 'ip_v4', 'ip_v6'];
 
 function normalizeTimestamp(value, fallback = Date.now()) {
   const ts = Number(value);

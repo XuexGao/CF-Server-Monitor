@@ -771,33 +771,78 @@ json_string_or_null() {
 }
 
 get_gpu_metrics() {
-    local gpu_usage=""
-    local gpu_info=""
-    local line=""
+    local gpu_info_array=null
+    local gpu_count=0
 
     if command -v nvidia-smi >/dev/null 2>&1; then
-        line=$(nvidia-smi --query-gpu=name,utilization.gpu --format=csv,noheader,nounits 2>/dev/null | head -n 1 || true)
-        if [ -n "${line}" ]; then
-            gpu_info=$(echo "${line}" | awk -F',' '{gsub(/^[ \t]+|[ \t]+$/, "", $1); print $1}')
-            gpu_usage=$(echo "${line}" | awk -F',' '{gsub(/[^0-9.]/, "", $2); print $2}')
+        local nvidia_output
+        nvidia_output=$(nvidia-smi --query-gpu=index,name,utilization.gpu --format=csv,noheader,nounits 2>/dev/null || true)
+        if [ -n "${nvidia_output}" ]; then
+            while IFS= read -r nvidia_line; do
+                [ -z "${nvidia_line}" ] && continue
+                # GPU name may contain commas, so parse from both ends:
+                # index is first token, utilization.gpu is last token, everything in between is name
+                local gpu_idx gpu_name gpu_util
+                gpu_idx=$(echo "${nvidia_line}" | awk -F',' '{gsub(/^[ \t]+|[ \t]+$/, "", $1); print $1}')
+                gpu_util=$(echo "${nvidia_line}" | awk -F',' '{gsub(/[^0-9.]/, "", $NF); print $NF}')
+                # Extract name: strip first field (index) and last field (utilization), trim commas and spaces
+                gpu_name=$(echo "${nvidia_line}" | sed 's/^[^,]*,//; s/,[^,]*$//' | sed 's/^[ \t]*//;s/[ \t]*$//')
+                case "${gpu_util}" in ''|*[!0-9.]*|*.*.*) gpu_util="null" ;; esac
+                local gpu_name_escaped
+                gpu_name_escaped=$(escape_json "${gpu_name}")
+                if [ "${gpu_info_array}" != "null" ]; then
+                    gpu_info_array="${gpu_info_array},{\"name\":\"${gpu_name_escaped}\",\"info\":${gpu_util},\"id\":\"${gpu_idx}\"}"
+                else
+                    gpu_info_array="{\"name\":\"${gpu_name_escaped}\",\"info\":${gpu_util},\"id\":\"${gpu_idx}\"}"
+                fi
+                gpu_count=$((gpu_count + 1))
+            done <<< "${nvidia_output}"
         fi
     elif command -v rocm-smi >/dev/null 2>&1; then
-        gpu_info=$(rocm-smi --showproductname 2>/dev/null | awk -F: '/Card series|Card model|Product Name/{gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2; exit}' || true)
-        gpu_usage=$(rocm-smi --showuse 2>/dev/null | awk -F: '/GPU use/{gsub(/[^0-9.]/, "", $2); print $2; exit}' || true)
+        local rocm_names rocm_utils
+        rocm_names=$(rocm-smi --showproductname 2>/dev/null | awk -F: '/Card series|Card model|Product Name/{gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2}' || true)
+        rocm_utils=$(rocm-smi --showuse 2>/dev/null | awk -F: '/GPU use/{gsub(/[^0-9.]/, "", $2); print $2}' || true)
+        local idx=0
+        while IFS= read -r rname; do
+            [ -z "${rname}" ] && continue
+            local rutil
+            rutil=$(echo "${rocm_utils}" | sed -n "$((idx + 1))p")
+            case "${rutil}" in ''|*[!0-9.]*|*.*.*) rutil="null" ;; esac
+            local rname_escaped
+            rname_escaped=$(escape_json "${rname}")
+            if [ "${gpu_info_array}" != "null" ]; then
+                gpu_info_array="${gpu_info_array},{\"name\":\"${rname_escaped}\",\"info\":${rutil},\"id\":\"${idx}\"}"
+            else
+                gpu_info_array="{\"name\":\"${rname_escaped}\",\"info\":${rutil},\"id\":\"${idx}\"}"
+            fi
+            idx=$((idx + 1))
+            gpu_count=$((gpu_count + 1))
+        done <<< "${rocm_names}"
     fi
 
-    if [ -z "${gpu_info}" ] && command -v lspci >/dev/null 2>&1; then
-        gpu_info=$(lspci 2>/dev/null | awk '/VGA compatible controller|3D controller|Display controller/ && /NVIDIA|AMD|ATI|Radeon|Intel.*(Graphics|Arc|UHD|Iris)/{sub(/^[^:]*: /, ""); print; exit}' || true)
+    # lspci fallback: only when no GPU detected via nvidia-smi/rocm-smi
+    if [ "${gpu_count}" -eq 0 ] && command -v lspci >/dev/null 2>&1; then
+        local lspci_gpus
+        lspci_gpus=$(lspci 2>/dev/null | awk '/VGA compatible controller|3D controller|Display controller/ && /NVIDIA|AMD|ATI|Radeon|Intel.*(Graphics|Arc|UHD|Iris)/{sub(/^[^:]*: /, ""); print}' || true)
+        local lidx=0
+        while IFS= read -r lgpu; do
+            [ -z "${lgpu}" ] && continue
+            local lgpu_escaped
+            lgpu_escaped=$(escape_json "${lgpu}")
+            if [ "${gpu_info_array}" != "null" ]; then
+                gpu_info_array="${gpu_info_array},{\"name\":\"${lgpu_escaped}\",\"info\":0,\"id\":\"${lidx}\"}"
+            else
+                gpu_info_array="{\"name\":\"${lgpu_escaped}\",\"info\":0,\"id\":\"${lidx}\"}"
+            fi
+            lidx=$((lidx + 1))
+            gpu_count=$((gpu_count + 1))
+        done <<< "${lspci_gpus}"
     fi
 
-    case "${gpu_usage}" in
-        ''|*[!0-9.]*|*.*.*) gpu_usage="null" ;;
-    esac
-
-    if [ -n "${gpu_info}" ]; then
-        printf '%s\n%s\n' "${gpu_usage:-null}" "$(json_string_or_null "${gpu_info}")"
+    if [ "${gpu_count}" -gt 0 ]; then
+        printf '[%s]' "${gpu_info_array}"
     else
-        printf 'null\nnull\n'
+        printf 'null'
     fi
 }
 
@@ -1104,9 +1149,7 @@ while true; do
     CPU_INFO=$(grep -m 1 'model name' /proc/cpuinfo 2>/dev/null | awk -F: '{print $2}' | xargs || echo "")
     [ -z "${CPU_INFO}" ] && CPU_INFO=${ARCH}
     CPU_CORES=$(nproc 2>/dev/null || grep -c '^processor' /proc/cpuinfo 2>/dev/null || echo "1")
-    GPU_METRICS=$(get_gpu_metrics)
-    GPU=$(echo "$GPU_METRICS" | awk 'NR==1{print $1}'); GPU=${GPU:-null}
-    GPU_INFO_VALUE=$(echo "$GPU_METRICS" | awk 'NR==2{print}')
+    GPU_INFO_VALUE=$(get_gpu_metrics)
     [ -z "${GPU_INFO_VALUE}" ] && GPU_INFO_VALUE="null"
     LOAD_AVG=$(awk '{print $1, $2, $3}' /proc/loadavg 2>/dev/null); LOAD_AVG=${LOAD_AVG:-"0 0 0"}
     PROCESSES=$(ps -e 2>/dev/null | wc -l || echo 0)
@@ -1183,7 +1226,7 @@ while true; do
     LOSS_BD_JSON=$(json_probe_value "$BD_NODE" "$LOSS_BD")
 
     METRICS_JSON=$(cat <<EOF
-{"cpu":"$CPU","ram_total":"$RAM_TOTAL","ram_used":"$RAM_USED","swap_total":"$SWAP_TOTAL","swap_used":"$SWAP_USED","disk_total":"$DISK_TOTAL","disk_used":"$DISK_USED","load_avg":"$LOAD_AVG","boot_time":"$BOOT_TIME","net_rx":"$RX_NOW","net_tx":"$TX_NOW","net_rx_monthly":"$RX_MONTHLY","net_tx_monthly":"$TX_MONTHLY","net_in_speed":"$RX_SPEED","net_out_speed":"$TX_SPEED","os":"$EOS","arch":"$EARCH","cpu_info":"$ECPU","cpu_cores":"$CPU_CORES","gpu":$GPU,"gpu_info":$GPU_INFO_VALUE,"processes":"$PROCESSES","tcp_conn":"$TCP_CONN","udp_conn":"$UDP_CONN","ip_v4":"$IPV4","ip_v6":"$IPV6","ping_ct":$PING_CT_JSON,"ping_cu":$PING_CU_JSON,"ping_cm":$PING_CM_JSON,"ping_bd":$PING_BD_JSON,"loss_ct":$LOSS_CT_JSON,"loss_cu":$LOSS_CU_JSON,"loss_cm":$LOSS_CM_JSON,"loss_bd":$LOSS_BD_JSON}
+{"cpu":"$CPU","ram_total":"$RAM_TOTAL","ram_used":"$RAM_USED","swap_total":"$SWAP_TOTAL","swap_used":"$SWAP_USED","disk_total":"$DISK_TOTAL","disk_used":"$DISK_USED","load_avg":"$LOAD_AVG","boot_time":"$BOOT_TIME","net_rx":"$RX_NOW","net_tx":"$TX_NOW","net_rx_monthly":"$RX_MONTHLY","net_tx_monthly":"$TX_MONTHLY","net_in_speed":"$RX_SPEED","net_out_speed":"$TX_SPEED","os":"$EOS","arch":"$EARCH","cpu_info":"$ECPU","cpu_cores":"$CPU_CORES","gpu_info":$GPU_INFO_VALUE,"processes":"$PROCESSES","tcp_conn":"$TCP_CONN","udp_conn":"$UDP_CONN","ip_v4":"$IPV4","ip_v6":"$IPV6","ping_ct":$PING_CT_JSON,"ping_cu":$PING_CU_JSON,"ping_cm":$PING_CM_JSON,"ping_bd":$PING_BD_JSON,"loss_ct":$LOSS_CT_JSON,"loss_cu":$LOSS_CU_JSON,"loss_cm":$LOSS_CM_JSON,"loss_bd":$LOSS_BD_JSON}
 EOF
 )
     # 上报上游数据端 (限定 4s 超时控制，主循环绝不严重漂移)
