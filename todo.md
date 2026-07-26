@@ -1,28 +1,6 @@
 待办事项：
-- [ ] Workers版本更新提示，Agent版本显示
-- [x] 服务器单独设置离线告警开关
-- [x] 合并getAllServers函数
-- [x] 上报后，插入新的history_partition_id字段
-- [x] 保证metrics_history表是优化状态
-- [x] settings新增history_id_optimized字段，如果已优化，自动改成true，其他全局调用判断是否优化，走缓存和清除缓存
-- [x] 离线通知等检查走新的主键查询
-- [x] getNextServerHistoryPartitionId函数，从缓存获取servers表
-- [x] 保证servers表是优化状态
-- [x] 新增server的时候，添加history_partition_id字段
-- [x] settings新增servers_optimized字段，如果是false，执行
-- [x] 多站点模式，载入一个显示一个，未完整载入的时候，底部显示载入中
-- [x] 多站点模式，跨域弹出提醒
-- [x] windows上报脚本ping和丢包，以及删除旧进程问题
-- [x] 新增一个仓库，用于纯前端项目开发，制作演示主题
-- [x] 远程模式，访问后台多一个下拉选择，用于选择不同的 API 基础 URL，登录框以及登录后右上角选择，切换后清空登录信息刷新页面
-- [x] 前端项目config.json，新增title,backgroundImage字段，前端根据配置标题和背景图片。
-- [x] 验证Websocket修改后的DO占用效果（daily Durable Objects free tier limit of 101562500000 duration）
-- [x] build去掉根据.env自动生成config.json文件，而且不能删除config.json文件
-- [x] metrics_history删除ram字段，前端修改采用ram_used/ram_total计算ram占用率,保留两位小数百分比。
-- [x] metrics_history删除disk字段，前端应该已修改。
-- [x] metrics_history，country改成region字段，不需要数据迁移，直接新增字段。数据上报，入库到region字段，但返回一定要是region字段。
-- [x] install.sh install-alpine.sh install-openwrt.sh去掉这两个多余字段上报
-- [x] schema.js, updateDatabase.js去掉这两个多余字段
-- [x] 加入一个版本号字段 -- 后期逻辑再理一下
-- [x] 前端支持多apiBase, 并且同时调用并输出，如果多个，/admin前端关闭入口
-- [x] 流量包用户，有流量限制，不需要每月重置，需要调整前端显示，以及调整探针逻辑。
+- [ ] setting.js SITE_FIELDS增加theme_url字段
+- [ ] 后台主题商店选择主题以及版本，点击切换主题，保存到setting.js，格式为theme_url: 'https://github.com/huilang-me/CFSM-Theme-Store/tree/4e272b26193e35430261657b85e82c61d9dbf557/Tokinx/cf-server-monitor-theme-emerald/v1.0.10'，注意commitid以及版本号
+- [ ] 前台根据setting.js中的theme_url字段，获取对应的github raw url(https://raw.githubusercontent.com/huilang-me/CFSM-Theme-Store/4e272b26193e35430261657b85e82c61d9dbf557/Tokinx/cf-server-monitor-theme-emerald/v1.0.10/index.html)，workers反代index.html以及assets目录下的所有文件，并且设置缓存时间为1小时
+- [ ] 替换前端的index.html为workers反代的index.html，CSP和背景图，title注入等同样应用。注意仅代理index.html和assets目录，其他文件直接返回原有的文件
+- [ ] 主题商店增加预览主题，在登录状态下，点击预览主题，跳转到?theme_url=theme_url,实现临时替换setting.js中的theme_url字段方案预览主题。

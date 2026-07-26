@@ -300,7 +300,7 @@ import { t, currentLang, useTranslation } from '../utils/i18n'
 import { CHART } from '../utils/constants'
 import { formatDateTime } from '../utils/time.js'
 import useTheme from '../composables/useTheme'
-import { isDisabledProbeMetric } from '../../utils/metrics.js'
+import { isDisabledProbeMetric } from '../utils/server.js'
 
 const route = useRoute()
 const router = useRouter()

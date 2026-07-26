@@ -11,6 +11,51 @@
         <p class="text-secondary text-sm mt-2" style="line-height: 1.6;">{{ trans.themeStoreWarningDesc }}</p>
       </div>
 
+      <div class="theme-store-toolbar mb-4">
+        <div class="theme-current">
+          <span class="theme-current-label">{{ trans.currentTheme }}</span>
+          <span class="theme-current-value">{{ currentThemeUrl || trans.builtinTheme }}</span>
+        </div>
+        <button
+          v-if="currentThemeUrl"
+          @click="clearTheme"
+          class="btn btn-sm"
+          :disabled="applyingThemeId === '__builtin__'"
+        >↩ {{ trans.useBuiltinTheme }}</button>
+      </div>
+
+      <div class="theme-custom mb-4">
+        <div class="theme-custom-header">
+          <div>
+            <div class="theme-custom-title">{{ trans.customThemeUrl }}</div>
+            <div class="theme-custom-desc">{{ trans.customThemeUrlDesc }}</div>
+          </div>
+        </div>
+        <div class="theme-custom-form">
+          <input
+            v-model.trim="customThemeUrl"
+            type="text"
+            class="form-input"
+            placeholder="https://github.com/Author/theme/tree/commitid"
+            @keyup.enter="applyCustomTheme"
+          >
+          <button
+            @click="previewCustomTheme"
+            class="btn"
+            :disabled="!customThemeUrl || previewingThemeId === '__custom__'"
+          >👁 {{ previewingThemeId === '__custom__' ? trans.saving : trans.preview }}</button>
+          <button
+            @click="applyCustomTheme"
+            class="btn btn-primary"
+            :disabled="!customThemeUrl || applyingThemeId === '__custom__'"
+          >⇄ {{ applyingThemeId === '__custom__' ? trans.saving : trans.applyCustomTheme }}</button>
+        </div>
+      </div>
+
+      <div v-if="notice" :class="notice.type === 'success' ? 'warning-box' : 'danger-box'" class="mb-4">
+        {{ notice.message }}
+      </div>
+
       <div v-if="loading" class="theme-loading">
         <div class="loading-spinner"></div>
         <div class="loading-text">$ {{ trans.themeStoreLoading }}...</div>
@@ -29,39 +74,62 @@
       </div>
 
       <div v-else class="theme-grid">
-        <div v-for="theme in themes" :key="theme.id" class="theme-card">
+        <div v-for="theme in themes" :key="theme.id" class="theme-card" :class="{ active: isCurrentTheme(theme) }">
           <div class="theme-cover-wrap">
             <img :src="theme.cover" :alt="theme.title" class="theme-cover" @error="handleCoverError" />
           </div>
           <div class="theme-info">
             <div class="theme-header">
               <h3 class="theme-title">{{ theme.title }}</h3>
-              <span v-if="theme.version" class="theme-version">v{{ theme.version }}</span>
+              <span v-if="getSelectedVersion(theme)" class="theme-version">{{ getSelectedVersion(theme).version }}</span>
             </div>
             <div v-if="theme.tags && theme.tags.length" class="theme-tags">
               <span v-for="tag in theme.tags" :key="tag" class="theme-tag">{{ tag }}</span>
             </div>
             <p v-if="getThemeDescription(theme)" class="theme-desc">{{ getThemeDescription(theme) }}</p>
             <div v-if="theme.author" class="theme-author">by {{ theme.author }}</div>
+            
+            <!-- 版本选择 -->
+            <div v-if="theme.versions && theme.versions.length > 0" class="theme-version-selector">
+              <label class="version-label">{{ trans.version }}</label>
+              <select 
+                :value="selectedVersions[theme.id] || 0" 
+                @change="selectVersion(theme.id, $event.target.value)"
+                class="version-select"
+              >
+                <option v-for="(v, idx) in theme.versions" :key="v.version" :value="idx">
+                  {{ v.version }}
+                </option>
+              </select>
+            </div>
+
+            <!-- 当前选中版本信息 -->
+            <div v-if="getSelectedVersion(theme)" class="theme-version-info">
+              <div v-if="getSelectedVersion(theme).releaseDate" class="version-date">
+                📅 {{ getSelectedVersion(theme).releaseDate }}
+              </div>
+              <div v-if="getSelectedVersion(theme).changelog" class="version-changelog">
+                <div class="changelog-label">{{ trans.changelog }}</div>
+                <div class="changelog-content">{{ getSelectedVersion(theme).changelog }}</div>
+              </div>
+            </div>
+
             <div class="theme-actions">
-              <button v-if="theme.preview" @click="openPreview(theme)" class="btn btn-sm">👁 {{ trans.preview }}</button>
-              <a v-if="getSafeExternalUrl(theme.demo)" :href="getSafeExternalUrl(theme.demo)" target="_blank" rel="noopener noreferrer" class="btn btn-sm">▶ {{ trans.demo }}</a>
-              <a v-if="getSafeExternalUrl(theme.url)" :href="getSafeExternalUrl(theme.url)" target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-primary">↗ {{ trans.view }}</a>
+              <button
+                @click="previewTheme(theme)"
+                class="btn btn-sm"
+                :disabled="!getSelectedThemeUrl(theme) || previewingThemeId === theme.id"
+                :title="!getSelectedThemeUrl(theme) ? trans.themeUrlUnavailable : ''"
+              >👁 {{ previewingThemeId === theme.id ? trans.saving : trans.preview }}</button>
+              <button
+                @click="applyTheme(theme)"
+                class="btn btn-sm btn-primary"
+                :disabled="!getSelectedThemeUrl(theme) || applyingThemeId === theme.id"
+                :title="!getSelectedThemeUrl(theme) ? trans.themeUrlUnavailable : ''"
+              >⇄ {{ applyingThemeId === theme.id ? trans.saving : trans.switchTheme }}</button>
+              <a v-if="getSafeExternalUrl(theme.url)" :href="getSafeExternalUrl(theme.url)" target="_blank" rel="noopener noreferrer" class="btn btn-sm">↗ {{ trans.view }}</a>
             </div>
           </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Preview Modal -->
-    <div v-if="previewTheme" class="modal-overlay active" @click.self="previewTheme = null">
-      <div class="modal-dialog modal-lg">
-        <div class="modal-header">
-          <div class="modal-title">{{ previewTheme.title }}</div>
-          <button class="modal-close" @click="previewTheme = null">✕</button>
-        </div>
-        <div class="modal-body">
-          <img :src="previewTheme.preview" :alt="previewTheme.title" class="theme-preview-img" @error="handlePreviewError" />
         </div>
       </div>
     </div>
@@ -69,20 +137,29 @@
 </template>
 
 <script setup>
-import { ref, watch } from 'vue'
+import { ref, watch, reactive } from 'vue'
 import http from '../../../utils/http'
 import { currentLang } from '../../../utils/i18n'
+import { adminApi } from '../../../utils/api'
 
 const props = defineProps({
   trans: { type: Object, required: true },
-  activeTab: { type: String, default: '' }
+  activeTab: { type: String, default: '' },
+  selectedApiIndex: { type: Number, default: 0 },
+  currentThemeUrl: { type: String, default: '' }
 })
+
+const emit = defineEmits(['theme-applied'])
 
 const themes = ref([])
 const loading = ref(false)
 const loaded = ref(false)
 const error = ref('')
-const previewTheme = ref(null)
+const notice = ref(null)
+const applyingThemeId = ref('')
+const previewingThemeId = ref('')
+const customThemeUrl = ref('')
+const selectedVersions = reactive({})
 
 const loadThemes = async () => {
   if (loading.value) return
@@ -93,6 +170,14 @@ const loadThemes = async () => {
     const result = await http.get('/theme')
     if (result.error) throw new Error(result.error)
     themes.value = Array.isArray(result.data?.themes) ? result.data.themes : []
+    
+    // 初始化选中版本为最新版本（索引0）
+    themes.value.forEach(theme => {
+      if (theme.versions && theme.versions.length > 0) {
+        selectedVersions[theme.id] = 0
+      }
+    })
+    
     loaded.value = true
   } catch (e) {
     error.value = e.message || 'Failed to load themes'
@@ -102,8 +187,185 @@ const loadThemes = async () => {
   }
 }
 
-const openPreview = (theme) => {
-  previewTheme.value = theme
+const getLatestVersion = (theme) => {
+  if (!theme.versions || !theme.versions.length) return null
+  return theme.versions[0]
+}
+
+const getSelectedVersion = (theme) => {
+  if (!theme.versions || !theme.versions.length) return null
+  const idx = selectedVersions[theme.id] || 0
+  return theme.versions[idx] || null
+}
+
+const selectVersion = (themeId, idx) => {
+  selectedVersions[themeId] = parseInt(idx)
+  notice.value = null
+}
+
+const normalizeThemeStoreUrl = (value) => {
+  if (typeof value !== 'string' || !value.trim()) return ''
+  try {
+    const url = new URL(value.trim())
+    if (url.protocol !== 'https:' || url.hostname !== 'github.com') return ''
+    if (url.username || url.password || url.search || url.hash) return ''
+
+    const parts = url.pathname.split('/').filter(Boolean)
+    const ref = parts[3]
+    if (
+      parts.length < 6 ||
+      parts[0] !== 'huilang-me' ||
+      parts[1] !== 'CFSM-Theme-Store' ||
+      parts[2] !== 'tree' ||
+      (ref !== 'dist' && !/^[0-9a-f]{40}$/i.test(ref)) ||
+      parts.some(part => part === '.' || part === '..')
+    ) {
+      return ''
+    }
+
+    return `https://github.com/${parts.join('/')}`
+  } catch (_) {
+    return ''
+  }
+}
+
+const getGithubRepoParts = (theme) => {
+  const url = getSafeExternalUrl(theme?.url)
+  if (!url) return null
+  try {
+    const parsed = new URL(url)
+    if (parsed.hostname !== 'github.com') return null
+    const [owner, repo] = parsed.pathname.split('/').filter(Boolean)
+    if (!owner || !repo) return null
+    return { owner, repo: repo.replace(/\.git$/i, '') }
+  } catch (_) {
+    return null
+  }
+}
+
+const getVersionThemeUrl = (theme, version) => {
+  const directUrl = normalizeThemeStoreUrl(
+    version?.theme_url ||
+    version?.themeUrl ||
+    version?.store_url ||
+    version?.storeUrl ||
+    ''
+  )
+  if (directUrl && directUrl.includes('/tree/dist/')) return directUrl
+
+  const repo = getGithubRepoParts(theme)
+  const versionName = String(version?.version || '').trim()
+  if (!repo || !versionName) return ''
+
+  return `https://github.com/huilang-me/CFSM-Theme-Store/tree/dist/${repo.owner}/${repo.repo}/${versionName}`
+}
+
+const getSelectedThemeUrl = (theme) => {
+  return getVersionThemeUrl(theme, getSelectedVersion(theme))
+}
+
+const isCurrentTheme = (theme) => {
+  return props.currentThemeUrl && props.currentThemeUrl === getSelectedThemeUrl(theme)
+}
+
+const previewThemeUrl = async (themeUrl, previewingId) => {
+  if (!themeUrl) {
+    notice.value = { type: 'error', message: props.trans.themeUrlUnavailable }
+    return
+  }
+
+  if (previewingThemeId.value) return
+  previewingThemeId.value = previewingId
+  notice.value = null
+  try {
+    const result = await adminApi({
+      action: 'start_theme_preview',
+      theme_url: themeUrl
+    }, props.selectedApiIndex)
+
+    if (result.error) {
+      notice.value = { type: 'error', message: props.trans[result.error] || result.error || props.trans.themeApplyFailed }
+      return
+    }
+
+    const previewUrl = result.data?.preview_url
+    if (!previewUrl) {
+      notice.value = { type: 'error', message: props.trans.themeApplyFailed }
+      return
+    }
+
+    window.open(previewUrl, '_blank', 'noopener,noreferrer')
+  } catch (e) {
+    notice.value = { type: 'error', message: e.message || props.trans.themeApplyFailed }
+  } finally {
+    previewingThemeId.value = ''
+  }
+}
+
+const previewTheme = async (theme) => {
+  await previewThemeUrl(getSelectedThemeUrl(theme), theme.id)
+}
+
+const getCustomThemeUrl = () => {
+  return normalizeThemeStoreUrl(customThemeUrl.value)
+}
+
+const previewCustomTheme = async () => {
+  const themeUrl = getCustomThemeUrl()
+  if (!themeUrl) {
+    notice.value = { type: 'error', message: props.trans.invalidThemeUrl }
+    return
+  }
+  customThemeUrl.value = themeUrl
+  await previewThemeUrl(themeUrl, '__custom__')
+}
+
+const saveThemeUrl = async (themeUrl, applyingId) => {
+  if (applyingThemeId.value) return
+
+  applyingThemeId.value = applyingId
+  notice.value = null
+  try {
+    const result = await adminApi({
+      action: 'save_settings',
+      settings: { theme_url: themeUrl }
+    }, props.selectedApiIndex)
+
+    if (result.error) {
+      notice.value = { type: 'error', message: props.trans[result.error] || result.error || props.trans.themeApplyFailed }
+      return
+    }
+
+    emit('theme-applied', themeUrl)
+    notice.value = { type: 'success', message: props.trans.themeApplied }
+  } catch (e) {
+    notice.value = { type: 'error', message: e.message || props.trans.themeApplyFailed }
+  } finally {
+    applyingThemeId.value = ''
+  }
+}
+
+const applyTheme = async (theme) => {
+  const themeUrl = getSelectedThemeUrl(theme)
+  if (!themeUrl) {
+    notice.value = { type: 'error', message: props.trans.themeUrlUnavailable }
+    return
+  }
+  await saveThemeUrl(themeUrl, theme.id)
+}
+
+const applyCustomTheme = async () => {
+  const themeUrl = getCustomThemeUrl()
+  if (!themeUrl) {
+    notice.value = { type: 'error', message: props.trans.invalidThemeUrl }
+    return
+  }
+  customThemeUrl.value = themeUrl
+  await saveThemeUrl(themeUrl, '__custom__')
+}
+
+const clearTheme = async () => {
+  await saveThemeUrl('', '__builtin__')
 }
 
 const getThemeDescription = (theme) => {
@@ -142,16 +404,20 @@ const handleCoverError = (e) => {
   e.target.src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 225"><rect fill="%231a1a2e" width="400" height="225"/><text fill="%23666" font-family="monospace" font-size="16" x="200" y="112" text-anchor="middle">No Preview</text></svg>'
 }
 
-const handlePreviewError = (e) => {
-  e.target.style.display = 'none'
-}
-
 watch(
   () => props.activeTab,
   (activeTab) => {
     if (activeTab === 'themeStore' && !loaded.value) {
       loadThemes()
     }
+  },
+  { immediate: true }
+)
+
+watch(
+  () => props.currentThemeUrl,
+  (themeUrl) => {
+    customThemeUrl.value = themeUrl || ''
   },
   { immediate: true }
 )
@@ -164,6 +430,86 @@ watch(
   align-items: center;
   gap: 12px;
   padding: 40px 0;
+}
+
+.theme-store-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-card);
+}
+
+.theme-custom {
+  padding: 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-card);
+}
+
+.theme-custom-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.theme-custom-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.theme-custom-desc {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.theme-custom-form {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.theme-custom-form .form-input {
+  flex: 1;
+  min-width: 180px;
+}
+
+@media (max-width: 720px) {
+  .theme-store-toolbar,
+  .theme-custom-form {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .theme-custom-form .btn {
+    width: 100%;
+  }
+}
+
+.theme-current {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.theme-current-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.theme-current-value {
+  font-size: 12px;
+  color: var(--text-primary);
+  font-family: var(--terminal-font);
+  word-break: break-all;
 }
 
 .theme-grid {
@@ -183,6 +529,10 @@ watch(
 .theme-card:hover {
   border-color: var(--accent-green);
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
+}
+
+.theme-card.active {
+  border-color: var(--accent-green);
 }
 
 .theme-cover-wrap {
@@ -261,26 +611,75 @@ watch(
   opacity: 0.7;
 }
 
+.theme-version-selector {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.version-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.version-select {
+  flex: 1;
+  font-size: 11px;
+  padding: 4px 8px;
+  background: var(--bg-secondary, #1a1a2e);
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+  color: var(--text-primary);
+  font-family: var(--terminal-font);
+  cursor: pointer;
+}
+
+.version-select:focus {
+  outline: none;
+  border-color: var(--accent-green);
+}
+
+.theme-version-info {
+  margin-bottom: 10px;
+  padding: 6px 8px;
+  background: var(--bg-hover, rgba(255,255,255,0.03));
+  border-radius: 3px;
+}
+
+.version-date {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+
+.version-changelog {
+  font-size: 11px;
+}
+
+.changelog-label {
+  color: var(--accent-green);
+  font-weight: 500;
+  margin-bottom: 2px;
+}
+
+.changelog-content {
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
 .theme-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
 .theme-actions .btn {
-  flex: 1;
+  flex: 1 1 90px;
   text-align: center;
   text-decoration: none;
   font-size: 12px;
   padding: 6px 12px;
-}
-
-.modal-lg .modal-body {
-  padding: 0;
-}
-
-.theme-preview-img {
-  width: 100%;
-  display: block;
-  border-radius: 0 0 6px 6px;
 }
 </style>

@@ -1,7 +1,7 @@
-# CF-Server-Monitor 后端 API 文档
+# CF-Server-Monitor 全局 API 文档
 
-> 面向 CF-Server-Monitor 后端（Cloudflare Workers + D1 + Durable Objects）的完整 REST / WebSocket API 参考。
-> 本文档覆盖所有公开端点、内部端点、鉴权机制、错误码、数据结构与 WebSocket 实时推送协议。
+> 面向 CF-Server-Monitor 项目维护者和集成方的全局 REST / WebSocket API 参考。
+> 本文档覆盖 Workers 全部公开端点、管理端端点、维护端点、鉴权机制、错误码、数据结构与 WebSocket 实时推送协议。
 >
 > **Base URL**：`https://<your-worker-domain>`（部署后由 Cloudflare Workers 提供）
 >
@@ -30,6 +30,7 @@
   - [2.3](#23-get-apiserver---获取单台服务器详情) [`GET /api/server`](#23-get-apiserver---获取单台服务器详情) [- 获取单台服务器详情](#23-get-apiserver---获取单台服务器详情)
   - [2.4](#24-get-apihistoryall---获取历史指标) [`GET /api/history/all`](#24-get-apihistoryall---获取历史指标) [- 获取历史指标](#24-get-apihistoryall---获取历史指标)
   - [2.5](#25-get-apiws---websocket-实时推送) [`GET /api/ws`](#25-get-apiws---websocket-实时推送) [- WebSocket 实时推送](#25-get-apiws---websocket-实时推送)
+  - [2.6](#26-前端与主题代理) [前端与主题代理](#26-前端与主题代理)
 - [3. 管理端 API（鉴权）](#3-管理端-api鉴权)
   - [3.1](#31-post-adminapi---管理操作入口) [`POST /admin/api`](#31-post-adminapi---管理操作入口) [- 管理操作入口](#31-post-adminapi---管理操作入口)
   - [3.2](#32-action-login---登录) [`action: login`](#32-action-login---登录) [- 登录](#32-action-login---登录)
@@ -37,6 +38,8 @@
   - [3.4](#34-action-list---列出全部服务器含在线统计) [`action: list`](#34-action-list---列出全部服务器含在线统计) [- 列出全部服务器（含在线/统计）](#34-action-list---列出全部服务器含在线统计)
   - [3.5](#35-action-d1_usage---d1--workers-用量) [`action: d1_usage`](#35-action-d1_usage---d1--workers-用量) [- D1 / Workers 用量](#35-action-d1_usage---d1--workers-用量)
   - [3.6](#36-action-save_settings---保存设置) [`action: save_settings`](#36-action-save_settings---保存设置) [- 保存设置](#36-action-save_settings---保存设置)
+  - [3.6.1](#361-action-start_theme_preview---生成主题预览授权) [`action: start_theme_preview`](#361-action-start_theme_preview---生成主题预览授权) [- 生成主题预览授权](#361-action-start_theme_preview---生成主题预览授权)
+  - [3.6.2](#362-action-clear_theme_preview_auth---清除主题预览授权) [`action: clear_theme_preview_auth`](#362-action-clear_theme_preview_auth---清除主题预览授权) [- 清除主题预览授权](#362-action-clear_theme_preview_auth---清除主题预览授权)
   - [3.7](#37-action-add---新增服务器) [`action: add`](#37-action-add---新增服务器) [- 新增服务器](#37-action-add---新增服务器)
   - [3.8](#38-action-edit---修改服务器信息) [`action: edit`](#38-action-edit---修改服务器信息) [- 修改服务器信息](#38-action-edit---修改服务器信息)
   - [3.9](#39-action-delete---删除服务器) [`action: delete`](#39-action-delete---删除服务器) [- 删除服务器](#39-action-delete---删除服务器)
@@ -325,7 +328,7 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
   collect_interval=0&report_interval=60&reset_day=1&schema_version=2
   ```
   （`Content-Type: application/x-www-form-urlencoded; charset=utf-8`）
-- 动态配置的字段范围、规范化及客户端校验规则详见 [AGENT_CONFIG.md](./AGENT_CONFIG.md)。
+- 动态配置字段包括 `collect_interval`、`report_interval`、`reset_day`、`traffic_calc_type`、`traffic_limit`、`custom_ct`、`custom_cu`、`custom_cm`、`custom_bd`、`rx_correction`、`tx_correction`、`auto_update` 等探针运行参数；后端会按字段类型规范化并通过 `X-Agent-Config-Md5` 控制增量下发。
 - 失败：
   ```json
   { "error": "Invalid secret", "code": 401 }
@@ -681,7 +684,9 @@ ws.onmessage = (ev) => {
   if (msg.type === 'batchUpdate') {
     for (const u of msg.updates) {
       // 更新对应 serverId 的卡片
-      updateServer(u.serverId, u.data);
+      for (const s of u.samples || []) {
+        updateServer(u.serverId, s.data);
+      }
     }
   }
 };
@@ -702,6 +707,43 @@ ws.onmessage = (ev) => {
   }
 };
 ```
+
+***
+
+### 2.6 前端与主题代理
+
+这些路径返回 HTML 或静态文件，不使用统一 JSON 响应格式。
+
+| Path | 行为 |
+| ---- | ---- |
+| `/`、`/#/`、`/#/server/:id` 等前台路径 | `theme_url` 为空时返回内置主题；配置第三方主题时返回反代后的主题 `index.html` |
+| `/admin` | 始终返回内置默认主题的管理后台入口 |
+| `/admin/` | `302` 跳转到 `/admin#admin` |
+| `/assets/*` | 配置或预览第三方主题时反代对应主题 `assets/`；从 `/admin` 引用时优先返回内置静态资源 |
+| 其他静态路径 | 不走主题反代，仍由项目原有 ASSETS 或 public 文件处理 |
+
+**主题 URL 规则**：
+
+```text
+https://github.com/huilang-me/CFSM-Theme-Store/tree/dist/<作者>/<主题目录>/<版本号>
+```
+
+旧版 40 位 commit ref 地址仍兼容，但主题商店默认保存 `dist` 分支地址。
+
+**反代规则**：
+
+- 只代理主题目录下的 `index.html` 和 `assets/*`
+- GitHub raw 默认 `text/plain` 会被 Worker 按文件后缀修正为 CSS、JS、图片、字体等对应 `Content-Type`
+- 远程主题 `index.html` 和 `assets/*` 使用 `caches.default` 缓存 1 小时，缓存 key 包含分支、作者、主题目录和版本号
+- 主题商店列表 `/theme` 使用 Worker 内存缓存 5 分钟
+- 最终 HTML 会注入站点标题、背景图、自定义 `<head>`、自定义脚本，并移除主题自带 CSP meta
+- CSP 通过 HTTP Response Header 返回，同时设置 `X-Frame-Options: DENY`
+- 主题 `index.html` 不可用时返回 `502 Theme index.html is unavailable`，不会自动回落到内置主题
+- 主题资源不可用时返回对应错误状态，不会回落成内置静态文件
+
+**预览鉴权**：
+
+`/?theme_url=...` 只在已登录管理员通过 `start_theme_preview` 获取临时授权后生效。授权 cookie 有效期 10 分钟；未授权直接访问会返回 `401 Theme preview requires admin login`。
 
 ***
 
@@ -897,6 +939,7 @@ Header：`X-Turnstile-Token: <token>`（当 `site_options.turnstile_enabled === 
     "custom_bg": "https://...",
     "custom_head": "<style>...</style>",
     "custom_script": "console.log('hi');",
+    "theme_url": "https://github.com/huilang-me/CFSM-Theme-Store/tree/dist/Tokinx/cf-server-monitor-theme-emerald/v1.0.10",
     "appearance_options": {
       "theme_options": {
         "a": 1,
@@ -931,12 +974,14 @@ Header：`X-Turnstile-Token: <token>`（当 `site_options.turnstile_enabled === 
 **字段分类**：
 
 - `APPEARANCE_FIELDS`（写入 `appearance_options` JSON）：`site_title`、`custom_bg`、`custom_head`、`custom_script`、`csp_static`、`csp_api`、`display_mode`、`theme_options`
-- `SITE_FIELDS`（写入 `site_options` JSON）：上表除 appearance 之外的全部
+- `SITE_FIELDS`（写入 `site_options` JSON）：`is_public`、`show_price`、`show_expire`、`show_tf`、`show_time`、`show_long_history`、通知、Turnstile、账号、Cloudflare、Ping 节点、`expire_reminder`、`theme_url`、历史优化字段等站点级配置
 - 任何未列出的字段会被忽略
 
 **特殊处理**：
 
 - `password`：以**明文**传入；后端用 PBKDF2-HMAC-SHA-256（50,000 iterations、16 字节 salt、32 字节 hash）计算后保存为 `pbkdf2_sha256$50000$<salt hex>$<hash hex>`；如传空字符串则**不更新**密码；旧版 32 位 MD5 哈希仍可登录并会在成功登录后自动升级
+- `theme_url`：可单独通过 `{"settings":{"theme_url":"..."}}` 保存；只允许 `https://github.com/huilang-me/CFSM-Theme-Store/tree/dist/...` 或兼容的 40 位 commit ref 地址；保存前会请求对应 raw `index.html` 验证可用性，失败返回 `400 invalidThemeUrl`，不会保存
+- Ping 节点字段：仅校验本次请求中出现的 `custom_ct/custom_cu/custom_cm/custom_bd` 字段，因此只保存 `theme_url` 不会触发 Ping 节点格式校验
 
 **Response 200**
 
@@ -945,6 +990,55 @@ Header：`X-Turnstile-Token: <token>`（当 `site_options.turnstile_enabled === 
 ```
 
 > 副作用：清空 `site_options` 内存缓存，下一次请求会从 DB 重新加载。
+
+***
+
+### 3.6.1 `action: start_theme_preview` - 生成主题预览授权
+
+**Request**
+
+```json
+{
+  "action": "start_theme_preview",
+  "theme_url": "https://github.com/huilang-me/CFSM-Theme-Store/tree/dist/Tokinx/cf-server-monitor-theme-emerald/v1.0.10"
+}
+```
+
+**行为**：
+
+- 需要携带有效 `Authorization: Bearer <jwt>`
+- 校验 `theme_url` 格式，并请求对应 raw `index.html` 确认可访问
+- 成功后设置 HttpOnly Cookie：`cfsm_theme_preview_auth`，有效期 600 秒
+- 返回可直接打开的预览地址：`/?theme_url=<encoded theme_url>`
+
+**Response 200**
+
+```json
+{
+  "success": true,
+  "preview_url": "https://status.example.com/?theme_url=https%3A%2F%2Fgithub.com%2Fhuilang-me%2FCFSM-Theme-Store%2Ftree%2Fdist%2FTokinx%2Fcf-server-monitor-theme-emerald%2Fv1.0.10"
+}
+```
+
+失败时返回 `400 invalidThemeUrl` 或 `401 Unauthorized`。
+
+***
+
+### 3.6.2 `action: clear_theme_preview_auth` - 清除主题预览授权
+
+**Request**
+
+```json
+{ "action": "clear_theme_preview_auth" }
+```
+
+**行为**：清除 `cfsm_theme_preview_auth` Cookie。该 action 可在未登录时调用，用于离开管理页后清理临时预览授权。
+
+**Response 200**
+
+```json
+{ "success": true }
+```
 
 ***
 
@@ -1218,6 +1312,7 @@ Header：`X-Turnstile-Token: <token>`（当 `site_options.turnstile_enabled === 
   custom_script: string,         // 注入到 </body> 之前
   display_mode: 'bar' | 'ring' | 'table',
   theme_options: Record<string, unknown>,
+  theme_url: string,             // 第三方主题商店 URL；为空使用内置主题
   is_public: 'true' | 'false',
   show_price: 'true' | 'false',
   show_expire: 'true' | 'false',
@@ -1251,7 +1346,7 @@ Header：`X-Turnstile-Token: <token>`（当 `site_options.turnstile_enabled === 
 | `subscribed` | S → C | `{ ts: number, subscribed: string, count: number }` |
 | `ping`   | S → C | `{ ts: number }`                                   |
 | `pong`   | 双向    | `{ ts: number }`                                   |
-| `update` | S → C | `{ serverId: string, ts: number, data: <Server> }` |
+| `batchUpdate` | S → C | `{ ts: number, updates: Array<{ serverId: string, samples: Array<{ ts: number, data: <Server> }> }> }` |
 
 ***
 
@@ -1277,7 +1372,7 @@ DEBUG 模式（`env.DEBUG=1`）下额外提供：
 
 | code | 名称                    | 触发条件                                        |
 | ---- | --------------------- | ------------------------------------------- |
-| 400  | Bad Request           | 缺参数 / 非法 UUID / 未知 action / 缺 Cloudflare 配置 |
+| 400  | Bad Request           | 缺参数 / 非法 UUID / 未知 action / 缺 Cloudflare 配置 / `invalidThemeUrl` |
 | 401  | Unauthorized          | JWT 失败 / Basic 失败 / 站点非公开未登录 / 探针 secret 错  |
 | 403  | Forbidden             | Turnstile 失败                                |
 | 404  | Not Found             | 服务器不存在 / WebSocket DO 未绑定                   |
@@ -1449,4 +1544,4 @@ wscat -c "wss://status.example.com/api/ws?subscribe=9b2c4d3e-1a2b-4c5d-9e8f-7a6b
 
 ***
 
-> 文档同步：与源码 `src/index.js`、`src/handlers/{admin,dashboard,frontend,update}.js`、`src/durable/MetricsBroadcaster.js`、`src/utils/{auth,settings,errors,cors,cache,metrics,common}.js`、`src/database/{schema,updateDatabase}.js` 一一对应；后续修改任一文件时，请同步更新本文件。
+> 文档同步：与源码 `src/index.js`、`src/handlers/{admin,dashboard,frontend,theme,update}.js`、`src/durable/MetricsBroadcaster.js`、`src/utils/{settings,errors,cors,csp,cache,metrics,common,serverBilling,version}.js`、`src/database/{schema,updateDatabase}.js` 一一对应；后续修改任一文件时，请同步更新本文件。

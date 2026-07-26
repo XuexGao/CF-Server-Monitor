@@ -4,7 +4,7 @@ import mkcert from 'vite-plugin-mkcert'
 import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
-import { parseCspOrigins, buildApiDomainsWithWs, rebuildCsp, buildBackgroundStyle, injectTitle, injectApiBase } from './src/utils/csp.js'
+import { parseCspOrigins, buildBackgroundStyle, injectTitle, injectApiBase, stripCspMeta } from './src/utils/csp.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const devProxyTarget = process.env.VITE_DEV_PROXY_TARGET || 'https://localhost:8787'
@@ -39,27 +39,22 @@ function loadEnvFile() {
 function envPlugin() {
   const env = loadEnvFile()
   const apiBaseRaw = env.API_BASE || ''
-  const cspStaticRaw = env.CSP_STATIC || ''
   const cspApiRaw = env.CSP_API || ''
   const backgroundImage = env.BACKGROUND_IMAGE || ''
   const title = env.TITLE || ''
 
-  // API_BASE 与 CSP_API 合并，作为 connect-src 白名单（含 wss）
+  // API_BASE 与 CSP_API 合并，写入运行时 apiBase meta。
   const rawApiDomains = [
     ...parseCspOrigins(apiBaseRaw),
     ...parseCspOrigins(cspApiRaw)
   ]
-  const apiDomains = buildApiDomainsWithWs(rawApiDomains)
-  const staticDomains = parseCspOrigins(cspStaticRaw)
 
   return {
     name: 'env-inject',
     transformIndexHtml(html) {
+      html = stripCspMeta(html)
       html = injectTitle(html, title)
       html = injectApiBase(html, rawApiDomains)
-      if (staticDomains.length > 0 || apiDomains.length > 0) {
-        html = rebuildCsp(html, { staticDomains, apiDomains })
-      }
       if (backgroundImage) {
         const bgStyle = buildBackgroundStyle(backgroundImage)
         html = html.replace('</head>', `${bgStyle}\n</head>`)
@@ -79,13 +74,13 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
-    assetsDir: 'assets',
+    assetsDir: 'static',
     emptyOutDir: true,
     rollupOptions: {
       output: {
-        entryFileNames: 'assets/[name]-[hash].js',
-        chunkFileNames: 'assets/[name]-[hash].js',
-        assetFileNames: 'assets/[name]-[hash].[ext]'
+        entryFileNames: 'static/[name]-[hash].js',
+        chunkFileNames: 'static/[name]-[hash].js',
+        assetFileNames: 'static/[name]-[hash].[ext]'
       }
     }
   },
@@ -94,7 +89,7 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': createWorkerProxy(),
-      '/admin': createWorkerProxy(),
+      '/admin/api': createWorkerProxy(),
       '/theme': createWorkerProxy(),
       '/update': createWorkerProxy(),
       '/updateDatabase': createWorkerProxy(),

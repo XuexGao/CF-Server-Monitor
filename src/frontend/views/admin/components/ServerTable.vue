@@ -67,7 +67,16 @@
                   <span class="flag-fallback">🏳️</span>
                   <OsIcon :os="server.os" />
                 </span>
-                <router-link :to="'/server/' + server.id + (selectedApiIndex ? '?apiIndex=' + selectedApiIndex : '')" class="server-name-link">{{ server.name }}</router-link>
+                <a
+                  v-if="themeUrl"
+                  :href="getPublicServerHref(server)"
+                  class="server-name-link"
+                >{{ server.name }}</a>
+                <router-link
+                  v-else
+                  :to="getDefaultServerRoute(server)"
+                  class="server-name-link"
+                >{{ server.name }}</router-link>
               </div>
             </td>
             <td><span class="group-tag">{{ server.server_group || trans.default }}</span></td>
@@ -119,7 +128,7 @@
 import { getFlagRegionCode, formatBytes } from '../../../utils/api'
 import { getPublicAssetUrl } from '../../../utils/config'
 import { currentLang } from '../../../utils/i18n'
-import { detectBillingCycle, detectCurrencySymbol, getBillingCycleOption, isEnabledFlag, isFreePrice, normalizeCurrency, normalizePrice } from '../../../../utils/serverBilling.js'
+import { detectBillingCycle, detectCurrencySymbol, getBillingCycleOption, isEnabledFlag, isFreePrice, normalizeCurrency, normalizePrice } from '../../../utils/server.js'
 import OsIcon from '../../../components/OsIcon.vue'
 
 const props = defineProps({
@@ -129,6 +138,7 @@ const props = defineProps({
   groups: { type: Array, default: () => ['Default'] },
   activeTab: { type: String, default: 'servers' },
   selectedApiIndex: { type: Number, default: 0 },
+  themeUrl: { type: String, default: '' },
   latestAgentVersion: { type: String, default: '' },
   copiedServerId: { type: [String, Number], default: null },
   copiedNoteServerId: { type: [String, Number], default: null }
@@ -171,4 +181,7 @@ const getAgentVersionClass = (version) => {
   if (!latest) return ''
   return normalizeVersion(version) === latest ? 'text-green' : 'text-red'
 }
+const getServerQuery = () => props.selectedApiIndex ? `?apiIndex=${props.selectedApiIndex}` : ''
+const getDefaultServerRoute = (server) => `/server/${server.id}${getServerQuery()}`
+const getPublicServerHref = (server) => `/#/server/${encodeURIComponent(server.id)}${getServerQuery()}`
 </script>

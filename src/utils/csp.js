@@ -1,3 +1,36 @@
+const TURNSTILE_DOMAIN = 'https://challenges.cloudflare.com';
+const INSIGHTS_DOMAIN = 'https://static.cloudflareinsights.com';
+const FONTS_API_DOMAIN = 'https://fonts.googleapis.com';
+const FONTS_STATIC_DOMAIN = 'https://fonts.gstatic.com';
+const RAW_GITHUB_DOMAIN = 'https://raw.githubusercontent.com';
+const DEFAULT_CONNECT_DOMAINS = [
+  'https://api.iconify.design',
+  'https://api.unisvg.com',
+  'https://api.simplesvg.com',
+  'https://api.frankfurter.app',
+  'https://api.frankfurter.dev',
+  'https://open.er-api.com',
+  'https://api.ip.sb',
+  'https://ipwho.is',
+  'https://api.ipapi.is',
+  'https://ipapi.co',
+  'https://api.vore.top'
+];
+
+const CSP_META_TAG_RE_GLOBAL = /<meta\b(?=[^>]*http-equiv=["']Content-Security-Policy["'])[^>]*>\s*/gi;
+
+export function stripCspMeta(html) {
+  return html.replace(CSP_META_TAG_RE_GLOBAL, '');
+}
+
+function uniqueSources(sources) {
+  return [...new Set(sources.filter(Boolean))];
+}
+
+function buildDirective(name, sources) {
+  return `${name} ${uniqueSources(sources).join(' ')}`;
+}
+
 export function normalizeCspOrigin(value) {
   const raw = String(value || '').trim();
   if (!raw || /[\s;"']/.test(raw)) return '';
@@ -30,60 +63,20 @@ export function buildApiDomainsWithWs(rawApiDomains) {
   return domains;
 }
 
-export function rebuildCsp(html, { staticDomains, apiDomains }) {
-  const cspMatch = html.match(/<meta http-equiv="Content-Security-Policy" content="([^"]+)">/);
-  if (!cspMatch) return html;
-
-  const existingCsp = cspMatch[1];
-  const domainRegex = /https?:\/\/[^\s';]+|wss?:\/\/[^\s';]+/g;
-  const existingDomains = existingCsp.match(domainRegex) || [];
-
-  const turnstileDomain = 'https://challenges.cloudflare.com';
-  const insightsDomain = 'https://static.cloudflareinsights.com';
-  const fontsApiDomain = 'https://fonts.googleapis.com';
-  const fontsStaticDomain = 'https://fonts.gstatic.com';
-  const rawGithubDomain = 'https://raw.githubusercontent.com';
-
-  const scriptSrcDomains = [...new Set([
-    ...existingDomains.filter(d => [turnstileDomain, insightsDomain].includes(d)),
-    ...staticDomains
-  ])].join(' ');
-
-  const styleSrcDomains = [...new Set([
-    ...existingDomains.filter(d => [turnstileDomain, fontsApiDomain].includes(d)),
-    ...staticDomains
-  ])].join(' ');
-
-  const imgSrcDomains = [...new Set([
-    ...existingDomains.filter(d => [turnstileDomain, rawGithubDomain].includes(d)),
-    ...staticDomains
-  ])].join(' ');
-
-  const fontSrcDomains = [...new Set([
-    ...existingDomains.filter(d => [turnstileDomain, fontsStaticDomain].includes(d)),
-    ...staticDomains
-  ])].join(' ');
-
-  const connectSrcDomains = [...new Set([
-    ...existingDomains.filter(d => [turnstileDomain, insightsDomain].includes(d)),
-    ...apiDomains
-  ])].join(' ');
-
-  const newCsp = [
-    `default-src 'self'`,
-    `script-src 'self' 'unsafe-inline' ${scriptSrcDomains}`,
-    `style-src 'self' 'unsafe-inline' ${styleSrcDomains}`,
-    `img-src 'self' ${imgSrcDomains} data:`,
-    `font-src 'self' ${fontSrcDomains}`,
-    `connect-src 'self' ${connectSrcDomains}`,
-    `frame-src ${turnstileDomain}`,
-    `form-action 'self'`,
-    `object-src 'none'`,
-    `base-uri 'self'`
+export function buildCspHeader({ staticDomains = [], apiDomains = [] } = {}) {
+  return [
+    buildDirective('default-src', ["'self'"]),
+    buildDirective('script-src', ["'self'", "'unsafe-inline'", TURNSTILE_DOMAIN, INSIGHTS_DOMAIN, ...staticDomains]),
+    buildDirective('style-src', ["'self'", "'unsafe-inline'", TURNSTILE_DOMAIN, FONTS_API_DOMAIN, ...staticDomains]),
+    buildDirective('img-src', ["'self'", TURNSTILE_DOMAIN, RAW_GITHUB_DOMAIN, ...staticDomains, 'data:']),
+    buildDirective('font-src', ["'self'", TURNSTILE_DOMAIN, FONTS_STATIC_DOMAIN, ...staticDomains]),
+    buildDirective('connect-src', ["'self'", TURNSTILE_DOMAIN, INSIGHTS_DOMAIN, ...DEFAULT_CONNECT_DOMAINS, ...apiDomains]),
+    buildDirective('frame-src', [TURNSTILE_DOMAIN]),
+    buildDirective('frame-ancestors', ["'none'"]),
+    buildDirective('form-action', ["'self'"]),
+    buildDirective('object-src', ["'none'"]),
+    buildDirective('base-uri', ["'self'"])
   ].join(';');
-
-  return html.replace(cspMatch[0],
-    `<meta http-equiv="Content-Security-Policy" content="${newCsp}">`);
 }
 
 export function injectTitle(html, title) {

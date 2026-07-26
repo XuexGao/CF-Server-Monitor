@@ -1,4 +1,8 @@
-const BILLING_CYCLES = Object.freeze([
+export function isDisabledProbeMetric(value) {
+  return value === false || value === 'false';
+}
+
+export const BILLING_CYCLES = Object.freeze([
   { value: 'month', months: 1, labelZh: '月', labelEn: 'Monthly', shortLabelZh: '月', shortLabelEn: 'M' },
   { value: 'quarter', months: 3, labelZh: '季', labelEn: 'Quarterly', shortLabelZh: '季', shortLabelEn: 'Q' },
   { value: 'half_year', months: 6, labelZh: '半年', labelEn: 'Half-yearly', shortLabelZh: '半年', shortLabelEn: 'HY' },
@@ -9,8 +13,7 @@ const BILLING_CYCLES = Object.freeze([
   { value: 'five_years', months: 60, labelZh: '五年', labelEn: 'Five years', shortLabelZh: '5年', shortLabelEn: '5Y' }
 ]);
 
-const CURRENCY_OPTIONS = Object.freeze([
-  // 主流货币
+export const CURRENCY_OPTIONS = Object.freeze([
   { symbol: '$', nameZh: '美元', nameEn: 'US Dollar' },
   { symbol: '¥', nameZh: '人民币', nameEn: 'Chinese Yuan' },
   { symbol: '€', nameZh: '欧元', nameEn: 'Euro' },
@@ -24,7 +27,6 @@ const CURRENCY_OPTIONS = Object.freeze([
   { symbol: '₣', nameZh: '瑞士法郎', nameEn: 'Swiss Franc' },
   { symbol: '₩', nameZh: '韩元', nameEn: 'Korean Won' },
   { symbol: '₹', nameZh: '印度卢比', nameEn: 'Indian Rupee' },
-  // 亚太货币
   { symbol: '฿', nameZh: '泰铢', nameEn: 'Thai Baht' },
   { symbol: '₫', nameZh: '越南盾', nameEn: 'Vietnamese Dong' },
   { symbol: '₱', nameZh: '菲律宾比索', nameEn: 'Philippine Peso' },
@@ -36,7 +38,6 @@ const CURRENCY_OPTIONS = Object.freeze([
   { symbol: '₨', nameZh: '巴基斯坦卢比', nameEn: 'Pakistani Rupee' },
   { symbol: 'LKR', nameZh: '斯里兰卡卢比', nameEn: 'Sri Lankan Rupee' },
   { symbol: '₮', nameZh: '蒙古图格里克', nameEn: 'Mongolian Tugrik' },
-  // 其他地区
   { symbol: '₽', nameZh: '卢布', nameEn: 'Russian Ruble' },
   { symbol: 'R$', nameZh: '巴西雷亚尔', nameEn: 'Brazilian Real' },
   { symbol: 'kr', nameZh: '克朗', nameEn: 'Krona (SEK/NOK/DKK)' },
@@ -104,21 +105,22 @@ export function normalizePrice(value) {
   return num.toFixed(2);
 }
 
+export function isFreePrice(value) {
+  const price = normalizePrice(value);
+  return price === '-1' || price === '0.00';
+}
+
 export function normalizeCurrency(value) {
   const raw = String(value || '').trim();
   if (!raw) return '';
 
-  // Normalize common variants
   const normalized = raw === '￥' ? '¥' : raw;
-
-  // Try matching multi-char symbols first (HK$, A$, C$, S$, NZ$, R$, RM, zł)
   for (const item of CURRENCY_OPTIONS) {
     if (item.symbol.length > 1 && normalized.startsWith(item.symbol)) {
       return item.symbol;
     }
   }
 
-  // Fallback to single-char match
   const symbol = normalized[0];
   return NORMALIZED_CURRENCIES.has(symbol) ? symbol : '';
 }
@@ -128,14 +130,12 @@ export function detectCurrencySymbol(value) {
   if (!raw) return '';
   if (raw.includes('￥')) return '¥';
 
-  // Try matching multi-char symbols first (HK$, A$, C$, S$, NZ$, R$, RM, zł)
   for (const item of CURRENCY_OPTIONS) {
     if (item.symbol.length > 1 && raw.includes(item.symbol)) {
       return item.symbol;
     }
   }
 
-  // Fallback to single-char match
   return CURRENCY_OPTIONS.find(item => item.symbol.length === 1 && raw.includes(item.symbol))?.symbol || '';
 }
 
@@ -165,12 +165,12 @@ export function normalizeBillingCycle(value) {
   return CYCLE_ALIASES.get(raw.toLowerCase()) || 'month';
 }
 
-function getBillingCycleOption(value) {
+export function getBillingCycleOption(value) {
   const normalized = normalizeBillingCycle(value);
   return BILLING_CYCLES.find(item => item.value === normalized) || BILLING_CYCLES[0];
 }
 
-function isEnabledFlag(value) {
+export function isEnabledFlag(value) {
   return value === true || value === 1 || value === '1' || value === 'true';
 }
 
@@ -242,4 +242,16 @@ export function renewExpireDateIfNeeded(expireDate, billingCycle, autoRenewal, n
   }
 
   return { expire_date: nextDate, renewed };
+}
+
+export function formatBillingPrice(server, lang = 'zh') {
+  const price = normalizePrice(server?.price);
+  if (!price) return '';
+  if (isFreePrice(price)) return lang === 'zh' ? '免费' : 'Free';
+
+  const currency = normalizeCurrency(server?.currency || detectCurrencySymbol(server?.price));
+  const cycle = getBillingCycleOption(detectBillingCycle(server?.price) || server?.billing_cycle);
+  const cycleLabel = lang === 'zh' ? cycle.shortLabelZh : cycle.shortLabelEn;
+
+  return `${currency}${price}/${cycleLabel}`;
 }

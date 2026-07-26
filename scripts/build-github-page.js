@@ -3,7 +3,7 @@ import { execSync } from 'child_process';
 import fs from 'fs-extra';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { parseCspOrigins, buildApiDomainsWithWs, rebuildCsp, buildBackgroundStyle, injectTitle, injectApiBase } from '../src/utils/csp.js';
+import { parseCspOrigins, buildBackgroundStyle, injectTitle, injectApiBase } from '../src/utils/csp.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, '..');
@@ -33,15 +33,7 @@ const apiBase = parseCspOrigins(process.env.API_BASE || '');
 const title = process.env.TITLE || '';
 const backgroundImage = process.env.BACKGROUND_IMAGE || '';
 
-// CSP 配置: API_BASE + CSP_API → connect-src（含 wss），CSP_STATIC → script/style/img/font-src
-const rawApiDomains = [
-  ...parseCspOrigins(process.env.API_BASE || ''),
-  ...parseCspOrigins(process.env.CSP_API || '')
-];
-const cspApiDomains = buildApiDomainsWithWs(rawApiDomains);
-const cspStaticDomains = parseCspOrigins(process.env.CSP_STATIC || '');
-
-console.log('Config from env:', { apiBase, title, backgroundImage, cspApiDomains, cspStaticDomains });
+console.log('Config from env:', { apiBase, title, backgroundImage });
 
 console.log('Cleaning dist directory...');
 if (fs.existsSync(distDir)) {
@@ -63,12 +55,7 @@ for (const file of htmlFiles) {
   // 2. 注入运行时 meta 标签
   html = injectApiBase(html, apiBase)
 
-  // 3. 注入 CSP meta 标签
-  if (cspStaticDomains.length > 0 || cspApiDomains.length > 0) {
-    html = rebuildCsp(html, { staticDomains: cspStaticDomains, apiDomains: cspApiDomains });
-  }
-
-  // 4. 注入背景图样式
+  // 3. 注入背景图样式
   if (backgroundImage) {
     const bgStyle = buildBackgroundStyle(backgroundImage)
     html = html.replace('</head>', `${bgStyle}\n</head>`);

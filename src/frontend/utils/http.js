@@ -9,20 +9,20 @@ const DEFAULT_ERROR_MESSAGES = {
 
 const TURNSTILE_VERIFIED_KEY = 'turnstile_verified'
 
-const getAdminHash = () => {
-  return '#/admin'
+const getAdminPath = () => {
+  return '/admin'
 }
 
 const redirectToAdminLogin = () => {
   if (typeof window === 'undefined') return
 
-  const adminHash = getAdminHash()
-  if (window.location.hash.startsWith(adminHash)) {
+  const adminPath = getAdminPath()
+  if (window.location.pathname === adminPath || window.location.pathname.startsWith(`${adminPath}/`)) {
     window.location.reload()
     return
   }
 
-  window.location.hash = adminHash
+  window.location.assign(adminPath)
 }
 
 const createHeaders = (includeAuth = true, includeTurnstile = true, baseUrl = null, options = {}) => {

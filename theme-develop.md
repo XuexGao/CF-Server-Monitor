@@ -1,10 +1,10 @@
-# CF-Server-Monitor 前端主题开发文档
+# CF-Server-Monitor 第三方主题开发 API 文档
 
-> 面向 CF-Server-Monitor 前端主题开发的 API 参考。
+> 面向第三方主题开发作者的 API 参考。
 >
-> 本文档仅保留浏览器端调用的接口，去除后端内部实现细节。
+> 本文档只保留第三方主题可用的公开 API、WebSocket 和静态目录约定，不介绍后台管理接口。
 >
-> 如果仅需制作主题，无需关注管理端 API，直接跳转到 `/#/admin` 即可。
+> 管理后台固定由默认主题接管；主题中的管理入口只能跳转到 `/admin#admin`。
 
 **Base URL**：`https://<your-worker-domain>`
 
@@ -16,7 +16,7 @@
 
 ## 目录
 
-- [0. 运行时配置与版本升级提示](#0-运行时配置与版本升级提示)
+- [0. 运行时配置、构建产物与版本升级提示](#0-运行时配置构建产物与版本升级提示)
 - [1. 鉴权与 Turnstile 流程](#1-鉴权与-turnstile-流程)
 - **[2. 公开 API](#2-公开-api)**
   - **[2.1 获取站点配置](#21-获取站点配置)**
@@ -29,7 +29,7 @@
 
 ***
 
-## 0. 运行时配置与版本升级提示
+## 0. 运行时配置、构建产物与版本升级提示
 
 ### 0.1 API Base 配置
 
@@ -69,16 +69,50 @@ https://localhost:5173,https://[你的github用户名].github.io
 npm run build:github-page
 ```
 
-`csp_api` 和 `csp_static` 由后台外观设置保存，并在服务端返回 HTML 时注入 CSP；纯静态构建时使用上面的 `CSP_API` / `CSP_STATIC` 环境变量注入。
+纯静态构建时，`API_BASE`、`TITLE`、`BACKGROUND_IMAGE`、`CSP_API`、`CSP_STATIC` 会写入 HTML 运行时配置。后台外观设置中的 `csp_api` 和 `csp_static` 也会影响页面允许加载的第三方 API 和静态资源域名。
 
-### 0.2 版本升级提示
+### 0.2 主题构建产物约定
+
+主题完成后提交到 [huilang-me/CFSM-Theme-Store](https://github.com/huilang-me/CFSM-Theme-Store) 项目。
+
+主题构建产物仅需要：
+
+- `index.html`
+- `assets/` 目录
+
+目录结构示例：
+
+```
+my-theme/
+├── index.html
+└── assets/
+    ├── app.css
+    ├── app.js
+    └── logo.webp
+```
+
+主题开发注意事项：
+
+- 主题提交目录只能生成 `index.html` 和 `assets/`；不要依赖其他主题目录或根目录文件
+- 静态资源应放在主题目录的 `assets/` 下，并在 HTML/JS/CSS 中使用 `/assets/...` 或相对 `assets/...`
+- 旗帜和 OS 图标走默认皮肤静态文件，不要打包进主题：旗帜使用 `/flags/<code>.svg`，OS 图标使用 `/os-icons/<filename>`
+- 站点标题、背景图、自定义 `<head>`、自定义脚本由用户后台外观设置控制，主题不要把这些配置写死
+- 主题不可用时应让页面暴露加载错误，不要在主题内静默跳转到其他页面
+
+路由约定：
+
+- 首页：`/#/` 或 `/#`
+- 详情页：`/#/server/:id`
+- 管理后台：链接到 `/admin#admin`，由内置默认主题接管，第三方主题不得实现管理页
+
+### 0.3 版本升级提示
 
 `GET /api/config` 会返回当前 Workers 版本 `version`。当请求带有有效 JWT 时，后端还会查询远程最新版并额外返回：
 
 - `last_workers_version`：最新 Workers 版本
 - `last_agent_version`：最新探针 Agent 版本
 
-内置主题会将 `version` 与 `last_workers_version` 做字符串比较；两者不一致时，页脚版本号旁显示升级提示圆点和 tooltip。`last_agent_version` 用于管理端服务器表格中的 Agent 版本对比，落后版本会以红色显示。
+第三方主题可以将 `version` 与 `last_workers_version` 做字符串比较，自行决定是否展示 Workers 升级提示。`last_agent_version` 仅在登录后返回，可用于可选的 Agent 版本提示。
 
 未登录访问 `/api/config` 时不会返回 `last_workers_version` / `last_agent_version`，自定义主题不要依赖匿名请求展示升级提示。
 
@@ -92,7 +126,7 @@ npm run build:github-page
 
 | 机制         | 使用位置            | 方式                                           |
 | ---------- | --------------- | -------------------------------------------- |
-| JWT Bearer | 管理端 API、非公开站点访问 | `Authorization: Bearer <token>`              |
+| JWT Bearer | 非公开站点读取公开 API、查看 1 小时以上历史 | `Authorization: Bearer <token>`              |
 | Turnstile  | 公开 API（当启用时）    | `X-Turnstile-Token` 或 `X-Turnstile-Verified` |
 
 ### 1.2 Turnstile 人机验证流程
@@ -116,7 +150,7 @@ npm run build:github-page
 
 - `/api/ws`、`/api/config`（不带 Turnstile Header 时）无需验证
 - `/api/config` 带 `X-Turnstile-Token` 或 `X-Turnstile-Verified` 时会进入验证流程，并通过 `verified` / `turnstile_verified` 返回验证结果
-- `turnstile_enabled` 是全局 API 验证开关，`turnstile_login_enabled` 是登录页验证开关；`/api/config` 返回的 `turnstile_login_enabled` 在全局验证开启时也会为 `true`
+- `turnstile_enabled` 是全局 API 验证开关，`turnstile_login_enabled` 是内置后台登录页验证开关；第三方主题不实现登录页，管理入口跳转 `/admin#admin`
 
 ***
 
@@ -175,7 +209,7 @@ Headers: (可选) Authorization: Bearer <jwt>, X-Turnstile-Token / X-Turnstile-V
 | `turnstile_verified` | string\|null | 已验证凭证，缓存复用 1 小时 |
 | `show_long_history`  | boolean      | 是否允许查看超过 1 小时历史 |
 
-第三方主题如需保存自定义配置，仍使用后台 `save_settings` 接口，并把对象放在 `settings.appearance_options.theme_options`，例如 `{"appearance_options":{"theme_options":{"a":1,"b":2}}}`。
+`theme_options` 对第三方主题是只读运行时配置。需要修改主题配置时，跳转到内置后台 `/admin#admin`，不要在第三方主题内调用管理端接口。
 
 **示例**：
 
@@ -551,41 +585,10 @@ interface SiteConfig {
   turnstile_login_enabled: boolean;
   turnstile_site_key: string;
   site_title: string;
+  theme_options: Record<string, unknown>;
   verified: boolean;
   turnstile_verified: string | null;
   show_long_history: boolean;
-}
-
-interface Settings {
-  site_title: string;
-  custom_bg: string;
-  custom_head: string;
-  custom_script: string;
-  csp_static: string;
-  csp_api: string;
-  is_public: 'true' | 'false';
-  show_price: 'true' | 'false';
-  show_expire: 'true' | 'false';
-  show_tf: 'true' | 'false';
-  show_time: 'true' | 'false';
-  show_long_history: 'true' | 'false';
-  tg_notify: '0' | '2' ... '30'; // 0 = 关闭；旧值 false 兼容为 0，true 兼容为 5
-  tg_bot_token: string;
-  tg_chat_id: string;
-  turnstile_enabled: 'true' | 'false';
-  turnstile_login_enabled: 'true' | 'false';
-  turnstile_site_key: string;
-  turnstile_secret_key: string;
-  jwt_secret: string;
-  username: string;
-  password: string;
-  cloudflare_account_id: string;
-  cloudflare_token: string;
-  custom_ct: string;
-  custom_cu: string;
-  custom_cm: string;
-  custom_bd: string;
-  expire_reminder: 'true' | 'false';
 }
 
 interface WsMessage {

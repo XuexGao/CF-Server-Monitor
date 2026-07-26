@@ -108,6 +108,7 @@
           :groups="groups"
           :active-tab="activeTab"
           :selected-api-index="selectedApiIndex"
+          :theme-url="settings.theme_url"
           :latest-agent-version="latestAgentVersion"
           :copied-server-id="copiedServerId"
           :copied-note-server-id="copiedNoteServerId"
@@ -155,6 +156,9 @@
         <ThemeStorePanel
           :trans="trans"
           :active-tab="activeTab"
+          :selected-api-index="selectedApiIndex"
+          :current-theme-url="settings.theme_url"
+          @theme-applied="settings.theme_url = $event"
         />
       </div>
 
@@ -463,7 +467,7 @@ import { PING_NODE_FIELDS, validatePingNode } from '../../utils/pingNode.js'
 import { normalizeDisplayMode, resolveDisplayMode } from '../../utils/displayMode.js'
 import { usePasswordVisibility } from '../../composables/usePasswordVisibility'
 import { useTurnstile } from './composables/useTurnstile'
-import { detectBillingCycle, detectCurrencySymbol, normalizeBillingCycle, normalizeCurrency, normalizePrice, renewExpireDateIfNeeded } from '../../../utils/serverBilling.js'
+import { detectBillingCycle, detectCurrencySymbol, normalizeBillingCycle, normalizeCurrency, normalizePrice, renewExpireDateIfNeeded } from '../../utils/server.js'
 
 const trans = useTranslation()
 const route = useRoute()
@@ -591,6 +595,7 @@ const settings = ref({
   custom_cu: '',
   custom_cm: '',
   custom_bd: '',
+  theme_url: '',
   csp_static: '',
   csp_api: ''
 })
@@ -787,6 +792,10 @@ const handleLogin = async () => {
 }
 
 const logout = async () => {
+  try {
+    await adminApiForSite({ action: 'clear_theme_preview_auth' })
+  } catch (_) {
+  }
   apiLogout()
   isLoggedIn.value = false
   latestAgentVersion.value = ''
@@ -908,6 +917,7 @@ const loadSettings = async () => {
         custom_cu: settingsData.custom_cu || '',
         custom_cm: settingsData.custom_cm || '',
         custom_bd: settingsData.custom_bd || '',
+        theme_url: settingsData.theme_url || '',
         csp_static: settingsData.csp_static || '',
         csp_api: settingsData.csp_api || ''
       }

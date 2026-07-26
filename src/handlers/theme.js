@@ -11,7 +11,10 @@ const normalizeThemeStore = (data) => {
     return {
       ...data,
       schema: data.schema || 1,
-      themes: Array.isArray(data.themes) ? data.themes : []
+      themes: Array.isArray(data.themes) ? data.themes.map(theme => ({
+        ...theme,
+        versions: Array.isArray(theme.versions) ? theme.versions : []
+      })) : []
     }
   }
 

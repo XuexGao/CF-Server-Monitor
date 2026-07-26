@@ -7,7 +7,7 @@ export function isDisabledProbeMetric(value) {
   return value === false || value === 'false';
 }
 
-export function normalizeProbeMetric(value) {
+function normalizeProbeMetric(value) {
   return isDisabledProbeMetric(value) ? false : value;
 }
 
