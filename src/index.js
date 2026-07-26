@@ -278,8 +278,8 @@ export default {
         });
       }},
       { method: 'GET', path: '/theme', handler: async () => {
-        const themes = await handleTheme()
-        return createSuccessResponse({ themes })
+        const themeStore = await handleTheme()
+        return createSuccessResponse(themeStore)
       }},
       { method: 'GET', path: '/api/server', handler: async () => {
         await ensureSiteSettings();

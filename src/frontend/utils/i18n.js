@@ -343,6 +343,7 @@ const translations = reactive({
     themeStoreWarning: 'Third-party themes are not verified',
     themeStoreWarningDesc: 'Third-party themes may contain malicious code. Please review the source code or trust the author before using. CFSM is not responsible for any damage caused by third-party themes.',
     preview: 'Preview',
+    demo: 'Demo',
     view: 'View',
   },
   zh: {
@@ -686,6 +687,7 @@ const translations = reactive({
     themeStoreWarning: '以下为第三方主题，未经验证',
     themeStoreWarningDesc: '第三方主题可能包含恶意代码，请在确认来源可靠或审核源码后再使用。使用第三方主题造成的任何后果由使用者自行承担。',
     preview: '预览',
+    demo: '演示',
     view: '查看',
   }
 })

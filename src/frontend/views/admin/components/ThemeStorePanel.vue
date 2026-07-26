@@ -41,11 +41,12 @@
             <div v-if="theme.tags && theme.tags.length" class="theme-tags">
               <span v-for="tag in theme.tags" :key="tag" class="theme-tag">{{ tag }}</span>
             </div>
-            <p v-if="theme.description" class="theme-desc">{{ theme.description }}</p>
+            <p v-if="getThemeDescription(theme)" class="theme-desc">{{ getThemeDescription(theme) }}</p>
             <div v-if="theme.author" class="theme-author">by {{ theme.author }}</div>
             <div class="theme-actions">
               <button v-if="theme.preview" @click="openPreview(theme)" class="btn btn-sm">👁 {{ trans.preview }}</button>
-              <a :href="theme.url" target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-primary">↗ {{ trans.view }}</a>
+              <a v-if="getSafeExternalUrl(theme.demo)" :href="getSafeExternalUrl(theme.demo)" target="_blank" rel="noopener noreferrer" class="btn btn-sm">▶ {{ trans.demo }}</a>
+              <a v-if="getSafeExternalUrl(theme.url)" :href="getSafeExternalUrl(theme.url)" target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-primary">↗ {{ trans.view }}</a>
             </div>
           </div>
         </div>
@@ -68,28 +69,34 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, watch } from 'vue'
 import http from '../../../utils/http'
+import { currentLang } from '../../../utils/i18n'
 
 const props = defineProps({
   trans: { type: Object, required: true },
-  activeTab: { type: String, default: 'themeStore' }
+  activeTab: { type: String, default: '' }
 })
 
 const themes = ref([])
-const loading = ref(true)
+const loading = ref(false)
+const loaded = ref(false)
 const error = ref('')
 const previewTheme = ref(null)
 
 const loadThemes = async () => {
+  if (loading.value) return
+
   loading.value = true
   error.value = ''
   try {
     const result = await http.get('/theme')
     if (result.error) throw new Error(result.error)
     themes.value = Array.isArray(result.data?.themes) ? result.data.themes : []
+    loaded.value = true
   } catch (e) {
     error.value = e.message || 'Failed to load themes'
+    loaded.value = false
   } finally {
     loading.value = false
   }
@@ -97,6 +104,38 @@ const loadThemes = async () => {
 
 const openPreview = (theme) => {
   previewTheme.value = theme
+}
+
+const getThemeDescription = (theme) => {
+  const description = theme?.description
+  if (!description || typeof description !== 'object' || Array.isArray(description)) {
+    return ''
+  }
+
+  const keys = currentLang.value === 'zh'
+    ? ['zh-CN', 'en']
+    : ['en', 'zh-CN']
+
+  for (const key of keys) {
+    if (typeof description[key] === 'string' && description[key].trim()) {
+      return description[key]
+    }
+  }
+
+  return Object.values(description).find(value => typeof value === 'string' && value.trim()) || ''
+}
+
+const getSafeExternalUrl = (value) => {
+  if (typeof value !== 'string' || !value.trim()) {
+    return ''
+  }
+
+  try {
+    const url = new URL(value.trim())
+    return ['http:', 'https:'].includes(url.protocol) ? url.href : ''
+  } catch (_) {
+    return ''
+  }
 }
 
 const handleCoverError = (e) => {
@@ -107,9 +146,15 @@ const handlePreviewError = (e) => {
   e.target.style.display = 'none'
 }
 
-onMounted(() => {
-  loadThemes()
-})
+watch(
+  () => props.activeTab,
+  (activeTab) => {
+    if (activeTab === 'themeStore' && !loaded.value) {
+      loadThemes()
+    }
+  },
+  { immediate: true }
+)
 </script>
 
 <style scoped>

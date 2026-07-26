@@ -1,13 +1,27 @@
 const THEMES_URL = 'https://raw.githubusercontent.com/huilang-me/CFSM-Theme-Store/refs/heads/main/themes.json'
 const CACHE_TTL = 300
 
-let cachedThemes = null
+let cachedThemeStore = null
 let cacheTime = 0
+
+const createEmptyThemeStore = () => ({ schema: 1, themes: [] })
+
+const normalizeThemeStore = (data) => {
+  if (data && typeof data === 'object' && !Array.isArray(data)) {
+    return {
+      ...data,
+      schema: data.schema || 1,
+      themes: Array.isArray(data.themes) ? data.themes : []
+    }
+  }
+
+  return createEmptyThemeStore()
+}
 
 export async function handleTheme() {
   const now = Math.floor(Date.now() / 1000)
-  if (cachedThemes && (now - cacheTime) < CACHE_TTL) {
-    return cachedThemes
+  if (cachedThemeStore && (now - cacheTime) < CACHE_TTL) {
+    return cachedThemeStore
   }
 
   try {
@@ -16,15 +30,15 @@ export async function handleTheme() {
     })
 
     if (!res.ok) {
-      return cachedThemes || []
+      return cachedThemeStore || createEmptyThemeStore()
     }
 
     const data = await res.json()
-    const themes = Array.isArray(data) ? data : []
-    cachedThemes = themes
+    const themeStore = normalizeThemeStore(data)
+    cachedThemeStore = themeStore
     cacheTime = now
-    return themes
+    return themeStore
   } catch (e) {
-    return cachedThemes || []
+    return cachedThemeStore || createEmptyThemeStore()
   }
 }

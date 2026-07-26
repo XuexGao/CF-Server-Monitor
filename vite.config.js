@@ -7,6 +7,14 @@ import { fileURLToPath } from 'url'
 import { parseCspOrigins, buildApiDomainsWithWs, rebuildCsp, buildBackgroundStyle, injectTitle, injectApiBase } from './src/utils/csp.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const devProxyTarget = process.env.VITE_DEV_PROXY_TARGET || 'https://localhost:8787'
+
+const createWorkerProxy = () => ({
+  target: devProxyTarget,
+  changeOrigin: true,
+  secure: false,
+  ws: true
+})
 
 function loadEnvFile() {
   const envPath = path.resolve(__dirname, '.env')
@@ -85,14 +93,13 @@ export default defineConfig({
     https: true,
     port: 5173,
     proxy: {
-      '/api': {
-        target: 'http://localhost:8787',
-        changeOrigin: true
-      },
-      '/admin': {
-        target: 'http://localhost:8787',
-        changeOrigin: true
-      }
+      '/api': createWorkerProxy(),
+      '/admin': createWorkerProxy(),
+      '/theme': createWorkerProxy(),
+      '/update': createWorkerProxy(),
+      '/updateDatabase': createWorkerProxy(),
+      '/clearHistory': createWorkerProxy(),
+      '/__do': createWorkerProxy()
     }
   }
 })
