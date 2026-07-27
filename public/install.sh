@@ -1,6 +1,6 @@
 #!/bin/bash
 # ==============================================================================
-# V1.3.2
+# V1.3.3
 # CF-Server-Monitor 安装/卸载脚本 (企业级安全加固版)
 # 支持: Ubuntu/Debian/CentOS/RHEL/Fedora/Rocky/AlmaLinux
 # Fixes: 1. 独立协程无 wait 阻塞 2. 原子化原子覆盖 3. 兼容全版本 Systemd 4. 严格 set -u 闭环
@@ -8,7 +8,7 @@
 
 set -euo pipefail
 
-AGENT_VERSION="1.3.2"
+AGENT_VERSION="1.3.3"
 
 # 颜色定义
 RED='\033[0;31m'
@@ -770,6 +770,19 @@ json_string_or_null() {
     fi
 }
 
+normalize_gpu_name() {
+    local gpu_name="${1:-}"
+    case "${gpu_name}" in
+        *Intel*|*intel*|*INTEL*)
+            case "${gpu_name}" in
+                *Arc*|*ARC*|*arc*) printf '%s' "${gpu_name}" ;;
+                *) printf '%s' "Intel Integrated Graphics" ;;
+            esac
+            ;;
+        *) printf '%s' "${gpu_name}" ;;
+    esac
+}
+
 get_gpu_metrics() {
     local gpu_info_array=null
     local gpu_count=0
@@ -823,10 +836,11 @@ get_gpu_metrics() {
     # lspci fallback: only when no GPU detected via nvidia-smi/rocm-smi
     if [ "${gpu_count}" -eq 0 ] && command -v lspci >/dev/null 2>&1; then
         local lspci_gpus
-        lspci_gpus=$(lspci 2>/dev/null | awk '/VGA compatible controller|3D controller|Display controller/ && /NVIDIA|AMD|ATI|Radeon|Intel.*(Graphics|Arc|UHD|Iris)/{sub(/^[^:]*: /, ""); print}' || true)
+        lspci_gpus=$(lspci 2>/dev/null | awk '/VGA compatible controller|3D controller|Display controller/ && /NVIDIA|AMD|ATI|Radeon|Intel.*(Graphics|Arc|UHD|Iris)/{sub(/^.*: /, ""); print}' || true)
         local lidx=0
         while IFS= read -r lgpu; do
             [ -z "${lgpu}" ] && continue
+            lgpu=$(normalize_gpu_name "${lgpu}")
             local lgpu_escaped
             lgpu_escaped=$(escape_json "${lgpu}")
             if [ "${gpu_info_array}" != "null" ]; then
@@ -1091,12 +1105,14 @@ while true; do
     SWAP_USED=$(((SWAP_TOTAL_KB - SWAP_FREE_KB) / 1024))
     [ "${SWAP_USED}" -lt 0 ] && SWAP_USED=0
 
-    # 统计所有数据分区的总容量和使用量（排除引导、光驱、Snap等）
+    # 统计本地数据分区的总容量和使用量（排除引导、光驱、Snap、NAS/NFS等远端挂载）
     DISK_TOTAL=0; DISK_USED=0
     DISK_STATS=$(df -kP 2>/dev/null | awk '
         NR>1 &&
         $6 !~ /^(\/boot|\/boot\/efi|\/snap|\/var\/snap)/ &&
         $1 !~ /^(tmpfs|devtmpfs|overlay|squashfs|none)$/ &&
+        $1 !~ /^\/dev\/loop/ &&
+        $1 ~ /^\/dev\// &&
         $6 !~ /^(\/proc|\/sys|\/dev|\/run)$/ &&
         $2 ~ /^[0-9]/ &&
         $2 + 0 > 0 {

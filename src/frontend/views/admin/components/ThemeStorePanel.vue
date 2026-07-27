@@ -213,12 +213,12 @@ const normalizeThemeStoreUrl = (value) => {
     const parts = url.pathname.split('/').filter(Boolean)
     const ref = parts[3]
     if (
-      parts.length < 6 ||
-      parts[0] !== 'huilang-me' ||
-      parts[1] !== 'CFSM-Theme-Store' ||
+      parts.length < 4 ||
       parts[2] !== 'tree' ||
-      (ref !== 'dist' && !/^[0-9a-f]{40}$/i.test(ref)) ||
-      parts.some(part => part === '.' || part === '..')
+      !/^[A-Za-z0-9._-]+$/.test(parts[0]) ||
+      !/^[A-Za-z0-9._-]+$/.test(parts[1]) ||
+      !/^[A-Za-z0-9._-]+$/.test(ref) ||
+      parts.some(part => part === '.' || part === '..' || /[%\\]/.test(part))
     ) {
       return ''
     }

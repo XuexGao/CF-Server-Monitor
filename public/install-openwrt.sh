@@ -1,6 +1,6 @@
 #!/bin/sh
 # ==============================================================================
-# V1.3.2
+# V1.3.3
 # CF-Server-Monitor 安装/卸载脚本 (OpenWrt 专用版)
 # 支持: OpenWrt / LEDE / ImmortalWrt (procd + opkg)
 # 纯 POSIX sh 实现，无 bash 依赖
@@ -11,7 +11,7 @@
 
 set -eu
 
-AGENT_VERSION="1.3.2"
+AGENT_VERSION="1.3.3"
 
 # 路径定义（配置文件系统）
 CONFIG_DIR="/etc/config/cf-probe"

@@ -137,12 +137,12 @@ function normalizeThemeUrl(value) {
     const parts = url.pathname.split('/').filter(Boolean);
     const ref = parts[3];
     if (
-      parts.length < 6 ||
-      parts[0] !== 'huilang-me' ||
-      parts[1] !== 'CFSM-Theme-Store' ||
+      parts.length < 4 ||
       parts[2] !== 'tree' ||
-      (ref !== 'dist' && !/^[0-9a-f]{40}$/i.test(ref)) ||
-      parts.some(part => part === '.' || part === '..')
+      !/^[A-Za-z0-9._-]+$/.test(parts[0]) ||
+      !/^[A-Za-z0-9._-]+$/.test(parts[1]) ||
+      !/^[A-Za-z0-9._-]+$/.test(ref) ||
+      parts.some(part => part === '.' || part === '..' || /[%\\]/.test(part))
     ) {
       return '';
     }
@@ -159,14 +159,18 @@ function parseThemeUrl(themeUrl) {
 
   const url = new URL(normalized);
   const parts = url.pathname.split('/').filter(Boolean);
+  const owner = parts[0];
+  const repo = parts[1];
   const ref = parts[3];
   const themePathParts = parts.slice(4);
-  const encodedThemePath = themePathParts.map(part => encodeURIComponent(part)).join('/');
+  const encodedThemePath = [owner, repo, ref, ...themePathParts]
+    .map(part => encodeURIComponent(part))
+    .join('/');
 
   return {
     themeUrl: normalized,
-    rawBase: `https://raw.githubusercontent.com/huilang-me/CFSM-Theme-Store/${ref}/${encodedThemePath}`,
-    cacheBase: `https://cfsm-theme-cache.local/${ref}/${encodedThemePath}`
+    rawBase: `https://raw.githubusercontent.com/${encodedThemePath}`,
+    cacheBase: `https://cfsm-theme-cache.local/${encodedThemePath}`
   };
 }
 

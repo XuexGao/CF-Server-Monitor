@@ -1,13 +1,13 @@
 #!/bin/bash
 # ==============================================================================
-# V1.3.2
+# V1.3.3
 # CF-Server-Monitor 安装/卸载脚本 (macOS 适配版)
 # 支持: macOS Intel / macOS Apple Silicon (M1/M2/M3/M4)
 # ==============================================================================
 
 set -euo pipefail
 
-AGENT_VERSION="1.3.2"
+AGENT_VERSION="1.3.3"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -806,11 +806,13 @@ get_swap_stats() {
 
 get_gpu_metrics() {
     local gpu_usage="null"
-    local gpu_info=""
+    local gpu_names=""
+    local gpu_info_array=null
+    local gpu_count=0
 
-    gpu_info=$(system_profiler SPDisplaysDataType 2>/dev/null | grep "Chipset Model" | awk -F': ' '{print $2}' | xargs || true)
+    gpu_names=$(system_profiler SPDisplaysDataType 2>/dev/null | awk -F': ' '/Chipset Model/{print $2}' | awk 'NF' || true)
 
-    if [ -n "${gpu_info}" ]; then
+    if [ -n "${gpu_names}" ]; then
         if [ "$(id -u)" = "0" ] && command -v powermetrics >/dev/null 2>&1; then
             local pm_output=""
             
@@ -861,9 +863,27 @@ get_gpu_metrics() {
             gpu_usage=$((10#${gpu_usage}))
         fi
 
-        printf '%s\n%s\n' "${gpu_usage}" "$(json_string_or_null "${gpu_info}")"
+        local midx=0
+        while IFS= read -r gpu_name; do
+            [ -z "${gpu_name}" ] && continue
+            local gpu_name_escaped
+            gpu_name_escaped=$(escape_json "${gpu_name}")
+            if [ "${gpu_info_array}" != "null" ]; then
+                gpu_info_array="${gpu_info_array},{\"name\":\"${gpu_name_escaped}\",\"info\":${gpu_usage},\"id\":\"${midx}\"}"
+            else
+                gpu_info_array="{\"name\":\"${gpu_name_escaped}\",\"info\":${gpu_usage},\"id\":\"${midx}\"}"
+            fi
+            midx=$((midx + 1))
+            gpu_count=$((gpu_count + 1))
+        done <<EOF
+${gpu_names}
+EOF
+    fi
+
+    if [ "${gpu_count}" -gt 0 ]; then
+        printf '[%s]' "${gpu_info_array}"
     else
-        printf 'null\nnull\n'
+        printf 'null'
     fi
 }
 
@@ -1084,11 +1104,6 @@ fi
 [ -z "${CPU_INFO:-}" ] && CPU_INFO="${ARCH}"
 CPU_CORES=$(sysctl -n hw.ncpu 2>/dev/null || echo "1")
 
-GPU_METRICS=$(get_gpu_metrics)
-GPU=$(echo "${GPU_METRICS}" | awk 'NR==1{print $1}'); GPU=${GPU:-null}
-GPU_INFO_VALUE=$(echo "${GPU_METRICS}" | awk 'NR==2{print}')
-[ -z "${GPU_INFO_VALUE:-}" ] && GPU_INFO_VALUE="null"
-
 echo "[INFO] CF-Server-Monitor Probe Engine Started Successfully."
 
 run_network_worker &
@@ -1135,8 +1150,8 @@ while true; do
 
     CPU=$(get_cpu_stat)
 
-    GPU_METRICS=$(get_gpu_metrics)
-    GPU=$(echo "${GPU_METRICS}" | awk 'NR==1{print $1}'); GPU=${GPU:-null}
+    GPU_INFO_VALUE=$(get_gpu_metrics)
+    [ -z "${GPU_INFO_VALUE:-}" ] && GPU_INFO_VALUE="null"
 
     BOOT_TIME=""
     boot_time_raw=$(sysctl kern.boottime 2>/dev/null || echo "")
@@ -1223,7 +1238,7 @@ while true; do
     LOSS_BD_JSON=$(json_probe_value "$BD_NODE" "$LOSS_BD")
     
     METRICS_JSON=$(cat <<EOF
-{"cpu":"${CPU}","ram_total":"${RAM_TOTAL}","ram_used":"${RAM_USED}","swap_total":"${SWAP_TOTAL}","swap_used":"${SWAP_USED}","disk_total":"${DISK_TOTAL}","disk_used":"${DISK_USED}","load_avg":"${ELOAD}","boot_time":"${BOOT_TIME}","net_rx":"${RX_NOW}","net_tx":"${TX_NOW}","net_rx_monthly":"${RX_MONTHLY}","net_tx_monthly":"${TX_MONTHLY}","net_in_speed":"${RX_SPEED}","net_out_speed":"${TX_SPEED}","os":"${EOS}","arch":"${EARCH}","cpu_info":"${ECPU}","cpu_cores":"${CPU_CORES}","gpu":${GPU},"gpu_info":${GPU_INFO_VALUE},"processes":"${PROCESSES}","tcp_conn":"${TCP_CONN}","udp_conn":"${UDP_CONN}","ip_v4":"${IPV4}","ip_v6":"${IPV6}","ping_ct":${PING_CT_JSON},"ping_cu":${PING_CU_JSON},"ping_cm":${PING_CM_JSON},"ping_bd":${PING_BD_JSON},"loss_ct":${LOSS_CT_JSON},"loss_cu":${LOSS_CU_JSON},"loss_cm":${LOSS_CM_JSON},"loss_bd":${LOSS_BD_JSON}}
+{"cpu":"${CPU}","ram_total":"${RAM_TOTAL}","ram_used":"${RAM_USED}","swap_total":"${SWAP_TOTAL}","swap_used":"${SWAP_USED}","disk_total":"${DISK_TOTAL}","disk_used":"${DISK_USED}","load_avg":"${ELOAD}","boot_time":"${BOOT_TIME}","net_rx":"${RX_NOW}","net_tx":"${TX_NOW}","net_rx_monthly":"${RX_MONTHLY}","net_tx_monthly":"${TX_MONTHLY}","net_in_speed":"${RX_SPEED}","net_out_speed":"${TX_SPEED}","os":"${EOS}","arch":"${EARCH}","cpu_info":"${ECPU}","cpu_cores":"${CPU_CORES}","gpu_info":${GPU_INFO_VALUE},"processes":"${PROCESSES}","tcp_conn":"${TCP_CONN}","udp_conn":"${UDP_CONN}","ip_v4":"${IPV4}","ip_v6":"${IPV6}","ping_ct":${PING_CT_JSON},"ping_cu":${PING_CU_JSON},"ping_cm":${PING_CM_JSON},"ping_bd":${PING_BD_JSON},"loss_ct":${LOSS_CT_JSON},"loss_cu":${LOSS_CU_JSON},"loss_cm":${LOSS_CM_JSON},"loss_bd":${LOSS_BD_JSON}}
 EOF
 )
     if [ "${COLLECT_INTERVAL}" -gt 0 ]; then

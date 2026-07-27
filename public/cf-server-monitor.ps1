@@ -96,7 +96,7 @@ $DebugPreference = "SilentlyContinue"
 $ErrorActionPreference = "Stop"
 
 $APP_NAME = "CF-Server-Monitor"
-$AGENT_VERSION = "1.3.2"
+$AGENT_VERSION = "1.3.3"
 $TASK_NAME = "CFProbe"
 # 获取脚本所在目录
 if ($MyInvocation.MyCommand.Path) {
@@ -660,24 +660,67 @@ function Get-BootTime {
     }
 }
 
+function ConvertTo-GpuUsage {
+    param(
+        [object]$Value,
+        [object]$DefaultValue = $null
+    )
+    if ($null -eq $Value) { return $DefaultValue }
+    $text = ([string]$Value).Trim()
+    if ([string]::IsNullOrWhiteSpace($text)) { return $DefaultValue }
+    $parsed = 0.0
+    if ([double]::TryParse($text, [System.Globalization.NumberStyles]::Float, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$parsed)) {
+        return $parsed
+    }
+    return $DefaultValue
+}
+
 function Get-GpuInfo {
-    $gpuUsage = $null
-    $gpuName = $null
+    $gpuList = @()
     try {
-        $nvidia = & nvidia-smi --query-gpu=name,utilization.gpu --format=csv,noheader,nounits 2>$null
+        $nvidia = & nvidia-smi --query-gpu=index,name,utilization.gpu --format=csv,noheader,nounits 2>$null
         if ($nvidia) {
-            $parts = ($nvidia | Select-Object -First 1) -split ','
-            $gpuName = $parts[0].Trim()
-            $gpuUsage = $parts[1].Trim()
+            foreach ($line in @($nvidia)) {
+                if ([string]::IsNullOrWhiteSpace($line)) { continue }
+                $parts = ([string]$line) -split ','
+                if ($parts.Count -lt 3) { continue }
+                $gpuId = $parts[0].Trim()
+                $gpuUsage = ConvertTo-GpuUsage -Value $parts[$parts.Count - 1]
+                if ($parts.Count -gt 3) {
+                    $gpuName = ($parts[1..($parts.Count - 2)] -join ',').Trim()
+                } else {
+                    $gpuName = $parts[1].Trim()
+                }
+                if (-not [string]::IsNullOrWhiteSpace($gpuName)) {
+                    $gpuList += [pscustomobject]@{
+                        name = $gpuName
+                        info = $gpuUsage
+                        id = $gpuId
+                    }
+                }
+            }
         }
     } catch {}
-    if (-not $gpuName) {
+
+    if ($gpuList.Count -eq 0) {
         try {
-            $gpu = Get-CimInstance Win32_VideoController | Select-Object -First 1
-            $gpuName = $gpu.Name
+            $idx = 0
+            $controllers = Get-CimInstance Win32_VideoController
+            foreach ($controller in @($controllers)) {
+                $gpuName = [string]$controller.Name
+                if ([string]::IsNullOrWhiteSpace($gpuName)) { continue }
+                $gpuList += [pscustomobject]@{
+                    name = $gpuName.Trim()
+                    info = 0
+                    id = $idx.ToString()
+                }
+                $idx++
+            }
         } catch {}
     }
-    return @{ usage = $gpuUsage; name = $gpuName }
+
+    if ($gpuList.Count -gt 0) { return $gpuList }
+    return $null
 }
 
 function Get-LoadAvg {
@@ -1337,7 +1380,9 @@ function Start-TimerCollectLoop {
 
             $conn = Get-TcpUdpConnections
             $processCount = Get-ProcessCount
-            $gpu = Get-GpuInfo
+            $gpuInfo = Get-GpuInfo
+            $gpuInfoValue = $null
+            if ($gpuInfo) { $gpuInfoValue = @($gpuInfo) }
             $bootTime = Get-BootTime
             $loadAvg = Get-LoadAvg -CpuPercent $cpuPercent
             $arch = if ([Environment]::Is64BitOperatingSystem) { "x86_64" } else { "x86" }
@@ -1364,8 +1409,7 @@ function Start-TimerCollectLoop {
                 arch = $arch
                 cpu_info = $cpuInfo
                 cpu_cores = $cpuCores.ToString()
-                gpu = if ($gpu.usage) { [double]$gpu.usage } else { $null }
-                gpu_info = $gpu.name
+                gpu_info = $gpuInfoValue
                 processes = $processCount.ToString()
                 tcp_conn = $conn.tcp.ToString()
                 udp_conn = $conn.udp.ToString()

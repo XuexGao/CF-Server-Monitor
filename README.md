@@ -4,7 +4,7 @@
 
 **演示地址**：<https://demo.huilang.me/>
 
-**当前Workers版本：V2.8.0 Beta; Agent版本：1.3.2**
+**当前Workers版本：V2.8.0 Beta; Agent版本：1.3.3**
 
 > [!IMPORTANT]
 > V2.7.10 加入了 CSP 内容安全策略。Workers 环境通过 HTTP Response Header 下发 CSP，默认只允许同源资源和必要的 Cloudflare/Google Fonts 资源；
@@ -557,7 +557,7 @@ Workers 环境下 CSP 会放在 HTTP Response Header 中返回，并同时设置
 
 **主题商店与 Workers 反代说明**：
 
-- 后台切换主题会保存 `theme_url`，格式为 `https://github.com/huilang-me/CFSM-Theme-Store/tree/dist/<作者>/<主题目录>/<版本号>`；主题商店也支持手动填写该 URL 来添加第三方主题
+- 后台切换主题会保存 `theme_url`，支持主题商店地址 `https://github.com/huilang-me/CFSM-Theme-Store/tree/dist/<作者>/<主题目录>/<版本号>`，也支持手动填写独立 GitHub 主题仓库 tree 地址，例如 `https://github.com/huilang-me/cf-server-monitor-theme-emerald/tree/f334bb5e25ffbe66749a8df9eb4b099fb148e0f7`
 - `theme_url` 留空时使用项目内置默认主题
 - Workers 仅反代所选主题的 `index.html` 和 `/assets/*`，例如 `/assets/app.css` 会映射到主题仓库同版本 `assets/app.css`
 - `install.sh`、`flags/`、`os-icons/`、favicon、API、管理端等其他路径不会走主题反代，仍返回项目原有文件或接口
