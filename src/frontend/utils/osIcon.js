@@ -125,6 +125,11 @@ const osConfigs = [
     name: 'OpenCloudOS',
     image: 'os-opencloud.svg',
     keywords: ['opencloud', 'opencloudos', 'opencloud os']
+  },
+  {
+    name: 'Oracle Linux',
+    image: 'os-oracle.svg',
+    keywords: ['oracle', 'oracle linux']
   }
 ]
 

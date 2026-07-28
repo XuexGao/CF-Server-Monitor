@@ -318,8 +318,9 @@ Headers: (按需) Authorization, X-Turnstile-Token/Verified
   "swap_total": 2048, "swap_used": 100,
   "disk_total": 102400, "disk_used": 32000,
   "cpu_cores": 4, "cpu_info": "Intel Xeon",
-  "gpu": 12.5, "gpu_info": "NVIDIA RTX 3060",
+  "gpu_info": "[{\"id\":\"0\",\"name\":\"NVIDIA RTX 3060\",\"info\":12.5}]",
   "arch": "x86_64", "os": "Ubuntu 22.04",
+  "kernel_version": "6.8.0-36-generic",
   "region": "HK",
   "ip_v4": "1", "ip_v6": "1",
   "boot_time": "1700000000000",
@@ -329,7 +330,7 @@ Headers: (按需) Authorization, X-Turnstile-Token/Verified
 }
 ```
 
-`tags` 为英文逗号分隔字符串。`note` 属于管理端内部字段，不从 dashboard 公共接口返回。
+`tags` 为英文逗号分隔字符串。`note` 属于管理端内部字段，不从 dashboard 公共接口返回。`gpu` 已废弃，主题应使用 `gpu_info`；新版上报和 WebSocket 实时数据为 `[{ id, name, info }]` 数组，历史/详情 REST 响应中可能是同结构的 JSON 字符串。
 
 **失败返回**：
 
@@ -363,8 +364,8 @@ Headers: (按需) Authorization, X-Turnstile-Token/Verified
 
 ```json
 [
-  { "timestamp": 1737600000000, "cpu": 12.3, "gpu": null, "ram_used": 3700 },
-  { "timestamp": 1737600600000, "cpu": 13.1, "gpu": null, "ram_used": 3712 }
+  { "timestamp": 1737600000000, "cpu": 12.3, "gpu_info": "[{\"id\":\"0\",\"name\":\"NVIDIA RTX 3060\",\"info\":12.5}]", "ram_used": 3700, "kernel_version": "6.8.0-36-generic" },
+  { "timestamp": 1737600600000, "cpu": 13.1, "gpu_info": "[{\"id\":\"0\",\"name\":\"NVIDIA RTX 3060\",\"info\":13.0}]", "ram_used": 3712, "kernel_version": "6.8.0-36-generic" }
 ]
 ```
 
@@ -552,10 +553,10 @@ interface Server {
   disk_used: number;
   cpu_cores: number;
   cpu_info: string;
-  gpu: number | null;
-  gpu_info: string;
+  gpu_info: Array<{ id: string; name: string; info: number | null }> | string;
   arch: string;
   os: string;
+  kernel_version: string;
   region: string;
   ip_v4: '0' | '1';
   ip_v6: '0' | '1';

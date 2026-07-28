@@ -45,10 +45,22 @@
       </div>
 
       <div class="metric-ring-item">
-        <div class="metric-ring-chart" :style="getRingStyle(ramPercent, getUsageColor(ramPercent))">
+        <div
+          class="metric-ring-chart metric-ring-chart-memory"
+          :class="{ 'has-swap-ring': hasSwapData }"
+          :style="getMemoryRingStyle(ramPercent, getUsageColor(ramPercent), swapPercent, getUsageColor(swapPercent))"
+          :title="memoryUsageTitle"
+        >
           <span class="metric-ring-track"></span>
           <span class="metric-ring-progress"></span>
-          <span class="metric-ring-center">{{ roundedPercent(ramPercent) }}%</span>
+          <template v-if="hasSwapData">
+            <span class="metric-ring-swap-track"></span>
+            <span class="metric-ring-swap-progress"></span>
+          </template>
+          <span class="metric-ring-center" :class="{ 'metric-ring-center-memory': hasSwapData }">
+            <span>{{ roundedPercent(ramPercent) }}%</span>
+            <span v-if="hasSwapData" class="metric-ring-center-swap">{{ roundedPercent(swapPercent) }}%</span>
+          </span>
         </div>
         <div class="metric-ring-label">RAM</div>
         <div class="metric-ring-subtext">{{ ramUsageText }}</div>
@@ -134,6 +146,8 @@ const {
   cpuPercent,
   cpuCores,
   ramPercent,
+  swapPercent,
+  hasSwapData,
   diskPercent,
   trafficLimitSummary,
   trafficUsagePercent,
@@ -146,9 +160,11 @@ const {
   priceText,
   loadAvg,
   ramUsageText,
+  memoryUsageTitle,
   diskUsageText,
   getUsageColor,
   getRingStyle,
+  getMemoryRingStyle,
   roundedPercent,
   isPingValid,
   getPingColor,

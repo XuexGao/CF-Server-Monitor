@@ -495,6 +495,20 @@ const normalizeTgNotifySetting = (value) => {
 
 const isTgNotifyEnabled = (value) => normalizeTgNotifySetting(value) !== '0'
 
+const normalizeExpireReminderSetting = (value) => {
+  if (value === true || value === 'true') return '7'
+  if (value === false || value === 'false' || value === undefined || value === null || value === '') return '0'
+
+  const days = Number(value)
+  if (Number.isInteger(days) && days >= 0 && days <= 7) {
+    return String(days)
+  }
+
+  return '0'
+}
+
+const isExpireReminderEnabled = (value) => normalizeExpireReminderSetting(value) !== '0'
+
 const isPlainObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value)
 
 const formatThemeOptions = (value) => {
@@ -579,7 +593,7 @@ const settings = ref({
   show_time: true,
   show_long_history: false,
   tg_notify: '0',
-  expire_reminder: 'false',
+  expire_reminder: '0',
   tg_bot_token: '',
   tg_chat_id: '',
   turnstile_enabled: false,
@@ -630,6 +644,7 @@ const editForm = ref({
   id: '',
   name: '',
   server_group: '',
+  region: '',
   tags: '',
   note: '',
   price: '',
@@ -900,7 +915,7 @@ const loadSettings = async () => {
         show_time: settingsData.show_time === 'true',
         show_long_history: settingsData.show_long_history === 'true',
         tg_notify: normalizeTgNotifySetting(settingsData.tg_notify),
-        expire_reminder: settingsData.expire_reminder || 'false',
+        expire_reminder: normalizeExpireReminderSetting(settingsData.expire_reminder),
         tg_bot_token: settingsData.tg_bot_token || '',
         tg_chat_id: settingsData.tg_chat_id || '',
         turnstile_enabled: settingsData.turnstile_enabled === 'true',
@@ -973,7 +988,7 @@ const saveSettings = async () => {
     }
   }
 
-  if (isTgNotifyEnabled(settings.value.tg_notify) || settings.value.expire_reminder === 'true') {
+  if (isTgNotifyEnabled(settings.value.tg_notify) || isExpireReminderEnabled(settings.value.expire_reminder)) {
     if (!settings.value.tg_bot_token || settings.value.tg_bot_token.trim().length === 0) {
       validationError.value = trans.value.tgBotTokenRequired
       return
@@ -1021,7 +1036,7 @@ const saveSettings = async () => {
       show_time: settings.value.show_time ? 'true' : 'false',
       show_long_history: settings.value.show_long_history ? 'true' : 'false',
       tg_notify: normalizeTgNotifySetting(settings.value.tg_notify),
-      expire_reminder: settings.value.expire_reminder,
+      expire_reminder: normalizeExpireReminderSetting(settings.value.expire_reminder),
       tg_bot_token: settings.value.tg_bot_token,
       tg_chat_id: settings.value.tg_chat_id,
       turnstile_enabled: settings.value.turnstile_enabled ? 'true' : 'false',
@@ -1236,6 +1251,7 @@ const openEditModal = (server) => {
     id: server.id,
     name: server.name || '',
     server_group: server.server_group || '',
+    region: server.region_override ?? (server.region || ''),
     tags: server.tags || '',
     note: server.note || '',
     price: normalizePrice(server.price),
@@ -1319,6 +1335,7 @@ const saveEdit = async () => {
     id: editForm.value.id,
     name: editForm.value.name,
     server_group: editForm.value.server_group,
+    region: editForm.value.region,
     tags: editForm.value.tags,
     note: editForm.value.note,
     price: normalizedPrice,

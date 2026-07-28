@@ -1011,6 +1011,33 @@ body::before {
     mask: radial-gradient(farthest-side, transparent calc(100% - var(--ring-thickness)), #000 calc(100% - var(--ring-thickness) + 1px));
 }
 
+.metric-ring-chart-memory {
+    --swap-ring-thickness: 3px;
+    --swap-ring-inset: 7%;
+}
+
+.metric-ring-swap-track,
+.metric-ring-swap-progress {
+    position: absolute;
+    inset: var(--swap-ring-inset);
+    border-radius: 50%;
+    opacity: .4;
+}
+
+.metric-ring-swap-track {
+    border: var(--swap-ring-thickness) solid rgba(137, 153, 175, 0.22);
+}
+
+.metric-ring-swap-progress {
+    background: conic-gradient(from -90deg, var(--swap-ring-color) 0 calc(var(--swap-ring-value) * 1%), rgba(255, 255, 255, 0.025) 0 100%);
+    -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - var(--swap-ring-thickness)), #000 calc(100% - var(--swap-ring-thickness) + 1px));
+    mask: radial-gradient(farthest-side, transparent calc(100% - var(--swap-ring-thickness)), #000 calc(100% - var(--swap-ring-thickness) + 1px));
+}
+
+.metric-ring-chart-memory.has-swap-ring .metric-ring-center {
+    font-size: calc(var(--ring-card-percent-size) - 8px);
+}
+
 .metric-ring-center {
     position: relative;
     z-index: 1;
@@ -1018,6 +1045,18 @@ body::before {
     font-weight: 700;
     color: var(--text-primary);
     text-shadow: none;
+}
+
+.metric-ring-center-memory {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    line-height: 1;
+}
+
+.metric-ring-center-swap {
+    opacity: .5;
 }
 
 .metric-ring-label {

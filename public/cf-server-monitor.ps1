@@ -96,7 +96,7 @@ $DebugPreference = "SilentlyContinue"
 $ErrorActionPreference = "Stop"
 
 $APP_NAME = "CF-Server-Monitor"
-$AGENT_VERSION = "1.3.3"
+$AGENT_VERSION = "1.3.4"
 $TASK_NAME = "CFProbe"
 # 获取脚本所在目录
 if ($MyInvocation.MyCommand.Path) {
@@ -1287,6 +1287,34 @@ function Start-TimerCollectLoop {
     $script:cs_bdNode = $bdNode
     $script:cs_autoUpdate = $autoUpdate
 
+    # ========================================
+    # 缓存机制变量
+    # ========================================
+    # 磁盘检测间隔（秒）- 2分钟
+    $script:cs_diskCheckInterval = 120
+    $script:cs_lastDiskCheck = 0
+    $script:cs_diskTotal = 0
+    $script:cs_diskUsed = 0
+
+    # 状态检测间隔（秒）- 固定60秒
+    $script:cs_statusCheckInterval = 60
+    $script:cs_lastStatusCheck = 0
+
+    # 缓存的状态数据
+    $script:cs_cpuInfo = ""
+    $script:cs_cpuCores = 1
+    $script:cs_bootTime = 0
+    $script:cs_osName = ""
+    $script:cs_arch = ""
+    $script:cs_kernelVersion = ""
+    $script:cs_gpuInfoValue = $null
+    $script:cs_loadAvg = "0.00 0.00 0.00"
+    $script:cs_processCount = 0
+    $script:cs_tcpConn = 0
+    $script:cs_udpConn = 0
+    $script:cs_rxMonthly = 0
+    $script:cs_txMonthly = 0
+
     $pingTempFile = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "cf_probe_ping_results.json")
 
     # 首次 CPU 采样
@@ -1358,18 +1386,14 @@ function Start-TimerCollectLoop {
             if ([string]::IsNullOrWhiteSpace($cmN)) { $script:cs_pingCm = $false; $script:cs_lossCm = $false }
             if ([string]::IsNullOrWhiteSpace($bdN)) { $script:cs_pingBd = $false; $script:cs_lossBd = $false }
 
-            # 采集各项指标
+            # 实时采集：CPU、内存、网络（网速计算需要每次执行）
             $cpuPercent = Get-CpuUsage
-            $cpuInfo = Get-CpuInfo
-            $cpuCores = Get-CpuCores
             $mem = Get-MemoryInfo
             $swap = Get-SwapInfo
-            $disk = Get-DiskInfo
 
             $netStat = Get-NetworkStats
             $rxNow = [long]$netStat.rx
             $txNow = [long]$netStat.tx
-            $netTraffic = Update-MonthlyTraffic -CurrentRx $rxNow -CurrentTx $txNow -ResetDay $rDay
 
             $rxPrev = if ($script:cs_prevNet.time -gt 0) { $script:cs_prevNet.rx } else { $rxNow }
             $txPrev = if ($script:cs_prevNet.time -gt 0) { $script:cs_prevNet.tx } else { $txNow }
@@ -1378,15 +1402,53 @@ function Start-TimerCollectLoop {
             $txSpeed = [math]::Max(($txNow - $txPrev) / $deltaTime, 0)
             $script:cs_prevNet = @{ rx = $rxNow; tx = $txNow; time = $now }
 
-            $conn = Get-TcpUdpConnections
-            $processCount = Get-ProcessCount
-            $gpuInfo = Get-GpuInfo
-            $gpuInfoValue = $null
-            if ($gpuInfo) { $gpuInfoValue = @($gpuInfo) }
-            $bootTime = Get-BootTime
-            $loadAvg = Get-LoadAvg -CpuPercent $cpuPercent
-            $arch = if ([Environment]::Is64BitOperatingSystem) { "x86_64" } else { "x86" }
-            $osName = (Get-CimInstance Win32_OperatingSystem).Caption
+            # 磁盘检测缓存（每2分钟检测一次）
+            if ($now - $script:cs_lastDiskCheck -ge $script:cs_diskCheckInterval -or $script:cs_lastDiskCheck -eq 0) {
+                $disk = Get-DiskInfo
+                $script:cs_diskTotal = $disk.total
+                $script:cs_diskUsed = $disk.used
+                $script:cs_lastDiskCheck = $now
+            }
+
+            # 静态信息（仅首次运行时获取，运行期间不会变化）
+            if ($script:cs_lastStatusCheck -eq 0) {
+                $script:cs_cpuInfo = Get-CpuInfo
+                $script:cs_cpuCores = Get-CpuCores
+                $script:cs_bootTime = Get-BootTime
+                $script:cs_arch = if ([Environment]::Is64BitOperatingSystem) { "x86_64" } else { "x86" }
+                # 获取操作系统信息（Caption 和 Version），合并调用避免重复查询
+                try {
+                    $os = Get-CimInstance Win32_OperatingSystem
+                    $script:cs_osName = $os.Caption
+                    $script:cs_kernelVersion = $os.Version
+                } catch {
+                    $script:cs_osName = ""
+                    $script:cs_kernelVersion = ""
+                }
+            }
+
+            # 状态检测缓存（进程数、连接数、GPU使用率、负载、当月累计流量，每STATUS_CHECK_INTERVAL检测一次）
+            if ($now - $script:cs_lastStatusCheck -ge $script:cs_statusCheckInterval -or $script:cs_lastStatusCheck -eq 0) {
+                # 动态状态
+                $script:cs_loadAvg = Get-LoadAvg -CpuPercent $cpuPercent
+                $script:cs_processCount = Get-ProcessCount
+                $conn = Get-TcpUdpConnections
+                $script:cs_tcpConn = $conn.tcp
+                $script:cs_udpConn = $conn.udp
+                $gpuInfo = @(Get-GpuInfo)
+                $script:cs_gpuInfoValue = $null
+                if ($gpuInfo.Count -gt 0) {
+                    $script:cs_gpuInfoValue = New-Object System.Collections.ArrayList
+                    foreach ($gpu in $gpuInfo) { [void]$script:cs_gpuInfoValue.Add($gpu) }
+                }
+
+                # 计算当月累计流量
+                $netTraffic = Update-MonthlyTraffic -CurrentRx $rxNow -CurrentTx $txNow -ResetDay $rDay
+                $script:cs_rxMonthly = $netTraffic.rx
+                $script:cs_txMonthly = $netTraffic.tx
+
+                $script:cs_lastStatusCheck = $now
+            }
 
             # 构建指标
             $metrics = @{
@@ -1395,24 +1457,25 @@ function Start-TimerCollectLoop {
                 ram_used = $mem.used.ToString()
                 swap_total = $swap.total.ToString()
                 swap_used = $swap.used.ToString()
-                disk_total = $disk.total.ToString()
-                disk_used = $disk.used.ToString()
-                load_avg = $loadAvg
-                boot_time = $bootTime.ToString()
+                disk_total = $script:cs_diskTotal.ToString()
+                disk_used = $script:cs_diskUsed.ToString()
+                load_avg = $script:cs_loadAvg
+                boot_time = $script:cs_bootTime.ToString()
                 net_rx = $rxNow.ToString()
                 net_tx = $txNow.ToString()
-                net_rx_monthly = $netTraffic.rx.ToString()
-                net_tx_monthly = $netTraffic.tx.ToString()
+                net_rx_monthly = $script:cs_rxMonthly.ToString()
+                net_tx_monthly = $script:cs_txMonthly.ToString()
                 net_in_speed = [math]::Floor($rxSpeed).ToString()
                 net_out_speed = [math]::Floor($txSpeed).ToString()
-                os = $osName
-                arch = $arch
-                cpu_info = $cpuInfo
-                cpu_cores = $cpuCores.ToString()
-                gpu_info = $gpuInfoValue
-                processes = $processCount.ToString()
-                tcp_conn = $conn.tcp.ToString()
-                udp_conn = $conn.udp.ToString()
+                os = $script:cs_osName
+                arch = $script:cs_arch
+                kernel_version = $script:cs_kernelVersion
+                cpu_info = $script:cs_cpuInfo
+                cpu_cores = $script:cs_cpuCores.ToString()
+                gpu_info = $script:cs_gpuInfoValue
+                processes = $script:cs_processCount.ToString()
+                tcp_conn = $script:cs_tcpConn.ToString()
+                udp_conn = $script:cs_udpConn.ToString()
                 ip_v4 = $script:cs_ipV4
                 ip_v6 = $script:cs_ipV6
                 ping_ct = $script:cs_pingCt

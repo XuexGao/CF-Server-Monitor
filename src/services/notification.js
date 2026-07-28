@@ -1,6 +1,6 @@
 import { getLatestMetricsForAllServers } from '../database/schema.js';
 import { clearServersListCache, getAllServers } from '../utils/cache.js';
-import { getTgNotifyMinutes, loadSiteSettings, debug } from '../utils/settings.js';
+import { getExpireReminderDays, getTgNotifyMinutes, loadSiteSettings, debug } from '../utils/settings.js';
 import { detectBillingCycle, normalizeBillingCycle, renewExpireDateIfNeeded } from '../utils/serverBilling.js';
 
 const MAX_RETRIES = 3;
@@ -125,8 +125,10 @@ export async function sendNotification(settings, msg) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          msgtype: "markdown",
-          markdown: { content: msg }
+          msgtype: "text",
+          text: {
+            content: msg.replace(/\*/g, '')
+          }
         })
       });
     } catch (e) {
@@ -283,9 +285,9 @@ export async function checkExpiringServers(db) {
   try {
     const allServers = await getAllServers(db);
     const now = Date.now();
-    const REMINDER_DAYS = 7;
     const expiringServers = [];
-    const shouldNotify = siteSettings.expire_reminder === 'true' && !!siteSettings.tg_bot_token;
+    const reminderDays = getExpireReminderDays(siteSettings.expire_reminder);
+    const shouldNotify = reminderDays > 0 && !!siteSettings.tg_bot_token;
     let hasRenewedServers = false;
 
     for (const s of allServers) {
@@ -313,7 +315,7 @@ export async function checkExpiringServers(db) {
 
       debug(`[Cron] 检测到服务器 ${s.name} 到期日期 ${s.expire_date}，剩余天数 ${days} 天`);
 
-      if (days > 0 && days <= REMINDER_DAYS) {
+      if (days > 0 && days <= reminderDays) {
         expiringServers.push({ name: s.name, expire_date: s.expire_date, days });
       }
     }

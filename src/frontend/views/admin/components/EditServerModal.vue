@@ -17,10 +17,17 @@
           <label class="form-label">{{ trans.groupName }}</label>
           <input type="text" name="edit_server_group" autocomplete="off" v-model="editForm.server_group" class="form-input" placeholder="e.g. US VPS">
         </div>
+      </div>
 
+      <div class="form-row">
         <div class="form-group flex-1">
           <label class="form-label">{{ trans.tags }}</label>
           <input type="text" name="edit_tags" autocomplete="off" v-model="editForm.tags" class="form-input" :placeholder="trans.tagsPlaceholder">
+        </div>
+
+        <div class="form-group flex-1">
+          <label class="form-label">{{ trans.region }}</label>
+          <input type="text" name="edit_region" autocomplete="off" v-model.trim="editForm.region" class="form-input" placeholder="e.g. HK">
         </div>
       </div>
 

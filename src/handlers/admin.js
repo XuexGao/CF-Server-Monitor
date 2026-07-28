@@ -1,7 +1,7 @@
 import { checkAuth, simpleAuthResponse, validateCredentials, generateToken } from '../middleware/auth.js';
 import { getLatestMetricsForAllServers } from '../database/schema.js';
 import { getAllServers, clearServersListCache } from '../utils/cache.js';
-import { clearAppearanceSettingsCache, normalizeDisplayMode, normalizeTgNotify, saveSiteOptions, SITE_FIELDS, APPEARANCE_FIELDS } from '../utils/settings.js';
+import { clearAppearanceSettingsCache, normalizeDisplayMode, normalizeExpireReminder, normalizeTgNotify, saveSiteOptions, SITE_FIELDS, APPEARANCE_FIELDS } from '../utils/settings.js';
 import { mergeMetricsIntoServer } from '../utils/metrics.js';
 import { verifyTurnstileToken, hashPassword } from '../utils/common.js';
 import { AppError, createSuccessResponse, createBadRequestResponse, createUnauthorizedResponse, createErrorResponse } from '../utils/errors.js';
@@ -17,6 +17,10 @@ const THEME_PREVIEW_AUTH_TTL = 600;
 
 function normalizeBooleanFlag(value) {
   return value === true || value === 1 || value === '1' || value === 'true' ? '1' : '0';
+}
+
+function normalizeServerRegion(value) {
+  return String(value || '').trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '').slice(0, 16);
 }
 
 function normalizeServerBillingData(data = {}) {
@@ -42,6 +46,22 @@ function isValidUUID(id) {
 
 function isValidName(name) {
   return name && typeof name === 'string' && name.trim().length > 0 && name.length <= 100;
+}
+
+function isMissingColumnError(error) {
+  const message = error?.message || String(error);
+  return /no such column|has no column/i.test(message);
+}
+
+async function handleServerMutationError(db, error, fallbackMessage) {
+  if (isMissingColumnError(error)) {
+    console.warn('检测到数据库字段缺失，尝试添加缺失字段...');
+    await addServerColumns(db);
+    return createBadRequestResponse('dbColumnsAdded');
+  }
+
+  const errMsg = error?.message || String(error);
+  return createBadRequestResponse(errMsg || fallbackMessage);
 }
 
 function sanitizeCspDomains(input) {
@@ -421,7 +441,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null)
       
       const serversWithStatus = servers.map(server => {
         const latestMetrics = latestMetricsMap.get(server.id);
-        const item = { ...server };
+        const item = { ...server, region_override: server.region || '' };
         let isOnline = false;
         
         if (latestMetrics) {
@@ -522,7 +542,8 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null)
 
       // 如果 tg_notify 或 expire_reminder 开启，验证 tg_bot_token 不为空
       const tgNotify = normalizeTgNotify(settings.tg_notify);
-      if (tgNotify !== '0' || settings.expire_reminder === 'true') {
+      const expireReminder = normalizeExpireReminder(settings.expire_reminder);
+      if (tgNotify !== '0' || expireReminder !== '0') {
         if (!settings.tg_bot_token || settings.tg_bot_token.trim().length === 0) {
           return createBadRequestResponse('tgBotTokenRequired');
         }
@@ -581,6 +602,8 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null)
             siteOptions[field] = pingNodes.values[field];
           } else if (field === 'tg_notify') {
             siteOptions[field] = tgNotify;
+          } else if (field === 'expire_reminder') {
+            siteOptions[field] = expireReminder;
           } else if (field === 'theme_url') {
             siteOptions[field] = normalizedThemeUrl;
           } else {
@@ -603,17 +626,22 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null)
       
       const id = crypto.randomUUID();
       const group = data.server_group || 'Default';
+      const region = normalizeServerRegion(data.region);
 
-      const { max_order } = await env.DB.prepare('SELECT COALESCE(MAX(sort_order), -1) as max_order FROM servers').first();
-      const sortOrder = (max_order || 0) + 1;
+      try {
+        const { max_order } = await env.DB.prepare('SELECT COALESCE(MAX(sort_order), -1) as max_order FROM servers').first();
+        const sortOrder = (max_order || 0) + 1;
 
-      const historyPartitionId = await getNextServerHistoryPartitionId(env.DB);
+        const historyPartitionId = await getNextServerHistoryPartitionId(env.DB);
 
-      await env.DB.prepare(`
-        INSERT INTO servers
-        (id, name, server_group, sort_order, history_partition_id, timestamp)
-        VALUES (?, ?, ?, ?, ?, ?)
-      `).bind(id, name, group, sortOrder, historyPartitionId, Date.now()).run();
+        await env.DB.prepare(`
+          INSERT INTO servers
+          (id, name, server_group, region, sort_order, history_partition_id, timestamp)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+        `).bind(id, name, group, region, sortOrder, historyPartitionId, Date.now()).run();
+      } catch (e) {
+        return handleServerMutationError(env.DB, e, 'serverAddFailed');
+      }
       
       clearServersListCache();
       
@@ -659,7 +687,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null)
       });
     }
     else if (data.action === 'edit') {
-      const { id, name, server_group, tags, note, price, billing_cycle, auto_renewal, currency, expire_date, traffic_limit, traffic_calc_type, reset_day, collect_interval, report_interval, auto_update, custom_ct, custom_cu, custom_cm, custom_bd, rx_correction, tx_correction, offline_notify_disabled, is_hidden } = data;
+      const { id, name, server_group, region, tags, note, price, billing_cycle, auto_renewal, currency, expire_date, traffic_limit, traffic_calc_type, reset_day, collect_interval, report_interval, auto_update, custom_ct, custom_cu, custom_cm, custom_bd, rx_correction, tx_correction, offline_notify_disabled, is_hidden } = data;
       if (!id || !isValidUUID(id)) {
         return createBadRequestResponse('invalidServerId');
       }
@@ -706,11 +734,12 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null)
       try {
         await env.DB.prepare(`
           UPDATE servers
-          SET name = ?, server_group = ?, tags = ?, note = ?, price = ?, billing_cycle = ?, auto_renewal = ?, currency = ?, expire_date = ?, traffic_limit = ?, traffic_calc_type = ?, reset_day = ?, collect_interval = ?, report_interval = ?, auto_update = ?, custom_ct = ?, custom_cu = ?, custom_cm = ?, custom_bd = ?, rx_correction = ?, tx_correction = ?, offline_notify_disabled = ?, is_hidden = ?
+          SET name = ?, server_group = ?, region = ?, tags = ?, note = ?, price = ?, billing_cycle = ?, auto_renewal = ?, currency = ?, expire_date = ?, traffic_limit = ?, traffic_calc_type = ?, reset_day = ?, collect_interval = ?, report_interval = ?, auto_update = ?, custom_ct = ?, custom_cu = ?, custom_cm = ?, custom_bd = ?, rx_correction = ?, tx_correction = ?, offline_notify_disabled = ?, is_hidden = ?
           WHERE id = ?
         `).bind(
           name || '',
           server_group || 'Default',
+          normalizeServerRegion(region),
           safeTags,
           safeNote,
           billingData.price,
@@ -735,14 +764,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null)
           id
         ).run();
       } catch (e) {
-        if (e.message && /no such column/i.test(e.message)) {
-          console.warn('检测到数据库字段缺失，尝试添加缺失字段...');
-          await addServerColumns(env.DB);
-          return createBadRequestResponse('dbColumnsAdded');
-        }else{
-          const errMsg = e?.message || String(e);
-          return createBadRequestResponse(errMsg || 'serverUpdateFailed');
-        }
+        return handleServerMutationError(env.DB, e, 'serverUpdateFailed');
       }
       
       clearServersListCache();
@@ -842,16 +864,17 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null)
 
         try {
           await env.DB.prepare(`
-            INSERT INTO servers (id, name, server_group, tags, note, price, billing_cycle, auto_renewal,
+            INSERT INTO servers (id, name, server_group, region, tags, note, price, billing_cycle, auto_renewal,
               currency, expire_date,
               traffic_limit, traffic_calc_type, reset_day, collect_interval, report_interval,
               auto_update, custom_ct, custom_cu, custom_cm, custom_bd, rx_correction, tx_correction,
               offline_notify_disabled, is_hidden, sort_order, history_partition_id, timestamp)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `).bind(
             server.id,
             server.name || '',
             server.server_group || 'Default',
+            normalizeServerRegion(server.region),
             server.tags || '',
             server.note || '',
             billingData.price,

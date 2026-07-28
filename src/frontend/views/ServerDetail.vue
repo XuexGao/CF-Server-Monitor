@@ -60,6 +60,10 @@
           <span class="sysinfo-label">💻 {{ trans.os }} / {{ trans.architecture }}</span>
           <span class="sysinfo-value sysinfo-small">{{ server.os || 'N/A' }} / {{ server.arch || 'N/A' }}</span>
         </div>
+        <div class="sysinfo-item" v-if="server.kernel_version">
+          <span class="sysinfo-label">🧩 {{ trans.kernelVersion || 'Kernel' }}</span>
+          <span class="sysinfo-value sysinfo-small">{{ server.kernel_version }}</span>
+        </div>
         <div class="sysinfo-item">
           <span class="sysinfo-label">🔧 {{ trans.cpuInfo }}</span>
           <span class="sysinfo-value sysinfo-small">{{ server.cpu_info || 'N/A' }} x {{ server.cpu_cores || 'N/A' }}</span>
@@ -1043,7 +1047,7 @@ const appendDataToChart = (chart, datasetIndex, timestamp, value, isPing = false
   chart.update('none')
 }
 
-const STATIC_FIELDS = ['id', 'name', 'region', 'arch', 'os', 'cpu_info', 'cpu_cores', 'gpu_info', 'expire_date', 'server_group', 'traffic_limit', 'net_rx_monthly', 'net_tx_monthly', 'boot_time', 'timestamp', 'ip_v4', 'ip_v6']
+const STATIC_FIELDS = ['id', 'name', 'region', 'arch', 'os', 'kernel_version', 'cpu_info', 'cpu_cores', 'gpu_info', 'expire_date', 'server_group', 'traffic_limit', 'net_rx_monthly', 'net_tx_monthly', 'boot_time', 'timestamp', 'ip_v4', 'ip_v6']
 
 const appendLoadChartData = (timestamp, loadAvg) => {
   const chart = charts.load

@@ -134,8 +134,7 @@
           <div class="form-group flex-1">
             <label class="form-label">{{ trans.expireReminder }}</label>
             <select v-model="settings.expire_reminder" class="form-select">
-              <option value="false">{{ trans.disabled }}</option>
-              <option value="true">{{ trans.notifyExpire }}</option>
+              <option v-for="option in expireReminderOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
             </select>
           </div>
         </div>
@@ -410,6 +409,21 @@ const offlineNotifyOptions = computed(() => [
 
     return {
       value: String(minutes),
+      label: `${label}`
+    }
+  })
+])
+
+const expireReminderOptions = computed(() => [
+  { value: '0', label: `${props.trans.disabled}` },
+  ...Array.from({ length: 7 }, (_, index) => {
+    const days = index + 1
+    const label = props.trans.notifyExpireDays
+      ? props.trans.notifyExpireDays.replace('{days}', days)
+      : `Notify within ${days} days before expiration`
+
+    return {
+      value: String(days),
       label: `${label}`
     }
   })

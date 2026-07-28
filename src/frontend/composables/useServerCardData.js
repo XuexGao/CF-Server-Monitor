@@ -71,6 +71,10 @@ export function useServerCardData(props) {
     }
     return 0
   })
+  const swapTotal = computed(() => Number.parseFloat(props.server.swap_total) || 0)
+  const swapUsed = computed(() => Number.parseFloat(props.server.swap_used) || 0)
+  const hasSwapData = computed(() => swapTotal.value > 0)
+  const swapPercent = computed(() => hasSwapData.value ? clampPercent((swapUsed.value / swapTotal.value) * 100) : 0)
   const diskPercent = computed(() => {
     const total = Number.parseFloat(props.server.disk_total) || 0
     if (total > 0) {
@@ -204,6 +208,17 @@ export function useServerCardData(props) {
     '--ring-color': color
   })
 
+  const getMemoryRingStyle = (ramValue, ramColor, swapValue, swapColor) => ({
+    ...getRingStyle(ramValue, ramColor),
+    '--swap-ring-value': `${clampPercent(swapValue)}`,
+    '--swap-ring-color': swapColor
+  })
+
+  const memoryUsageTitle = computed(() => hasSwapData.value
+    ? `RAM ${ramPercent.value.toFixed(1)}% · SWAP ${swapPercent.value.toFixed(1)}%`
+    : `RAM ${ramPercent.value.toFixed(1)}%`
+  )
+
   const roundedPercent = (value) => Math.round(clampPercent(value))
 
   const isPingValid = (ping) => {
@@ -244,6 +259,8 @@ export function useServerCardData(props) {
     cpuPercent,
     cpuCores,
     ramPercent,
+    swapPercent,
+    hasSwapData,
     diskPercent,
     trafficLimitSummary,
     trafficUsagePercent,
@@ -263,11 +280,13 @@ export function useServerCardData(props) {
     uptimeText,
     ramUsageText,
     diskUsageText,
+    memoryUsageTitle,
     dataTimeText,
     isExpired,
     expireText,
     getUsageColor,
     getRingStyle,
+    getMemoryRingStyle,
     roundedPercent,
     isPingValid,
     isPingDisabled,

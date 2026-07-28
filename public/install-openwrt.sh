@@ -1,6 +1,6 @@
 #!/bin/sh
 # ==============================================================================
-# V1.3.3
+# V1.3.4
 # CF-Server-Monitor 安装/卸载脚本 (OpenWrt 专用版)
 # 支持: OpenWrt / LEDE / ImmortalWrt (procd + opkg)
 # 纯 POSIX sh 实现，无 bash 依赖
@@ -11,7 +11,7 @@
 
 set -eu
 
-AGENT_VERSION="1.3.3"
+AGENT_VERSION="1.3.4"
 
 # 路径定义（配置文件系统）
 CONFIG_DIR="/etc/config/cf-probe"
@@ -1032,6 +1032,19 @@ PREV_CPU_IDLE=$(echo "$CPU_STAT" | awk '{print $2}'); PREV_CPU_IDLE=${PREV_CPU_I
 
 PREV_LOOP_TIME=$(date +%s)
 
+# 缓存间隔定义
+DISK_CHECK_INTERVAL=120          # 硬盘检测：2分钟
+LAST_DISK_CHECK=0
+# 状态检测：固定60秒
+STATUS_CHECK_INTERVAL=60
+LAST_STATUS_CHECK=0
+
+# set -u 安全初始化：所有缓存变量在循环前初始化为默认值
+DISK_TOTAL=0; DISK_USED=0
+OS=""; ARCH=""; KERNEL_VERSION=""; BOOT_TIME=0; CPU_INFO=""; CPU_CORES=1
+GPU_INFO_VALUE="null"; LOAD_AVG="0 0 0"; PROCESSES=0; TCP_CONN=0; UDP_CONN=0
+RX_MONTHLY=0; TX_MONTHLY=0
+
 echo "[INFO] CF-Server-Monitor Probe Engine Started Successfully."
 
 run_network_worker &
@@ -1067,11 +1080,15 @@ while true; do
     SWAP_USED=$(((SWAP_TOTAL_KB - SWAP_FREE_KB) / 1024))
     [ "${SWAP_USED}" -lt 0 ] && SWAP_USED=0
 
-    DISK_INFO=$(df -P / 2>/dev/null | tail -n1 || echo "")
-    DISK_TOTAL=0; DISK_USED=0
-    if [ -n "${DISK_INFO}" ]; then
-        DISK_TOTAL=$(echo "${DISK_INFO}" | awk '{print int($2/1024)}')
-        DISK_USED=$(echo "${DISK_INFO}" | awk '{print int($3/1024)}')
+    # 磁盘检测（缓存机制：每2分钟检测一次）
+    if [ $((LOOP_START_TIME - LAST_DISK_CHECK)) -ge "${DISK_CHECK_INTERVAL}" ] || [ "${LAST_DISK_CHECK}" -eq 0 ]; then
+        DISK_INFO=$(df -P / 2>/dev/null | tail -n1 || echo "")
+        DISK_TOTAL=0; DISK_USED=0
+        if [ -n "${DISK_INFO}" ]; then
+            DISK_TOTAL=$(echo "${DISK_INFO}" | awk '{print int($2/1024)}')
+            DISK_USED=$(echo "${DISK_INFO}" | awk '{print int($3/1024)}')
+        fi
+        LAST_DISK_CHECK="${LOOP_START_TIME}"
     fi
 
     CPU_STAT=$(get_cpu_stat)
@@ -1088,55 +1105,67 @@ while true; do
     PREV_CPU_TOTAL=${CPU_TOTAL_NOW}
     PREV_CPU_IDLE=${CPU_IDLE_NOW}
 
-    if [ -f /etc/os-release ]; then
-        OS_RAW=$(grep -E '^PRETTY_NAME=' /etc/os-release | cut -d= -f2 | tr -d '"' | tr -d "'")
-    else
-        OS_RAW=$(uname -srm)
-    fi
-    OS=${OS_RAW:-"OpenWrt"}
-    ARCH=$(uname -m)
-    BOOT_TIME=$(awk '$1=="btime"{print $2}' /proc/stat 2>/dev/null)
-    if [ -n "${BOOT_TIME:-}" ]; then
-        BOOT_TIME=$((BOOT_TIME * 1000))
-    else
-        uptime_sec=$(awk '{print int($1)}' /proc/uptime 2>/dev/null || echo 0)
-        now_sec=$(date +%s)
-
-        if [ "$uptime_sec" -gt 0 ] 2>/dev/null; then
-            BOOT_TIME=$(( (now_sec - uptime_sec) * 1000 ))
-        else
-            BOOT_TIME=0
-        fi
-    fi
-    CPU_INFO=$(grep -m 1 'model name' /proc/cpuinfo 2>/dev/null | awk -F: '{print $2}' | xargs || echo "")
-    [ -z "${CPU_INFO}" ] && CPU_INFO=${ARCH}
-    CPU_CORES=$(nproc 2>/dev/null || grep -c '^processor' /proc/cpuinfo 2>/dev/null || echo "1")
-    LOAD_AVG=$(cat /proc/loadavg 2>/dev/null | awk '{print $1, $2, $3}' || echo "0 0 0")
-    PROCESSES=$(ps -e 2>/dev/null | wc -l || echo 0)
-
-    TCP_CONN=""
-    if command -v ss >/dev/null 2>&1; then
-        TCP_CONN=$(ss -H -ant state established 2>/dev/null | wc -l)
-    else
-        TCP_CONN=$(awk 'NR>1 && $4=="01"{c++} END{print c+0}' /proc/net/tcp 2>/dev/null)
-    fi
-    TCP_CONN=$(printf "%s" "${TCP_CONN:-0}" | tr -d '\r\n ')
-
-    UDP_CONN=""
-    if command -v ss >/dev/null 2>&1; then
-        UDP_CONN=$(ss -H -anu 2>/dev/null | wc -l)
-    else
-        UDP_CONN=$(awk 'NR>1{c++} END{print c+0}' /proc/net/udp 2>/dev/null)
-    fi
-    UDP_CONN=$(printf "%s" "${UDP_CONN:-0}" | tr -d '\r\n ')
-
+    # 获取网络字节数（网速计算需要每次执行，流量统计也需要）
     NET_STAT=$(get_net_bytes)
     RX_NOW=$(echo "$NET_STAT" | awk '{print $1}'); RX_NOW=${RX_NOW:-0}
     TX_NOW=$(echo "$NET_STAT" | awk '{print $2}'); TX_NOW=${TX_NOW:-0}
 
-    MONTHLY_TRAFFIC=$(calc_monthly_traffic "$RX_NOW" "$TX_NOW")
-    RX_MONTHLY=$(echo "$MONTHLY_TRAFFIC" | awk '{print $1}')
-    TX_MONTHLY=$(echo "$MONTHLY_TRAFFIC" | awk '{print $2}')
+    # 静态信息（仅首次运行时获取，运行期间不会变化）
+    if [ "${LAST_STATUS_CHECK}" -eq 0 ]; then
+        if [ -f /etc/os-release ]; then
+            OS_RAW=$(grep -E '^PRETTY_NAME=' /etc/os-release | cut -d= -f2 | tr -d '"' | tr -d "'")
+        else
+            OS_RAW=$(uname -srm)
+        fi
+        OS=${OS_RAW:-"OpenWrt"}
+        ARCH=$(uname -m)
+        KERNEL_VERSION=$(uname -r 2>/dev/null || echo "")
+        BOOT_TIME=$(awk '$1=="btime"{print $2}' /proc/stat 2>/dev/null)
+        if [ -n "${BOOT_TIME:-}" ]; then
+            BOOT_TIME=$((BOOT_TIME * 1000))
+        else
+            uptime_sec=$(awk '{print int($1)}' /proc/uptime 2>/dev/null || echo 0)
+            now_sec=$(date +%s)
+
+            if [ "$uptime_sec" -gt 0 ] 2>/dev/null; then
+                BOOT_TIME=$(( (now_sec - uptime_sec) * 1000 ))
+            else
+                BOOT_TIME=0
+            fi
+        fi
+        CPU_INFO=$(grep -m 1 'model name' /proc/cpuinfo 2>/dev/null | awk -F: '{print $2}' | xargs || echo "")
+        [ -z "${CPU_INFO}" ] && CPU_INFO=${ARCH}
+        CPU_CORES=$(nproc 2>/dev/null || grep -c '^processor' /proc/cpuinfo 2>/dev/null || echo "1")
+    fi
+
+    # 状态检测缓存：进程数、连接数、负载、当月累计流量（每STATUS_CHECK_INTERVAL检测一次）
+    if [ $((LOOP_START_TIME - LAST_STATUS_CHECK)) -ge "${STATUS_CHECK_INTERVAL}" ] || [ "${LAST_STATUS_CHECK}" -eq 0 ]; then
+        LOAD_AVG=$(cat /proc/loadavg 2>/dev/null | awk '{print $1, $2, $3}' || echo "0 0 0")
+        PROCESSES=$(ps -e 2>/dev/null | wc -l || echo 0)
+
+        TCP_CONN=""
+        if command -v ss >/dev/null 2>&1; then
+            TCP_CONN=$(ss -H -ant state established 2>/dev/null | wc -l)
+        else
+            TCP_CONN=$(awk 'NR>1 && $4=="01"{c++} END{print c+0}' /proc/net/tcp 2>/dev/null)
+        fi
+        TCP_CONN=$(printf "%s" "${TCP_CONN:-0}" | tr -d '\r\n ')
+
+        UDP_CONN=""
+        if command -v ss >/dev/null 2>&1; then
+            UDP_CONN=$(ss -H -anu 2>/dev/null | wc -l)
+        else
+            UDP_CONN=$(awk 'NR>1{c++} END{print c+0}' /proc/net/udp 2>/dev/null)
+        fi
+        UDP_CONN=$(printf "%s" "${UDP_CONN:-0}" | tr -d '\r\n ')
+
+        # 计算当月累计流量
+        MONTHLY_TRAFFIC=$(calc_monthly_traffic "$RX_NOW" "$TX_NOW")
+        RX_MONTHLY=$(echo "$MONTHLY_TRAFFIC" | awk '{print $1}')
+        TX_MONTHLY=$(echo "$MONTHLY_TRAFFIC" | awk '{print $2}')
+
+        LAST_STATUS_CHECK="${LOOP_START_TIME}"
+    fi
 
     TIME_DELTA=$((LOOP_START_TIME - PREV_LOOP_TIME))
     [ "${TIME_DELTA}" -le 0 ] && TIME_DELTA=${ACTIVE_INTERVAL}
@@ -1163,6 +1192,7 @@ while true; do
     EOS=$(escape_json "${OS}")
     EARCH=$(escape_json "${ARCH}")
     ECPU=$(escape_json "${CPU_INFO}")
+    EKERNEL=$(escape_json "${KERNEL_VERSION}")
     PING_CT_JSON=$(json_probe_value "$CT_NODE" "$PING_CT")
     PING_CU_JSON=$(json_probe_value "$CU_NODE" "$PING_CU")
     PING_CM_JSON=$(json_probe_value "$CM_NODE" "$PING_CM")
@@ -1173,7 +1203,7 @@ while true; do
     LOSS_BD_JSON=$(json_probe_value "$BD_NODE" "$LOSS_BD")
 
     METRICS_JSON=$(cat <<EOF
-{"cpu":"$CPU","ram_total":"$RAM_TOTAL","ram_used":"$RAM_USED","swap_total":"$SWAP_TOTAL","swap_used":"$SWAP_USED","disk_total":"$DISK_TOTAL","disk_used":"$DISK_USED","load_avg":"$LOAD_AVG","boot_time":"$BOOT_TIME","net_rx":"$RX_NOW","net_tx":"$TX_NOW","net_rx_monthly":"$RX_MONTHLY","net_tx_monthly":"$TX_MONTHLY","net_in_speed":"$RX_SPEED","net_out_speed":"$TX_SPEED","os":"$EOS","arch":"$EARCH","cpu_info":"$ECPU","cpu_cores":"$CPU_CORES","processes":"$PROCESSES","tcp_conn":"$TCP_CONN","udp_conn":"$UDP_CONN","ip_v4":"$IPV4","ip_v6":"$IPV6","ping_ct":$PING_CT_JSON,"ping_cu":$PING_CU_JSON,"ping_cm":$PING_CM_JSON,"ping_bd":$PING_BD_JSON,"loss_ct":$LOSS_CT_JSON,"loss_cu":$LOSS_CU_JSON,"loss_cm":$LOSS_CM_JSON,"loss_bd":$LOSS_BD_JSON}
+{"cpu":"$CPU","ram_total":"$RAM_TOTAL","ram_used":"$RAM_USED","swap_total":"$SWAP_TOTAL","swap_used":"$SWAP_USED","disk_total":"$DISK_TOTAL","disk_used":"$DISK_USED","load_avg":"$LOAD_AVG","boot_time":"$BOOT_TIME","net_rx":"$RX_NOW","net_tx":"$TX_NOW","net_rx_monthly":"$RX_MONTHLY","net_tx_monthly":"$TX_MONTHLY","net_in_speed":"$RX_SPEED","net_out_speed":"$TX_SPEED","os":"$EOS","arch":"$EARCH","kernel_version":"$EKERNEL","cpu_info":"$ECPU","cpu_cores":"$CPU_CORES","processes":"$PROCESSES","tcp_conn":"$TCP_CONN","udp_conn":"$UDP_CONN","ip_v4":"$IPV4","ip_v6":"$IPV6","ping_ct":$PING_CT_JSON,"ping_cu":$PING_CU_JSON,"ping_cm":$PING_CM_JSON,"ping_bd":$PING_BD_JSON,"loss_ct":$LOSS_CT_JSON,"loss_cu":$LOSS_CU_JSON,"loss_cm":$LOSS_CM_JSON,"loss_bd":$LOSS_BD_JSON}
 EOF
 )
     if [ "$COLLECT_INTERVAL" -gt 0 ]; then
