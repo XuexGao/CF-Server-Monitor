@@ -780,13 +780,26 @@ https://raw.githubusercontent.com/huilang-me/CFSM-Theme-Store/refs/heads/main/th
   "themes": [
     {
       "name": "Example Theme",
-      "versions": []
+      "url": "https://github.com/Tokinx/cf-server-monitor-theme-emerald",
+      "branch": "build",
+      "versions": [
+        {
+          "version": "8cea2bbdbadb50684f2e97e13f7b2149ef99911b",
+          "short_version": "8cea2bb",
+          "title": "update theme to 2024-01-01",
+          "releaseDate": "2024-01-01",
+          "changelog": "update theme",
+          "commit_id": "8cea2bbdbadb50684f2e97e13f7b2149ef99911b",
+          "theme_url": "https://github.com/Tokinx/cf-server-monitor-theme-emerald/tree/8cea2bbdbadb50684f2e97e13f7b2149ef99911b"
+        }
+      ]
     }
   ]
 }
 ```
 
 - 上游对象的其他字段原样保留。
+- 主题对象配置 GitHub 仓库 `url` 和 `branch` 时，会通过 GitHub commits API 读取该分支最近 10 个 commit，并生成可直接写入 `theme_url` 的版本列表；失败时保留上游已有 `versions`。
 - `schema` 缺失时补为 `1`；`themes` 或每个主题的 `versions` 不是数组时补为空数组。
 - 上游失败时返回已有内存缓存，即使它已经超过 300 秒 TTL；从未成功缓存时返回 `{ "schema": 1, "themes": [] }`，HTTP 状态仍为 `200`。
 
@@ -811,7 +824,7 @@ https://github.com/huilang-me/CFSM-Theme-Store/tree/dist/<作者>/<主题目录>
 https://github.com/<owner>/<theme-repo>/tree/<commit-or-branch>[/theme-subdir]
 ```
 
-主题商店列表默认保存 `CFSM-Theme-Store` 的 `dist` 分支地址；手动填写时也可以使用独立 GitHub 主题仓库的 tree 地址。建议使用 commit id 固定版本。
+主题商店可以保存旧版 `CFSM-Theme-Store` 的 `dist` 分支地址，也可以保存由独立 GitHub 主题仓库 commit 生成的 tree 地址。建议使用 commit id 固定版本。
 
 **反代规则**：
 

@@ -70,10 +70,20 @@ function injectTitle(html, title) {
   return insertBeforeHeadClose(html, `<title>${safeTitle}</title>`);
 }
 
+function injectFavicon(html, favicon) {
+  const value = String(favicon || '').trim();
+  if (!value) return html;
+
+  const withoutExistingIcons = html.replace(/<link\b(?=[^>]*\brel=["'][^"']*(?:shortcut\s+icon|icon)[^"']*["'])[^>]*>\s*/gi, '');
+  const safeFavicon = escapeHtml(value);
+  return insertBeforeHeadClose(withoutExistingIcons, `<link rel="icon" href="${safeFavicon}">`);
+}
+
 function injectAppearanceSettings(html, settings) {
   let modifiedHtml = stripCspMeta(html);
 
   modifiedHtml = injectTitle(modifiedHtml, settings.site_title || DEFAULT_SITE_TITLE);
+  modifiedHtml = injectFavicon(modifiedHtml, settings.favicon);
 
   const cspStatic = settings.csp_static || '';
   const cspApi = settings.csp_api || '';

@@ -112,6 +112,7 @@
           :latest-agent-version="latestAgentVersion"
           :copied-server-id="copiedServerId"
           :copied-note-server-id="copiedNoteServerId"
+          :copied-spec-key="copiedSpecKey"
           @add-server="addServer"
           @batch-delete="batchDelete"
           @toggle-select-all="toggleSelectAll"
@@ -120,6 +121,7 @@
           @drop="handleDrop"
           @toggle-server="toggleServer"
           @copy-note="copyServerNote"
+          @copy-spec="copyServerSpec"
           @copy-cmd="copyCmd"
           @edit="openEditModal"
           @delete="openDeleteModal"
@@ -141,6 +143,7 @@
           @toggle-admin-password-change="toggleAdminPasswordChange"
           @save-settings="saveSettings"
           @upload-bg="uploadBg"
+          @upload-favicon="uploadFavicon"
           @send-test-notification="sendTestNotification"
           @query-d1-usage="queryD1Usage"
         />
@@ -582,6 +585,7 @@ const newServerGroup = ref('')
 const settings = ref({
   site_title: '',
   custom_bg: '',
+  favicon: '',
   custom_head: '',
   custom_script: '',
   display_mode: 'bar',
@@ -673,6 +677,7 @@ const deleteServerId = ref('')
 
 const copiedServerId = ref(null)
 const copiedNoteServerId = ref(null)
+const copiedSpecKey = ref(null)
 const deleteTargetOs = ref('linux')
 const uninstallCopied = ref(false)
 const saving = ref(false)
@@ -767,6 +772,23 @@ const copyServerNote = async (server) => {
     }, 1500)
   } catch (e) {
     console.error('[ERROR] Copy note failed:', e)
+  }
+}
+
+const copyServerSpec = async ({ key, text } = {}) => {
+  const value = String(text || '').trim()
+  if (!key || !value || value === '-') return
+
+  try {
+    await copyTextToClipboard(value)
+    copiedSpecKey.value = key
+    setTimeout(() => {
+      if (copiedSpecKey.value === key) {
+        copiedSpecKey.value = null
+      }
+    }, 1500)
+  } catch (e) {
+    console.error('[ERROR] Copy spec failed:', e)
   }
 }
 
@@ -904,6 +926,7 @@ const loadSettings = async () => {
       settings.value = {
         site_title: settingsData.site_title || '',
         custom_bg: settingsData.custom_bg || '',
+        favicon: settingsData.favicon || '',
         custom_head: settingsData.custom_head || '',
         custom_script: settingsData.custom_script || '',
         display_mode: resolveDisplayMode(settingsData),
@@ -1023,6 +1046,7 @@ const saveSettings = async () => {
     settings: {
       site_title: settings.value.site_title,
       custom_bg: settings.value.custom_bg,
+      favicon: settings.value.favicon,
       custom_head: settings.value.custom_head,
       custom_script: settings.value.custom_script,
       display_mode: normalizeDisplayMode(settings.value.display_mode),
@@ -1476,7 +1500,7 @@ const handleDrop = async (e, targetId) => {
   draggedRow = null
 }
 
-const uploadBg = (e) => {
+const uploadImageSetting = (e, field) => {
   const file = e.target.files[0]
   if (!file) return
   if (file.size > 800 * 1024) {
@@ -1485,10 +1509,14 @@ const uploadBg = (e) => {
   }
   const reader = new FileReader()
   reader.onload = function(event) {
-    settings.value.custom_bg = event.target.result
+    settings.value[field] = event.target.result
   }
   reader.readAsDataURL(file)
 }
+
+const uploadBg = (e) => uploadImageSetting(e, 'custom_bg')
+
+const uploadFavicon = (e) => uploadImageSetting(e, 'favicon')
 
 const handleUpgradeDatabase = async () => {
   dbOperation.value = 'upgrade'

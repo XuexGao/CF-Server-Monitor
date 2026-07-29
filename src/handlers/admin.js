@@ -447,6 +447,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null)
         if (latestMetrics) {
           isOnline = (now - latestMetrics.timestamp) < ONLINE_THRESHOLD;
           mergeMetricsIntoServer(item, latestMetrics);
+          item.ip = latestMetrics.ip || '';
         } else {
           item.last_updated = 0;
           item.is_online = false;
@@ -455,6 +456,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null)
           item.arch = '';
           item.os = '';
           item.agent_version = '';
+          item.ip = '';
           item.ip_v4 = '0';
           item.ip_v6 = '0';
           item.boot_time = '';

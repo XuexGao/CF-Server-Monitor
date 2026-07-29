@@ -81,7 +81,7 @@
           <div class="theme-info">
             <div class="theme-header">
               <h3 class="theme-title">{{ theme.title }}</h3>
-              <span v-if="getSelectedVersion(theme)" class="theme-version">{{ getSelectedVersion(theme).version }}</span>
+              <span v-if="getSelectedVersion(theme)" class="theme-version">{{ getVersionBadge(getSelectedVersion(theme)) }}</span>
             </div>
             <div v-if="theme.tags && theme.tags.length" class="theme-tags">
               <span v-for="tag in theme.tags" :key="tag" class="theme-tag">{{ tag }}</span>
@@ -97,8 +97,8 @@
                 @change="selectVersion(theme.id, $event.target.value)"
                 class="version-select"
               >
-                <option v-for="(v, idx) in theme.versions" :key="v.version" :value="idx">
-                  {{ v.version }}
+                <option v-for="(v, idx) in theme.versions" :key="v.commit_id || v.commitId || v.version || idx" :value="idx">
+                  {{ getVersionTitle(v) }}
                 </option>
               </select>
             </div>
@@ -203,6 +203,20 @@ const selectVersion = (themeId, idx) => {
   notice.value = null
 }
 
+const getVersionTitle = (version) => {
+  return version?.title || version?.version || version?.commit_id || version?.commitId || ''
+}
+
+const getVersionBadge = (version) => {
+  const shortVersion = String(version?.short_version || version?.shortVersion || '').trim()
+  if (shortVersion) return shortVersion
+
+  const versionName = String(version?.version || '').trim()
+  if (/^[a-f0-9]{40}$/i.test(versionName)) return versionName.slice(0, 7)
+
+  return versionName
+}
+
 const normalizeThemeStoreUrl = (value) => {
   if (typeof value !== 'string' || !value.trim()) return ''
   try {
@@ -251,9 +265,14 @@ const getVersionThemeUrl = (theme, version) => {
     version?.storeUrl ||
     ''
   )
-  if (directUrl && directUrl.includes('/tree/dist/')) return directUrl
+  if (directUrl) return directUrl
 
   const repo = getGithubRepoParts(theme)
+  const commitId = String(version?.commit_id || version?.commitId || version?.version || '').trim()
+  if (repo && /^[a-f0-9]{40}$/i.test(commitId)) {
+    return `https://github.com/${repo.owner}/${repo.repo}/tree/${commitId}`
+  }
+
   const versionName = String(version?.version || '').trim()
   if (!repo || !versionName) return ''
 

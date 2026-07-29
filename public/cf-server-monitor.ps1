@@ -112,10 +112,6 @@ $CONFIG_FILE = Join-Path $CONFIG_DIR "cf_probe_config.json"
 $LOG_FILE = Join-Path $CONFIG_DIR "cf_probe.log"
 $TRAFFIC_FILE = Join-Path $CONFIG_DIR "cf_probe_traffic.dat"
 
-$DEFAULT_CT = "gd-ct-dualstack.ip.zstaticcdn.com"
-$DEFAULT_CU = "gd-cu-dualstack.ip.zstaticcdn.com"
-$DEFAULT_CM = "gd-cm-dualstack.ip.zstaticcdn.com"
-$DEFAULT_BD = "ip.zstaticcdn.com"
 $MAX_TRAFFIC_CORRECTION_GB = 1000000
 
 $MAX_LOG_SIZE = 1MB
@@ -1199,10 +1195,10 @@ function Start-TimerCollectLoop {
             reset_day = [int]$ResetDay
             auto_update = $newAutoUpdate
             config_md5 = "none"
-            ct_node = if ($CtNode) { $CtNode } else { $DEFAULT_CT }
-            cu_node = if ($CuNode) { $CuNode } else { $DEFAULT_CU }
-            cm_node = if ($CmNode) { $CmNode } else { $DEFAULT_CM }
-            bd_node = if ($BdNode) { $BdNode } else { $DEFAULT_BD }
+            ct_node = if ($CtNode) { $CtNode } else { "" }
+            cu_node = if ($CuNode) { $CuNode } else { "" }
+            cm_node = if ($CmNode) { $CmNode } else { "" }
+            bd_node = if ($BdNode) { $BdNode } else { "" }
         }
         Save-Config -Config $config
         Write-Log "已保存配置到: $CONFIG_FILE" "INFO"
@@ -1224,10 +1220,10 @@ function Start-TimerCollectLoop {
         $resetDay = 1
     }
     $configMd5 = if ($config.config_md5) { $config.config_md5.ToString().Trim().ToLowerInvariant() } else { "none" }
-    $ctNode = if ($CtNode) { $CtNode } else { Get-ConfigProperty $config 'ct_node' $DEFAULT_CT }
-    $cuNode = if ($CuNode) { $CuNode } else { Get-ConfigProperty $config 'cu_node' $DEFAULT_CU }
-    $cmNode = if ($CmNode) { $CmNode } else { Get-ConfigProperty $config 'cm_node' $DEFAULT_CM }
-    $bdNode = if ($BdNode) { $BdNode } else { Get-ConfigProperty $config 'bd_node' $DEFAULT_BD }
+    $ctNode = if ($CtNode) { $CtNode } else { Get-ConfigProperty $config 'ct_node' "" }
+    $cuNode = if ($CuNode) { $CuNode } else { Get-ConfigProperty $config 'cu_node' "" }
+    $cmNode = if ($CmNode) { $CmNode } else { Get-ConfigProperty $config 'cm_node' "" }
+    $bdNode = if ($BdNode) { $BdNode } else { Get-ConfigProperty $config 'bd_node' "" }
     try {
         $autoUpdate = if ($AutoUpdate -ne "") {
             ConvertTo-BinaryFlag -Value $AutoUpdate -Default "0" -Strict
@@ -1668,10 +1664,10 @@ function Install-Service {
         reset_day = [int]$ResetDay
         auto_update = $autoUpdateValue
         config_md5 = "none"
-        ct_node = if ($CtNode) { $CtNode } else { Get-ConfigProperty $existingConfig 'ct_node' $DEFAULT_CT }
-        cu_node = if ($CuNode) { $CuNode } else { Get-ConfigProperty $existingConfig 'cu_node' $DEFAULT_CU }
-        cm_node = if ($CmNode) { $CmNode } else { Get-ConfigProperty $existingConfig 'cm_node' $DEFAULT_CM }
-        bd_node = if ($BdNode) { $BdNode } else { Get-ConfigProperty $existingConfig 'bd_node' $DEFAULT_BD }
+        ct_node = if ($CtNode) { $CtNode } else { Get-ConfigProperty $existingConfig 'ct_node' "" }
+        cu_node = if ($CuNode) { $CuNode } else { Get-ConfigProperty $existingConfig 'cu_node' "" }
+        cm_node = if ($CmNode) { $CmNode } else { Get-ConfigProperty $existingConfig 'cm_node' "" }
+        bd_node = if ($BdNode) { $BdNode } else { Get-ConfigProperty $existingConfig 'bd_node' "" }
     }
 
     if (-not $config.server_id -or -not $config.secret -or -not $config.worker_url) {

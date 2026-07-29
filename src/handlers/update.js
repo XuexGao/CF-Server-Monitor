@@ -53,6 +53,14 @@ function normalizeAgentVersion(value) {
     .slice(0, 64);
 }
 
+function getRequestIp(request) {
+  const directIp = request.headers?.get('cf-connecting-ip') || request.headers?.get('x-real-ip') || '';
+  if (directIp) return directIp.trim().slice(0, 128);
+
+  const forwardedFor = request.headers?.get('x-forwarded-for') || '';
+  return forwardedFor.split(',')[0].trim().slice(0, 128);
+}
+
 function createAgentInstructionResponse(body) {
   return new Response(body, {
     status: 200,
@@ -173,6 +181,7 @@ export async function handleUpdate(request, env, ctx) {
     }
 
     let regionCode = request.cf?.country || request.headers?.get('cf-ipcountry') || '';
+    const ip = getRequestIp(request);
     const agentVersion = normalizeAgentVersion(request.headers.get('X-Agent-Version'));
 
     const serverDetail = await getServerDetail(env.DB, id, true);
@@ -238,7 +247,8 @@ export async function handleUpdate(request, env, ctx) {
       latestSample.metrics,
       regionCode,
       latestSample.ts,
-      agentVersion
+      agentVersion,
+      ip
     );
 
     const broadcastSamples = toBroadcastSamples(id, samples, regionCode, agentVersion);

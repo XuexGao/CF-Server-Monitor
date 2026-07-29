@@ -1368,9 +1368,9 @@ body::before {
     max-width: 180px;
 }
 
-.note-text {
+.note-text,.spec-text {
     display: inline-block;
-    max-width: 220px;
+    max-width: 150px;
     color: var(--text-secondary);
     white-space: nowrap;
     overflow: hidden;
@@ -1378,7 +1378,7 @@ body::before {
     cursor: pointer;
 }
 
-.note-text.note-copied {
+.note-text.note-copied,.spec-text.spec-copied {
     color: var(--accent-green);
 }
 
