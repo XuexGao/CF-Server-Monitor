@@ -373,6 +373,7 @@ Workers 环境下 CSP 会放在 HTTP Response Header 中返回，并同时设置
 
 **默认 `connect-src` 白名单**（已内置）：
 
+- `https://api.github.com`
 - `https://api.iconify.design`
 - `https://api.unisvg.com`
 - `https://api.simplesvg.com`
@@ -557,12 +558,12 @@ Workers 环境下 CSP 会放在 HTTP Response Header 中返回，并同时设置
 
 **主题商店与 Workers 反代说明**：
 
-- 后台切换主题会保存 `theme_url`，支持主题商店地址 `https://github.com/huilang-me/CFSM-Theme-Store/tree/dist/<作者>/<主题目录>/<版本号>`，也支持手动填写独立 GitHub 主题仓库 tree 地址，例如 `https://github.com/huilang-me/cf-server-monitor-theme-emerald/tree/f334bb5e25ffbe66749a8df9eb4b099fb148e0f7`
-- 主题商店 `themes.json` 可为主题配置仓库 `url` 和构建分支 `branch`；后台会读取该分支最近 10 个 commit，并把所选 commit 组装为 `https://github.com/<owner>/<repo>/tree/<commit_id>` 写入 `theme_url`
+- 后台切换主题会保存 `theme_url`，主题商店会基于主题仓库 commit 生成 GitHub tree 地址，也支持手动填写独立 GitHub 主题仓库 tree 地址，例如 `https://github.com/huilang-me/cf-server-monitor-theme-emerald/tree/f334bb5e25ffbe66749a8df9eb4b099fb148e0f7`
+- 主题商店 `themes.json` 可为主题配置仓库 `url` 和构建分支 `branch`；后台会读取该分支最近 10 个 commit，并把所选 commit 组装为 `https://github.com/<owner>/<repo>/tree/<commit ID>` 写入 `theme_url`
 - `theme_url` 留空时使用项目内置默认主题
 - Workers 仅反代所选主题的 `index.html` 和 `/assets/*`，例如 `/assets/app.css` 会映射到主题仓库同版本 `assets/app.css`
 - `install.sh`、`flags/`、`os-icons/`、favicon、API、管理端等其他路径不会走主题反代，仍返回项目原有文件或接口
-- 远程主题 `index.html` 和 `assets/` 会在 Workers Cache 中缓存 1 小时；主题商店列表缓存 5 分钟
+- 远程主题 `index.html` 和 `assets/` 会在 Workers Cache 中缓存：commit id 固定版 1 天，分支名版本 1 小时；主题商店列表缓存 5 分钟
 - 切换主题会先校验远程 `index.html` 是否可访问，失败会提示错误并拒绝保存，不会自动回退成默认主题
 - 主题预览需要已登录管理员身份；未授权直接访问 `/?theme_url=...` 会返回 401，不会启用临时主题
 - 管理后台固定使用内置默认主题；第三方主题的管理入口应链接到 `/admin#admin`

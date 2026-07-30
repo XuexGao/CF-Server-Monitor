@@ -784,12 +784,11 @@ https://raw.githubusercontent.com/huilang-me/CFSM-Theme-Store/refs/heads/main/th
       "branch": "build",
       "versions": [
         {
-          "version": "8cea2bbdbadb50684f2e97e13f7b2149ef99911b",
           "short_version": "8cea2bb",
           "title": "update theme to 2024-01-01",
           "releaseDate": "2024-01-01",
           "changelog": "update theme",
-          "commit_id": "8cea2bbdbadb50684f2e97e13f7b2149ef99911b",
+          "commitId": "8cea2bbdbadb50684f2e97e13f7b2149ef99911b",
           "theme_url": "https://github.com/Tokinx/cf-server-monitor-theme-emerald/tree/8cea2bbdbadb50684f2e97e13f7b2149ef99911b"
         }
       ]
@@ -799,8 +798,8 @@ https://raw.githubusercontent.com/huilang-me/CFSM-Theme-Store/refs/heads/main/th
 ```
 
 - 上游对象的其他字段原样保留。
-- 主题对象配置 GitHub 仓库 `url` 和 `branch` 时，会通过 GitHub commits API 读取该分支最近 10 个 commit，并生成可直接写入 `theme_url` 的版本列表；失败时保留上游已有 `versions`。
-- `schema` 缺失时补为 `1`；`themes` 或每个主题的 `versions` 不是数组时补为空数组。
+- 主题对象配置 GitHub 仓库 `url` 和 `branch` 时，会通过 GitHub commits API 读取该分支最近 10 个 commit，并生成可直接写入 `theme_url` 的版本列表；`/theme` 响应里的 `versions` 只由 commits API 生成。commits API 失败时不会刷新内存缓存；已有成功缓存时返回旧缓存，无缓存时该主题 `versions` 返回空数组。管理端主题商店会对空 `versions` 主题执行浏览器端 GitHub commits API fallback 补齐版本下拉。
+- `schema` 缺失时补为 `1`；`themes` 不是数组时补为空数组；上游 `themes.json` 不需要提供 `versions`。
 - 上游失败时返回已有内存缓存，即使它已经超过 300 秒 TTL；从未成功缓存时返回 `{ "schema": 1, "themes": [] }`，HTTP 状态仍为 `200`。
 
 ***
@@ -820,17 +819,16 @@ https://raw.githubusercontent.com/huilang-me/CFSM-Theme-Store/refs/heads/main/th
 **主题 URL 规则**：
 
 ```text
-https://github.com/huilang-me/CFSM-Theme-Store/tree/dist/<作者>/<主题目录>/<版本号>
 https://github.com/<owner>/<theme-repo>/tree/<commit-or-branch>[/theme-subdir]
 ```
 
-主题商店可以保存旧版 `CFSM-Theme-Store` 的 `dist` 分支地址，也可以保存由独立 GitHub 主题仓库 commit 生成的 tree 地址。建议使用 commit id 固定版本。
+主题商店会保存由独立 GitHub 主题仓库 commit 生成的 tree 地址。建议使用 commit id 固定版本。
 
 **反代规则**：
 
 - 只代理主题目录下的 `index.html` 和 `assets/*`
 - GitHub raw 默认 `text/plain` 会被 Worker 按文件后缀修正为 CSS、JS、图片、字体等对应 `Content-Type`
-- 远程主题 `index.html` 和 `assets/*` 使用 `caches.default` 缓存 1 小时，缓存 key 包含分支、作者、主题目录和版本号
+- 远程主题 `index.html` 和 `assets/*` 使用 `caches.default` 缓存：commit id 固定版 1 天，分支名版本 1 小时，缓存 key 包含 Git ref、作者、主题目录和资源路径
 - 主题商店列表 `/theme` 使用 Worker 内存缓存 5 分钟
 - 最终 HTML 会注入站点标题、背景图、自定义 `<head>`、自定义脚本，并移除主题自带 CSP meta
 - CSP 通过 HTTP Response Header 返回，同时设置 `X-Frame-Options: DENY`
@@ -1033,7 +1031,7 @@ Header：`X-Turnstile-Token: <token>`（当 `site_options.turnstile_enabled` 或
     "csp_static": "https://static.example.com",
     "csp_api": "https://api.example.com",
     "display_mode": "bar",
-    "theme_url": "https://github.com/huilang-me/CFSM-Theme-Store/tree/dist/Tokinx/cf-server-monitor-theme-emerald/v1.0.10",
+    "theme_url": "https://github.com/Tokinx/cf-server-monitor-theme-emerald/tree/8cea2bbdbadb50684f2e97e13f7b2149ef99911b",
     "appearance_options": {
       "theme_options": {
         "a": 1,
@@ -1102,7 +1100,7 @@ Header：`X-Turnstile-Token: <token>`（当 `site_options.turnstile_enabled` 或
 ```json
 {
   "action": "start_theme_preview",
-  "theme_url": "https://github.com/huilang-me/CFSM-Theme-Store/tree/dist/Tokinx/cf-server-monitor-theme-emerald/v1.0.10"
+  "theme_url": "https://github.com/Tokinx/cf-server-monitor-theme-emerald/tree/8cea2bbdbadb50684f2e97e13f7b2149ef99911b"
 }
 ```
 
@@ -1118,7 +1116,7 @@ Header：`X-Turnstile-Token: <token>`（当 `site_options.turnstile_enabled` 或
 ```json
 {
   "success": true,
-  "preview_url": "https://status.example.com/?theme_url=https%3A%2F%2Fgithub.com%2Fhuilang-me%2FCFSM-Theme-Store%2Ftree%2Fdist%2FTokinx%2Fcf-server-monitor-theme-emerald%2Fv1.0.10"
+  "preview_url": "https://status.example.com/?theme_url=https%3A%2F%2Fgithub.com%2FTokinx%2Fcf-server-monitor-theme-emerald%2Ftree%2F8cea2bbdbadb50684f2e97e13f7b2149ef99911b"
 }
 ```
 

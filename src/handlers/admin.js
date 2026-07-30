@@ -1,12 +1,12 @@
 import { checkAuth, simpleAuthResponse, validateCredentials, generateToken } from '../middleware/auth.js';
 import { getLatestMetricsForAllServers } from '../database/schema.js';
 import { getAllServers, clearServersListCache } from '../utils/cache.js';
-import { clearAppearanceSettingsCache, normalizeDisplayMode, normalizeExpireReminder, normalizeTgNotify, saveSiteOptions, SITE_FIELDS, APPEARANCE_FIELDS } from '../utils/settings.js';
+import { clearAppearanceSettingsCache, normalizeDisplayMode, normalizeExpireReminder, normalizeResourceAlertRules, normalizeTgNotify, saveSiteOptions, SITE_FIELDS, APPEARANCE_FIELDS } from '../utils/settings.js';
 import { mergeMetricsIntoServer } from '../utils/metrics.js';
 import { verifyTurnstileToken, hashPassword } from '../utils/common.js';
 import { AppError, createSuccessResponse, createBadRequestResponse, createUnauthorizedResponse, createErrorResponse } from '../utils/errors.js';
 import { addServerColumns } from '../database/updateDatabase.js';
-import { sendNotification } from '../services/notification.js';
+import { clearResourceAlertState, sendNotification } from '../services/notification.js';
 import { getNextServerHistoryPartitionId, HISTORY_MAX_PARTITION_ID } from '../database/indexOptimization.js';
 import { isValidTrafficCorrection, validateAgentConfigInput, validatePingNode } from '../utils/agentConfig.js';
 import { detectBillingCycle, detectCurrencySymbol, normalizeBillingCycle, normalizeCurrency, normalizePrice, renewExpireDateIfNeeded } from '../utils/serverBilling.js';
@@ -543,10 +543,23 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null)
       }
 
       // 如果 tg_notify 或 expire_reminder 开启，验证 tg_bot_token 不为空
-      const tgNotify = normalizeTgNotify(settings.tg_notify);
-      const expireReminder = normalizeExpireReminder(settings.expire_reminder);
-      if (tgNotify !== '0' || expireReminder !== '0') {
-        if (!settings.tg_bot_token || settings.tg_bot_token.trim().length === 0) {
+      const hasResourceAlertRulesInput = settings.resource_alert_rules !== undefined;
+      const tgNotify = settings.tg_notify !== undefined
+        ? normalizeTgNotify(settings.tg_notify)
+        : normalizeTgNotify(sys?.tg_notify);
+      const expireReminder = settings.expire_reminder !== undefined
+        ? normalizeExpireReminder(settings.expire_reminder)
+        : normalizeExpireReminder(sys?.expire_reminder);
+      const currentResourceAlertRules = normalizeResourceAlertRules(sys?.resource_alert_rules);
+      const normalizedResourceAlertRules = hasResourceAlertRulesInput
+        ? normalizeResourceAlertRules(settings.resource_alert_rules)
+        : currentResourceAlertRules;
+      const resourceAlertEnabled = normalizedResourceAlertRules.length > 0;
+      if (tgNotify !== '0' || expireReminder !== '0' || resourceAlertEnabled) {
+        const effectiveTgBotToken = settings.tg_bot_token !== undefined
+          ? settings.tg_bot_token
+          : sys?.tg_bot_token;
+        if (!effectiveTgBotToken || String(effectiveTgBotToken).trim().length === 0) {
           return createBadRequestResponse('tgBotTokenRequired');
         }
       }
@@ -606,6 +619,8 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null)
             siteOptions[field] = tgNotify;
           } else if (field === 'expire_reminder') {
             siteOptions[field] = expireReminder;
+          } else if (field === 'resource_alert_rules') {
+            siteOptions[field] = normalizedResourceAlertRules;
           } else if (field === 'theme_url') {
             siteOptions[field] = normalizedThemeUrl;
           } else {
@@ -614,6 +629,11 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null)
         }
       }
       await saveSiteOptions(env.DB, siteOptions);
+      // Keep existing states on rule edits so threshold increases can emit recovery notifications.
+      // checkResourceAlerts prunes states for removed rules or servers on the next evaluation.
+      if (hasResourceAlertRulesInput && !resourceAlertEnabled) {
+        await clearResourceAlertState(env.DB);
+      }
       Object.assign(sys, shouldSaveAppearanceOptions ? appearanceOptions : {}, siteOptions);
       return createSuccessResponse({
         success: true,

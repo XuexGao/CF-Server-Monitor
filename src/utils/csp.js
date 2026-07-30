@@ -4,6 +4,7 @@ const FONTS_API_DOMAIN = 'https://fonts.googleapis.com';
 const FONTS_STATIC_DOMAIN = 'https://fonts.gstatic.com';
 const RAW_GITHUB_DOMAIN = 'https://raw.githubusercontent.com';
 const DEFAULT_CONNECT_DOMAINS = [
+  'https://api.github.com',
   'https://api.iconify.design',
   'https://api.unisvg.com',
   'https://api.simplesvg.com',

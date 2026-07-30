@@ -97,7 +97,7 @@
                 @change="selectVersion(theme.id, $event.target.value)"
                 class="version-select"
               >
-                <option v-for="(v, idx) in theme.versions" :key="v.commit_id || v.commitId || v.version || idx" :value="idx">
+                <option v-for="(v, idx) in theme.versions" :key="v.commitId || idx" :value="idx">
                   {{ getVersionTitle(v) }}
                 </option>
               </select>
@@ -151,6 +151,10 @@ const props = defineProps({
 
 const emit = defineEmits(['theme-applied'])
 
+const COMMIT_LIMIT = 10
+const GITHUB_FETCH_TIMEOUT_MS = 8000
+const SAFE_GITHUB_PART = /^[A-Za-z0-9._-]+$/
+
 const themes = ref([])
 const loading = ref(false)
 const loaded = ref(false)
@@ -160,6 +164,14 @@ const applyingThemeId = ref('')
 const previewingThemeId = ref('')
 const customThemeUrl = ref('')
 const selectedVersions = reactive({})
+
+const initSelectedVersions = (reset = false) => {
+  themes.value.forEach(theme => {
+    if (theme.id && theme.versions && theme.versions.length > 0 && (reset || selectedVersions[theme.id] == null)) {
+      selectedVersions[theme.id] = 0
+    }
+  })
+}
 
 const loadThemes = async () => {
   if (loading.value) return
@@ -172,13 +184,9 @@ const loadThemes = async () => {
     themes.value = Array.isArray(result.data?.themes) ? result.data.themes : []
     
     // 初始化选中版本为最新版本（索引0）
-    themes.value.forEach(theme => {
-      if (theme.versions && theme.versions.length > 0) {
-        selectedVersions[theme.id] = 0
-      }
-    })
-    
+    initSelectedVersions(true)
     loaded.value = true
+    hydrateMissingThemeVersions()
   } catch (e) {
     error.value = e.message || 'Failed to load themes'
     loaded.value = false
@@ -204,17 +212,17 @@ const selectVersion = (themeId, idx) => {
 }
 
 const getVersionTitle = (version) => {
-  return version?.title || version?.version || version?.commit_id || version?.commitId || ''
+  return version?.title || version?.commitId || ''
 }
 
 const getVersionBadge = (version) => {
   const shortVersion = String(version?.short_version || version?.shortVersion || '').trim()
   if (shortVersion) return shortVersion
 
-  const versionName = String(version?.version || '').trim()
-  if (/^[a-f0-9]{40}$/i.test(versionName)) return versionName.slice(0, 7)
+  const commitId = String(version?.commitId || '').trim()
+  if (/^[a-f0-9]{40}$/i.test(commitId)) return commitId.slice(0, 7)
 
-  return versionName
+  return commitId
 }
 
 const normalizeThemeStoreUrl = (value) => {
@@ -243,6 +251,133 @@ const normalizeThemeStoreUrl = (value) => {
   }
 }
 
+const normalizeBranchName = (value) => {
+  if (typeof value !== 'string') return ''
+  const branch = value.trim()
+  if (!branch || /[\0\r\n]/.test(branch)) return ''
+  return branch
+}
+
+const getGithubCommitSource = (theme) => {
+  if (!theme || typeof theme.url !== 'string' || !theme.url.trim()) return null
+
+  try {
+    const parsed = new URL(theme.url.trim())
+    if (parsed.protocol !== 'https:' || parsed.hostname !== 'github.com') return null
+    if (parsed.username || parsed.password || parsed.search || parsed.hash) return null
+
+    const parts = parsed.pathname.split('/').filter(Boolean)
+    if (parts.length < 2) return null
+    if (parts.length > 2 && parts[2] !== 'tree') return null
+
+    const owner = parts[0]
+    const repo = parts[1].replace(/\.git$/i, '')
+    if (!SAFE_GITHUB_PART.test(owner) || !SAFE_GITHUB_PART.test(repo)) return null
+
+    const branch = normalizeBranchName(theme.branch) ||
+      (parts[2] === 'tree' && parts.length === 4 ? normalizeBranchName(parts[3]) : '')
+    if (!branch) return null
+
+    return {
+      owner,
+      repo,
+      branch,
+      repoUrl: `https://github.com/${owner}/${repo}`
+    }
+  } catch (_) {
+    return null
+  }
+}
+
+const getCommitDate = (commit) => {
+  const value = commit?.commit?.author?.date || commit?.commit?.committer?.date || ''
+  if (typeof value !== 'string') return ''
+  return value.split('T')[0] || ''
+}
+
+const getCommitSummary = (commit) => {
+  const message = commit?.commit?.message
+  if (typeof message !== 'string') return ''
+  return message.split('\n')[0].trim()
+}
+
+const buildCommitVersion = (repoUrl, commit) => {
+  const sha = typeof commit?.sha === 'string' ? commit.sha.trim() : ''
+  if (!/^[a-f0-9]{40}$/i.test(sha)) return null
+
+  const releaseDate = getCommitDate(commit)
+  const summary = getCommitSummary(commit) || `commit ${sha.slice(0, 7)}`
+  const title = releaseDate ? `${summary} to ${releaseDate}` : summary
+
+  return {
+    short_version: sha.slice(0, 7),
+    title,
+    releaseDate,
+    changelog: summary,
+    commitId: sha,
+    theme_url: `${repoUrl}/tree/${sha}`
+  }
+}
+
+const fetchThemeCommitVersions = async (theme) => {
+  const source = getGithubCommitSource(theme)
+  if (!source) return []
+
+  try {
+    const apiUrl = new URL(`https://api.github.com/repos/${source.owner}/${source.repo}/commits`)
+    apiUrl.searchParams.set('sha', source.branch)
+    apiUrl.searchParams.set('per_page', String(COMMIT_LIMIT))
+
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), GITHUB_FETCH_TIMEOUT_MS)
+    try {
+      const res = await fetch(apiUrl.href, { signal: controller.signal })
+      if (!res.ok) return []
+
+      const commits = await res.json()
+      if (!Array.isArray(commits)) return []
+
+      return commits
+        .map(commit => buildCommitVersion(source.repoUrl, commit))
+        .filter(Boolean)
+    } finally {
+      clearTimeout(timeout)
+    }
+  } catch (_) {
+    return []
+  }
+}
+
+const hydrateMissingThemeVersions = async () => {
+  const candidates = themes.value
+    .map((theme, index) => ({ theme, index }))
+    .filter(({ theme }) => !(theme.versions && theme.versions.length > 0) && getGithubCommitSource(theme))
+
+  if (candidates.length === 0) return
+
+  const results = await Promise.allSettled(
+    candidates.map(({ theme }) => fetchThemeCommitVersions(theme))
+  )
+
+  let changed = false
+  const nextThemes = [...themes.value]
+
+  results.forEach((result, resultIndex) => {
+    if (result.status !== 'fulfilled' || !result.value.length) return
+    const { theme, index } = candidates[resultIndex]
+    nextThemes[index] = {
+      ...theme,
+      versions: result.value
+    }
+    changed = true
+  })
+
+  if (changed) {
+    themes.value = nextThemes
+    initSelectedVersions()
+  }
+}
+
 const getGithubRepoParts = (theme) => {
   const url = getSafeExternalUrl(theme?.url)
   if (!url) return null
@@ -259,24 +394,17 @@ const getGithubRepoParts = (theme) => {
 
 const getVersionThemeUrl = (theme, version) => {
   const directUrl = normalizeThemeStoreUrl(
-    version?.theme_url ||
-    version?.themeUrl ||
-    version?.store_url ||
-    version?.storeUrl ||
-    ''
+    version?.theme_url || ''
   )
   if (directUrl) return directUrl
 
   const repo = getGithubRepoParts(theme)
-  const commitId = String(version?.commit_id || version?.commitId || version?.version || '').trim()
-  if (repo && /^[a-f0-9]{40}$/i.test(commitId)) {
-    return `https://github.com/${repo.owner}/${repo.repo}/tree/${commitId}`
+  const commitSha = String(version?.commitId || '').trim()
+  if (repo && /^[a-f0-9]{40}$/i.test(commitSha)) {
+    return `https://github.com/${repo.owner}/${repo.repo}/tree/${commitSha}`
   }
 
-  const versionName = String(version?.version || '').trim()
-  if (!repo || !versionName) return ''
-
-  return `https://github.com/huilang-me/CFSM-Theme-Store/tree/dist/${repo.owner}/${repo.repo}/${versionName}`
+  return ''
 }
 
 const getSelectedThemeUrl = (theme) => {

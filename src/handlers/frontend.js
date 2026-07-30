@@ -9,6 +9,8 @@ import {
 import { checkAuth } from '../middleware/auth.js';
 
 const THEME_CACHE_TTL = 3600;
+const THEME_COMMIT_CACHE_TTL = 86400;
+const IMMUTABLE_ASSET_CACHE_CONTROL = 'public, max-age=31536000, immutable';
 const PREVIEW_COOKIE = 'cfsm_theme_preview';
 const PREVIEW_AUTH_COOKIE = 'cfsm_theme_preview_auth';
 
@@ -179,9 +181,25 @@ function parseThemeUrl(themeUrl) {
 
   return {
     themeUrl: normalized,
+    ref,
     rawBase: `https://raw.githubusercontent.com/${encodedThemePath}`,
     cacheBase: `https://cfsm-theme-cache.local/${encodedThemePath}`
   };
+}
+
+function isCommitRef(ref) {
+  return /^[a-f0-9]{40}$/i.test(ref);
+}
+
+function getThemeWorkerCacheTtl(parsedTheme) {
+  return isCommitRef(parsedTheme.ref) ? THEME_COMMIT_CACHE_TTL : THEME_CACHE_TTL;
+}
+
+function getThemeAssetBrowserCacheControl(parsedTheme) {
+  if (isCommitRef(parsedTheme.ref)) {
+    return IMMUTABLE_ASSET_CACHE_CONTROL;
+  }
+  return `public, max-age=${THEME_CACHE_TTL}`;
 }
 
 function getCookie(request, name) {
@@ -274,7 +292,7 @@ function stripBrowserCacheHeaders(response) {
   });
 }
 
-async function fetchWithCache(rawUrl, contentType, workerCacheUrl) {
+async function fetchWithCache(rawUrl, contentType, workerCacheUrl, workerCacheTtl = THEME_CACHE_TTL) {
   const cacheKey = new Request(workerCacheUrl || rawUrl, { method: 'GET' });
   const cache = typeof caches !== 'undefined' ? caches.default : null;
 
@@ -298,8 +316,8 @@ async function fetchWithCache(rawUrl, contentType, workerCacheUrl) {
 
   const headers = new Headers();
   headers.set('Content-Type', contentType);
-  headers.set('Cache-Control', `public, max-age=${THEME_CACHE_TTL}`);
-  headers.set('CDN-Cache-Control', `public, max-age=${THEME_CACHE_TTL}`);
+  headers.set('Cache-Control', `public, max-age=${workerCacheTtl}`);
+  headers.set('CDN-Cache-Control', `public, max-age=${workerCacheTtl}`);
   headers.set('X-Content-Type-Options', 'nosniff');
 
   const etag = originResponse.headers.get('ETag');
@@ -336,10 +354,14 @@ async function serveThemeAsset(request, themeUrl) {
   const response = await fetchWithCache(
     `${parsedTheme.rawBase}/assets/${assetPath}`,
     contentType,
-    `${parsedTheme.cacheBase}/assets/${assetPath}`
+    `${parsedTheme.cacheBase}/assets/${assetPath}`,
+    getThemeWorkerCacheTtl(parsedTheme)
   );
   const headers = new Headers(response.headers);
   headers.set('X-CFSM-Theme-Asset', '1');
+  if (response.ok) {
+    headers.set('Cache-Control', getThemeAssetBrowserCacheControl(parsedTheme));
+  }
 
   return new Response(response.body, {
     status: response.status,
@@ -355,7 +377,8 @@ async function loadThemeIndex(themeUrl) {
   const response = await fetchWithCache(
     `${parsedTheme.rawBase}/index.html`,
     'text/html;charset=UTF-8',
-    `${parsedTheme.cacheBase}/index.html`
+    `${parsedTheme.cacheBase}/index.html`,
+    getThemeWorkerCacheTtl(parsedTheme)
   );
 
   if (!response.ok) return null;

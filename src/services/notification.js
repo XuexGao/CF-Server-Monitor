@@ -1,10 +1,14 @@
 import { getLatestMetricsForAllServers } from '../database/schema.js';
 import { clearServersListCache, getAllServers } from '../utils/cache.js';
-import { getExpireReminderDays, getTgNotifyMinutes, loadSiteSettings, debug } from '../utils/settings.js';
+import { getExpireReminderDays, getResourceAlertConfig, getResourceAlertRuleThresholds, getTgNotifyMinutes, loadSiteSettings, debug } from '../utils/settings.js';
 import { detectBillingCycle, normalizeBillingCycle, renewExpireDateIfNeeded } from '../utils/serverBilling.js';
 
 const MAX_RETRIES = 3;
 const RETRY_DELAY = 1000;
+const RESOURCE_ALERT_EVALUATE_CHUNK_SIZE = 500;
+const RESOURCE_ALERT_STATE_ACTIVE = 'active';
+const RESOURCE_ALERT_STATE_RECOVERED = 'recovered';
+const RESOURCE_ALERT_STATE_KEY = 'resource_alert_state';
 
 function formatLastReportTime(timestamp) {
   if (!timestamp) return '无上报记录';
@@ -13,6 +17,216 @@ function formatLastReportTime(timestamp) {
   if (Number.isNaN(date.getTime())) return '无效时间';
 
   return date.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
+}
+
+function formatMegabitsPerSecond(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0) return '0 Mbps';
+  const mbps = number * 8 / 1000 / 1000;
+  return `${mbps >= 10 ? mbps.toFixed(1) : mbps.toFixed(2)} Mbps`;
+}
+
+function formatPercent(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return '0%';
+  return `${number.toFixed(number >= 10 ? 1 : 2)}%`;
+}
+
+function formatResourceMetric(metric) {
+  const metricLabels = {
+    cpu: 'CPU',
+    ram: 'RAM',
+    disk: 'DISK',
+    netIn: '下行网速',
+    netOut: '上行网速',
+    netTotal: '总网速'
+  };
+  const label = metricLabels[metric.metric] || metric.metric;
+  const valueLabel = metric.mode === 'average' ? '平均' : '当前';
+  const value = metric.triggerValue ?? metric.current;
+  if (metric.metric === 'cpu' || metric.metric === 'ram' || metric.metric === 'disk') {
+    return `${label} ${valueLabel} ${formatPercent(value)} > ${formatPercent(metric.threshold)}`;
+  }
+  return `${label} ${valueLabel} ${formatMegabitsPerSecond(value)} > ${formatMegabitsPerSecond(metric.threshold)}`;
+}
+
+function getResourceMetricLabel(metric) {
+  const metricLabels = {
+    cpu: 'CPU',
+    ram: 'RAM',
+    disk: 'DISK',
+    netIn: '下行网速',
+    netOut: '上行网速',
+    netTotal: '总网速'
+  };
+  return metricLabels[metric?.metric] || metric?.metric || '';
+}
+
+function formatResourceMetricValue(metric, value) {
+  if (metric?.metric === 'cpu' || metric?.metric === 'ram' || metric?.metric === 'disk') {
+    return formatPercent(value);
+  }
+  return formatMegabitsPerSecond(value);
+}
+
+function formatRecoveredResourceMetric(metric) {
+  if (!metric || typeof metric !== 'object') return '';
+  const label = getResourceMetricLabel(metric);
+  const value = metric.current;
+  const valueText = formatResourceMetricValue(metric, value);
+  const thresholdText = formatResourceMetricValue(metric, metric.threshold);
+
+  return `${label} 当前 ${valueText} < ${thresholdText}`;
+}
+
+function parseResourceAlertState(row) {
+  if (!row || !row.value) return { signature: '', servers: {} };
+  try {
+    const parsed = JSON.parse(row.value);
+    if (parsed && typeof parsed === 'object' && parsed.servers && typeof parsed.servers === 'object') {
+      return {
+        signature: String(parsed.signature || ''),
+        servers: parsed.servers
+      };
+    }
+  } catch (_) {}
+  return { signature: '', servers: {} };
+}
+
+function hasResourceAlertStateEntries(alertState) {
+  return alertState && typeof alertState === 'object' && Object.keys(alertState).length > 0;
+}
+
+function getD1Changes(result) {
+  const changes = Number(result?.meta?.changes ?? result?.changes ?? 0);
+  return Number.isFinite(changes) && changes > 0 ? changes : 0;
+}
+
+export async function clearResourceAlertState(db) {
+  if (!db) return false;
+  const result = await db.prepare(
+    `DELETE FROM settings WHERE key = ?`
+  ).bind(RESOURCE_ALERT_STATE_KEY).run();
+  return getD1Changes(result) > 0;
+}
+
+async function saveResourceAlertState(db, configSignature, alertState, hadStoredState) {
+  if (hasResourceAlertStateEntries(alertState)) {
+    await db.prepare(
+      `INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`
+    ).bind(RESOURCE_ALERT_STATE_KEY, JSON.stringify({ signature: configSignature, servers: alertState })).run();
+    return;
+  }
+
+  if (hadStoredState) {
+    await clearResourceAlertState(db);
+  }
+}
+
+function getResourceAlertStateStatus(state) {
+  if (!state || typeof state !== 'object') return RESOURCE_ALERT_STATE_ACTIVE;
+  return state.status === RESOURCE_ALERT_STATE_RECOVERED
+    ? RESOURCE_ALERT_STATE_RECOVERED
+    : RESOURCE_ALERT_STATE_ACTIVE;
+}
+
+function getResourceAlertStateTimestamp(state, key) {
+  if (!state || typeof state !== 'object') return 0;
+  const timestamp = Number(state[key] || 0);
+  return Number.isFinite(timestamp) && timestamp > 0 ? timestamp : 0;
+}
+
+function getStoredResourceAlertMetrics(alert) {
+  return (alert?.metrics || []).map(m => ({
+    metric: m.metric,
+    mode: m.mode,
+    threshold: m.threshold,
+    triggerValue: m.triggerValue ?? m.current
+  }));
+}
+
+function canRecoverResourceAlert(evaluation) {
+  const metrics = Array.isArray(evaluation?.metrics) ? evaluation.metrics : [];
+  return metrics.length > 0 && metrics.every(metric => {
+    const current = Number(metric?.current);
+    const threshold = Number(metric?.threshold);
+    return Number.isFinite(current) && Number.isFinite(threshold) && current < threshold;
+  });
+}
+
+function getResourceAlertRuleIntervalMs(rule) {
+  const minutes = Number(rule?.intervalMinutes);
+  const normalizedMinutes = Number.isFinite(minutes) && minutes > 0 ? minutes : 5;
+  return Math.max(5, normalizedMinutes) * 60 * 1000;
+}
+
+function formatCurrentTime() {
+  return new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
+}
+
+function getResourceAlertRuleStateKey(rule, serverId) {
+  return `${rule.id}:${serverId}`;
+}
+
+function getResourceAlertRuleName(rule) {
+  return String(rule?.name || '资源负载告警').trim() || '资源负载告警';
+}
+
+function getResourceAlertRuleServerIds(rule, servers) {
+  const allServerIds = servers.map(server => String(server.id)).filter(Boolean);
+  if (!Array.isArray(rule.servers) || rule.servers.length === 0) {
+    return allServerIds;
+  }
+
+  const allowed = new Set(allServerIds);
+  const seen = new Set();
+  const ids = [];
+  for (const serverId of rule.servers) {
+    const id = String(serverId || '').trim();
+    if (!id || !allowed.has(id) || seen.has(id)) continue;
+    seen.add(id);
+    ids.push(id);
+  }
+  return ids;
+}
+
+async function evaluateResourceAlertRule(stub, rule, serverIds) {
+  const alerts = [];
+  const evaluatedServerIds = [];
+  const evaluations = [];
+  try {
+    for (let offset = 0; offset < serverIds.length; offset += RESOURCE_ALERT_EVALUATE_CHUNK_SIZE) {
+      const chunk = serverIds.slice(offset, offset + RESOURCE_ALERT_EVALUATE_CHUNK_SIZE);
+      const response = await stub.fetch('http://internal/evaluate-resource-alerts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          serverIds: chunk,
+          mode: rule.mode,
+          windowMinutes: Number(rule.intervalMinutes),
+          thresholds: getResourceAlertRuleThresholds(rule)
+        })
+      });
+
+      if (!response.ok) {
+        console.warn('[ResourceAlert] DO evaluate failed:', response.status);
+        return null;
+      }
+
+      const result = await response.json();
+      if (Array.isArray(result.alerts)) alerts.push(...result.alerts);
+      if (Array.isArray(result.evaluatedServerIds)) {
+        evaluatedServerIds.push(...result.evaluatedServerIds.map(id => String(id)).filter(Boolean));
+      }
+      if (Array.isArray(result.evaluations)) {
+        evaluations.push(...result.evaluations.filter(item => item && item.serverId));
+      }
+    }
+  } catch (e) {
+    console.warn('[ResourceAlert] DO evaluate failed:', e?.message || e);
+    return null;
+  }
+  return { alerts, evaluatedServerIds, evaluations };
 }
 
 async function fetchWithRetry(url, options, retries = MAX_RETRIES) {
@@ -255,6 +469,12 @@ export async function checkOfflineNodes(db) {
       }
     }
 
+    if (offlineNodes.length > 0 || recoveredNodes.length > 0) {
+      await db.prepare(
+        'INSERT INTO settings (key, value) VALUES ("alert_state", ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'
+      ).bind(JSON.stringify(alertState)).run();
+    }
+
     if (offlineNodes.length > 0) {
       const nodeList = offlineNodes
         .map(n => `• ${n.name} - ${formatLastReportTime(n.lastReportTime)}`)
@@ -268,14 +488,207 @@ export async function checkOfflineNodes(db) {
       const msg = `✅ **节点恢复通知** (${recoveredNodes.length}个)\n\n${nodeList}\n\n**时间:** ${new Date().toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai'})}`;
       await sendNotification(siteSettings, msg);
     }
-
-    if (offlineNodes.length > 0 || recoveredNodes.length > 0) {
-      await db.prepare(
-        'INSERT INTO settings (key, value) VALUES ("alert_state", ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'
-      ).bind(JSON.stringify(alertState)).run();
-    }
   } catch (e) {
     console.error('离线检测失败:', e);
+  }
+}
+
+export async function checkResourceAlerts(env) {
+  if (!env?.DB || !env?.METRICS_BROADCASTER) return;
+
+  const db = env.DB;
+  const siteSettings = await loadSiteSettings(db, { forceRefresh: true });
+  if (!siteSettings.tg_bot_token) return;
+
+  const resourceConfig = getResourceAlertConfig(siteSettings);
+
+  if (!resourceConfig.enabled || !resourceConfig.hasRules) {
+    await clearResourceAlertState(db);
+    return;
+  }
+
+  try {
+    const allServers = await getAllServers(db);
+    if (allServers.length === 0) {
+      await clearResourceAlertState(db);
+      return;
+    }
+
+    const serverMap = new Map(allServers.map(server => [String(server.id), server]));
+    const id = env.METRICS_BROADCASTER.idFromName('global');
+    const stub = env.METRICS_BROADCASTER.get(id);
+    const activeMap = new Map();
+    const evaluationMap = new Map();
+    const configuredRuleServers = [];
+    const evaluatedRuleServers = [];
+
+    const configSignature = JSON.stringify({
+      rules: resourceConfig.rules.map(rule => ({
+        id: rule.id,
+        name: rule.name,
+        metric: rule.metric,
+        threshold: rule.threshold,
+        servers: rule.servers,
+        intervalMinutes: rule.intervalMinutes,
+        mode: rule.mode
+      }))
+    });
+
+    for (const rule of resourceConfig.rules) {
+      const serverIds = getResourceAlertRuleServerIds(rule, allServers);
+      if (serverIds.length === 0) continue;
+
+      const ruleServers = [];
+      for (const serverId of serverIds) {
+        const server = serverMap.get(String(serverId));
+        if (!server) continue;
+        ruleServers.push({
+          key: getResourceAlertRuleStateKey(rule, serverId),
+          rule,
+          server,
+          serverId: String(serverId)
+        });
+      }
+      if (ruleServers.length === 0) continue;
+      configuredRuleServers.push(...ruleServers);
+
+      const result = await evaluateResourceAlertRule(stub, rule, serverIds);
+      if (result === null) continue;
+      const evaluatedServerIdSet = new Set(result.evaluatedServerIds);
+      evaluatedRuleServers.push(...ruleServers.filter(item => evaluatedServerIdSet.has(item.serverId)));
+      for (const alert of result.alerts) {
+        activeMap.set(getResourceAlertRuleStateKey(rule, alert.serverId), { rule, alert });
+      }
+      for (const evaluation of result.evaluations || []) {
+        evaluationMap.set(getResourceAlertRuleStateKey(rule, evaluation.serverId), evaluation);
+      }
+    }
+
+    if (configuredRuleServers.length === 0) {
+      await clearResourceAlertState(db);
+      return;
+    }
+
+    const stateRow = await db.prepare(
+      `SELECT value FROM settings WHERE key = ?`
+    ).bind(RESOURCE_ALERT_STATE_KEY).first();
+    const hadStoredState = !!stateRow;
+    const parsedState = parseResourceAlertState(stateRow);
+    let alertState = parsedState.servers || {};
+
+    const now = Date.now();
+    const alertNodes = [];
+    const recoveredNodes = [];
+    const validStateKeys = new Set(configuredRuleServers.map(item => item.key));
+    let stateChanged = hadStoredState && parsedState.signature !== configSignature;
+
+    for (const key of Object.keys(alertState)) {
+      if (!validStateKeys.has(key)) {
+        delete alertState[key];
+        stateChanged = true;
+      }
+    }
+
+    for (const { key, rule, server } of evaluatedRuleServers) {
+      const active = activeMap.get(key);
+      const alert = active?.alert;
+      const evaluation = evaluationMap.get(key);
+      const currentState = alertState[key];
+      const currentStatus = currentState
+        ? getResourceAlertStateStatus(currentState)
+        : '';
+      const ruleIntervalMs = getResourceAlertRuleIntervalMs(rule);
+
+      if (alert) {
+        const isActiveAlert = currentStatus === RESOURCE_ALERT_STATE_ACTIVE;
+        const recoveredAt = currentStatus === RESOURCE_ALERT_STATE_RECOVERED
+          ? getResourceAlertStateTimestamp(currentState, 'recoveredAt')
+          : 0;
+        if (recoveredAt > 0 && now - recoveredAt < ruleIntervalMs) {
+          continue;
+        }
+
+        if (!isActiveAlert) {
+          alertNodes.push({ rule, server, alert });
+          alertState[key] = {
+            status: RESOURCE_ALERT_STATE_ACTIVE,
+            alertAt: now,
+            lastTriggeredAt: now,
+            metrics: getStoredResourceAlertMetrics(alert)
+          };
+          stateChanged = true;
+        } else {
+          const lastTriggeredAt = getResourceAlertStateTimestamp(currentState, 'lastTriggeredAt');
+          if (lastTriggeredAt === 0 || now - lastTriggeredAt >= ruleIntervalMs) {
+            alertState[key] = {
+              ...currentState,
+              status: RESOURCE_ALERT_STATE_ACTIVE,
+              alertAt: getResourceAlertStateTimestamp(currentState, 'alertAt') || now,
+              lastTriggeredAt: now,
+              metrics: getStoredResourceAlertMetrics(alert)
+            };
+            stateChanged = true;
+          }
+        }
+      } else if (currentState) {
+        if (currentStatus === RESOURCE_ALERT_STATE_ACTIVE) {
+          if (!canRecoverResourceAlert(evaluation)) {
+            continue;
+          }
+
+          recoveredNodes.push({ rule, server, metrics: evaluation?.metrics || [] });
+          alertState[key] = {
+            ...currentState,
+            status: RESOURCE_ALERT_STATE_RECOVERED,
+            recoveredAt: now,
+            metrics: evaluation?.metrics || currentState.metrics
+          };
+          stateChanged = true;
+        } else {
+          const recoveredAt = getResourceAlertStateTimestamp(currentState, 'recoveredAt');
+          if (recoveredAt === 0 || now - recoveredAt >= ruleIntervalMs) {
+            delete alertState[key];
+            stateChanged = true;
+          }
+        }
+      }
+    }
+
+    const messageSections = [];
+    if (alertNodes.length > 0) {
+      const nodeList = alertNodes.map(({ rule, server, alert }) => {
+        const metrics = alert.metrics.map(formatResourceMetric).join('；');
+        const modeText = alert.mode === 'average' ? '平均' : '窗口样本连续';
+        return `• ${getResourceAlertRuleName(rule)} / ${server.name} - ${modeText} ${rule.intervalMinutes} 分钟\n  ${metrics}`;
+      }).join('\n');
+      messageSections.push(`⚠️ **资源负载告警** (${alertNodes.length}个)\n\n${nodeList}`);
+    }
+
+    if (recoveredNodes.length > 0) {
+      const nodeList = recoveredNodes
+        .map(({ rule, server, metrics }) => {
+          const metricText = (metrics && metrics.length > 0)
+            ? '\n  ' + metrics.map(formatRecoveredResourceMetric).filter(Boolean).join('；')
+            : '';
+          return `• ${getResourceAlertRuleName(rule)} / ${server.name}${metricText}`;
+        })
+        .join('\n');
+      messageSections.push(`✅ **资源负载恢复** (${recoveredNodes.length}个)\n\n${nodeList}`);
+    }
+
+    if (stateChanged) {
+      await saveResourceAlertState(db, configSignature, alertState, hadStoredState);
+    }
+
+    if (messageSections.length > 0) {
+      const msg = `${messageSections.join('\n\n')}\n\n**时间:** ${formatCurrentTime()}`;
+      const notificationError = await sendNotification(siteSettings, msg);
+      if (notificationError) {
+        console.warn('[ResourceAlert] notification failed:', notificationError);
+      }
+    }
+  } catch (e) {
+    console.error('资源负载告警检测失败:', e);
   }
 }
 

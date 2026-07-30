@@ -3,7 +3,7 @@ export const AGENT_VERSION = '1.3.4';
 export const DEFAULT_SITE_TITLE = 'Cloudflare Server Monitor';
 export const APPEARANCE_FIELDS = ['site_title', 'custom_bg', 'favicon', 'custom_head', 'custom_script', 'csp_static', 'csp_api', 'display_mode', 'theme_options'];
 
-export const SITE_FIELDS = ['is_public', 'show_price', 'show_expire', 'show_tf', 'show_time', 'show_long_history', 'tg_notify', 'tg_bot_token', 'tg_chat_id', 'turnstile_enabled', 'turnstile_login_enabled', 'turnstile_site_key', 'turnstile_secret_key', 'jwt_secret', 'username', 'password', 'cloudflare_account_id', 'cloudflare_token', 'custom_ct', 'custom_cu', 'custom_cm', 'custom_bd', 'expire_reminder', 'theme_url', 'history_id_optimized','servers_optimized'];
+export const SITE_FIELDS = ['is_public', 'show_price', 'show_expire', 'show_tf', 'show_time', 'show_long_history', 'tg_notify', 'tg_bot_token', 'tg_chat_id', 'turnstile_enabled', 'turnstile_login_enabled', 'turnstile_site_key', 'turnstile_secret_key', 'jwt_secret', 'username', 'password', 'cloudflare_account_id', 'cloudflare_token', 'custom_ct', 'custom_cu', 'custom_cm', 'custom_bd', 'expire_reminder', 'resource_alert_rules', 'theme_url', 'history_id_optimized','servers_optimized'];
 
 const SITE_SETTINGS_TTL = 120 * 1000;
 const JWT_SECRET_MIN_LENGTH = 32;
@@ -11,6 +11,24 @@ export const TG_NOTIFY_MINUTES_MIN = 2;
 export const TG_NOTIFY_MINUTES_MAX = 30;
 export const TG_NOTIFY_LEGACY_TRUE_MINUTES = 5;
 export const EXPIRE_REMINDER_DAYS_MAX = 7;
+export const RESOURCE_ALERT_WINDOW_MIN = 5;
+export const RESOURCE_ALERT_WINDOW_MAX = 10;
+export const RESOURCE_ALERT_MODE_CONTINUOUS = 'continuous';
+export const RESOURCE_ALERT_MODE_AVERAGE = 'average';
+export const RESOURCE_ALERT_RULES_MAX = 20;
+export const RESOURCE_ALERT_METRIC_CPU = 'cpu';
+export const RESOURCE_ALERT_METRIC_RAM = 'ram';
+export const RESOURCE_ALERT_METRIC_DISK = 'disk';
+export const RESOURCE_ALERT_METRIC_NET_IN = 'netIn';
+export const RESOURCE_ALERT_METRIC_NET_OUT = 'netOut';
+export const RESOURCE_ALERT_METRICS = [
+  RESOURCE_ALERT_METRIC_CPU,
+  RESOURCE_ALERT_METRIC_RAM,
+  RESOURCE_ALERT_METRIC_DISK,
+  RESOURCE_ALERT_METRIC_NET_IN,
+  RESOURCE_ALERT_METRIC_NET_OUT
+];
+const BYTES_PER_MEGABIT = 1000 * 1000 / 8;
 let cachedSiteSettings = null;
 let siteSettingsCacheExpiry = 0;
 let cachedAppearanceOptions = null;
@@ -47,6 +65,7 @@ const defaults = {
   custom_cm: 'gd-cm-dualstack.ip.zstaticcdn.com',
   custom_bd: '',
   expire_reminder: '0',
+  resource_alert_rules: [],
   theme_url: '',
   history_id_optimized: 'false',
   servers_optimized: 'false'
@@ -101,6 +120,175 @@ export function normalizeExpireReminder(value) {
 
 export function getExpireReminderDays(value) {
   return Number(normalizeExpireReminder(value));
+}
+
+export function normalizeResourceAlertWindowMinutes(value) {
+  const minutes = Number(value);
+  if (
+    Number.isInteger(minutes) &&
+    (minutes === 0 || (minutes >= RESOURCE_ALERT_WINDOW_MIN && minutes <= RESOURCE_ALERT_WINDOW_MAX))
+  ) {
+    return String(minutes);
+  }
+  return '0';
+}
+
+export function normalizeResourceAlertIntervalMinutes(value) {
+  const normalized = normalizeResourceAlertWindowMinutes(value);
+  return normalized === '0' ? String(RESOURCE_ALERT_WINDOW_MIN) : normalized;
+}
+
+export function normalizeResourceAlertPercent(value) {
+  if (value === undefined || value === null || value === '') return '0';
+  const number = Number(value);
+  if (!Number.isFinite(number) || number < 0 || number > 100) return '0';
+  return String(Math.round(number * 100) / 100);
+}
+
+export function normalizeResourceAlertMbps(value) {
+  if (value === undefined || value === null || value === '') return '0';
+  const number = Number(value);
+  if (!Number.isFinite(number) || number < 0 || number > 100000) return '0';
+  return String(Math.round(number * 100) / 100);
+}
+
+export function normalizeResourceAlertMode(value) {
+  const mode = String(value || '').trim().toLowerCase();
+  return mode === RESOURCE_ALERT_MODE_CONTINUOUS
+    ? RESOURCE_ALERT_MODE_CONTINUOUS
+    : RESOURCE_ALERT_MODE_AVERAGE;
+}
+
+export function normalizeResourceAlertMetric(value) {
+  const metric = String(value || '').trim();
+  return RESOURCE_ALERT_METRICS.includes(metric) ? metric : RESOURCE_ALERT_METRIC_CPU;
+}
+
+function parseResourceAlertRulesValue(value) {
+  if (Array.isArray(value)) return value;
+  if (typeof value === 'string' && value.trim()) {
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (_) {
+      return [];
+    }
+  }
+  return [];
+}
+
+function hasExplicitResourceAlertRulesValue(value) {
+  if (Array.isArray(value)) return true;
+  return typeof value === 'string' && value.trim() !== '';
+}
+
+function normalizeResourceAlertRuleId(value, index) {
+  const id = String(value || '').trim().replace(/[^A-Za-z0-9._:-]/g, '').slice(0, 64);
+  return id || `rule_${index + 1}`;
+}
+
+function normalizeResourceAlertRuleName(value, metric, index) {
+  const name = String(value || '').trim().slice(0, 80);
+  if (name) return name;
+  const labels = {
+    [RESOURCE_ALERT_METRIC_CPU]: 'CPU',
+    [RESOURCE_ALERT_METRIC_RAM]: 'RAM',
+    [RESOURCE_ALERT_METRIC_DISK]: 'DISK',
+    [RESOURCE_ALERT_METRIC_NET_IN]: 'NET In',
+    [RESOURCE_ALERT_METRIC_NET_OUT]: 'NET Out'
+  };
+  return `${labels[metric] || 'Resource'} Alert ${index + 1}`;
+}
+
+function normalizeResourceAlertServers(value) {
+  const source = Array.isArray(value)
+    ? value
+    : (Array.isArray(value?.servers) ? value.servers : []);
+  const seen = new Set();
+  const servers = [];
+  for (const item of source) {
+    const id = String(item || '').trim();
+    if (!id || id.length > 64 || !/^[A-Za-z0-9._:-]+$/.test(id) || seen.has(id)) continue;
+    seen.add(id);
+    servers.push(id);
+  }
+  return servers.slice(0, 1000);
+}
+
+function getDefaultResourceAlertThreshold(metric) {
+  return metric === RESOURCE_ALERT_METRIC_NET_IN || metric === RESOURCE_ALERT_METRIC_NET_OUT
+    ? '100'
+    : '80';
+}
+
+export function normalizeResourceAlertThreshold(value, metric) {
+  const fallback = getDefaultResourceAlertThreshold(metric);
+  const normalized = metric === RESOURCE_ALERT_METRIC_NET_IN || metric === RESOURCE_ALERT_METRIC_NET_OUT
+    ? normalizeResourceAlertMbps(value)
+    : normalizeResourceAlertPercent(value);
+  return Number(normalized) > 0 ? normalized : fallback;
+}
+
+export function normalizeResourceAlertRule(rule, index = 0) {
+  if (!rule || typeof rule !== 'object' || Array.isArray(rule)) return null;
+  const metric = normalizeResourceAlertMetric(rule.metric);
+  const intervalMinutes = normalizeResourceAlertIntervalMinutes(
+    rule.intervalMinutes ?? rule.windowMinutes ?? rule.interval ?? rule.minutes
+  );
+
+  return {
+    id: normalizeResourceAlertRuleId(rule.id, index),
+    name: normalizeResourceAlertRuleName(rule.name, metric, index),
+    metric,
+    threshold: normalizeResourceAlertThreshold(rule.threshold, metric),
+    servers: normalizeResourceAlertServers(rule.servers ?? rule.serverIds),
+    intervalMinutes,
+    mode: normalizeResourceAlertMode(rule.mode)
+  };
+}
+
+export function normalizeResourceAlertRules(value) {
+  const explicitRulesValue = hasExplicitResourceAlertRulesValue(value);
+  const source = parseResourceAlertRulesValue(value);
+  const seenIds = new Set();
+  const rules = source
+    .slice(0, RESOURCE_ALERT_RULES_MAX)
+    .map((rule, index) => normalizeResourceAlertRule(rule, index))
+    .filter(Boolean)
+    .map((rule, index) => {
+      let id = rule.id;
+      if (seenIds.has(id)) {
+        id = `${id}_${index + 1}`.slice(0, 64);
+      }
+      seenIds.add(id);
+      return { ...rule, id };
+    });
+
+  if (rules.length > 0 || explicitRulesValue) return rules;
+  return [];
+}
+
+export function getResourceAlertRuleThresholds(rule) {
+  const metric = normalizeResourceAlertMetric(rule?.metric);
+  const threshold = Number(normalizeResourceAlertThreshold(rule?.threshold, metric));
+  return {
+    cpuPercent: metric === RESOURCE_ALERT_METRIC_CPU ? threshold : 0,
+    ramPercent: metric === RESOURCE_ALERT_METRIC_RAM ? threshold : 0,
+    diskPercent: metric === RESOURCE_ALERT_METRIC_DISK ? threshold : 0,
+    netInBps: metric === RESOURCE_ALERT_METRIC_NET_IN ? threshold * BYTES_PER_MEGABIT : 0,
+    netOutBps: metric === RESOURCE_ALERT_METRIC_NET_OUT ? threshold * BYTES_PER_MEGABIT : 0,
+    netTotalBps: 0
+  };
+}
+
+export function getResourceAlertConfig(settings = {}) {
+  const rules = normalizeResourceAlertRules(settings.resource_alert_rules, settings);
+
+  return {
+    enabled: rules.length > 0,
+    rules,
+    hasRules: rules.length > 0
+  };
 }
 
 export function generateRandomSecret(byteLength = 32) {
@@ -198,9 +386,10 @@ async function ensurePersistedJwtSecret(db, result, siteOptions) {
   return saveJwtSecretIfMissing(db, secret);
 }
 
-export async function loadSiteSettings(db) {
+export async function loadSiteSettings(db, options = {}) {
+  const forceRefresh = options === true || Boolean(options && options.forceRefresh);
   const now = Date.now();
-  if (cachedSiteSettings && now < siteSettingsCacheExpiry) {
+  if (!forceRefresh && cachedSiteSettings && now < siteSettingsCacheExpiry) {
     debug('Settings缓存命中');
     return cachedSiteSettings;
   }
@@ -230,6 +419,7 @@ export async function loadSiteSettings(db) {
     }
     result.tg_notify = normalizeTgNotify(result.tg_notify);
     result.expire_reminder = normalizeExpireReminder(result.expire_reminder);
+    result.resource_alert_rules = normalizeResourceAlertRules(result.resource_alert_rules);
   } catch (e) {
     console.error('加载站点设置失败:', e);
   }
@@ -310,6 +500,7 @@ export async function saveSiteOptions(db, updates) {
   const siteOptions = { ...legacySiteOptions, ...existingSiteOptions, ...updates };
   siteOptions.tg_notify = normalizeTgNotify(siteOptions.tg_notify);
   siteOptions.expire_reminder = normalizeExpireReminder(siteOptions.expire_reminder);
+  siteOptions.resource_alert_rules = normalizeResourceAlertRules(siteOptions.resource_alert_rules);
   
   await db.prepare(
     'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'

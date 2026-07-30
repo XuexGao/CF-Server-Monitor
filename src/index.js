@@ -1,5 +1,5 @@
 import { initDatabase, weeklyCleanup, getMetricsHistory, clearHistory } from './database/schema.js';
-import { checkOfflineNodes, checkExpiringServers } from './services/notification.js';
+import { checkOfflineNodes, checkExpiringServers, checkResourceAlerts } from './services/notification.js';
 import { updateDatabase } from './database/updateDatabase.js';
 import { handleAdminAPI } from './handlers/admin.js';
 import { serveFrontend } from './handlers/frontend.js';
@@ -24,8 +24,25 @@ async function fetchStaticAsset(request, env, path) {
   if (!env.ASSETS || request.method !== 'GET') return null;
 
   try {
-    const res = await env.ASSETS.fetch(new Request(`http://static${path}`, request));
-    return res.ok ? res : null;
+    const res = await env.ASSETS.fetch(
+      new Request(`http://static${path}`, request)
+    );
+
+    if (!res.ok) return null;
+
+    const headers = new Headers(res.headers);
+
+    headers.set(
+      'Cache-Control',
+      'public, max-age=31536000, immutable'
+    );
+
+    return new Response(res.body, {
+      status: res.status,
+      statusText: res.statusText,
+      headers
+    });
+
   } catch (_) {
     return null;
   }
@@ -430,6 +447,9 @@ export default {
         debug('[Cron] 开始执行离线节点检测');
         await checkOfflineNodes(env.DB);
         debug('[Cron] 离线节点检测完成');
+        debug('[Cron] 开始执行资源负载告警检测');
+        await checkResourceAlerts(env);
+        debug('[Cron] 资源负载告警检测完成');
       }
     } else if (cron === '0 * * * *') {
       if (day === 0 && hour === 0) {

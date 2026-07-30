@@ -42,6 +42,13 @@ const normalizeBranch = (value) => {
   return branch
 }
 
+const resolveThemeCommitSource = (theme) => {
+  const repo = normalizeGithubRepo(theme?.url)
+  const branch = normalizeBranch(theme?.branch) || normalizeBranch(repo?.branch)
+  if (!repo || !branch) return null
+  return { repo, branch }
+}
+
 const getCommitDate = (commit) => {
   const value = commit?.commit?.author?.date || commit?.commit?.committer?.date || ''
   if (typeof value !== 'string') return ''
@@ -63,21 +70,22 @@ const buildCommitVersion = (repoUrl, commit) => {
   const title = releaseDate ? `${summary} to ${releaseDate}` : summary
 
   return {
-    version: sha,
     short_version: sha.slice(0, 7),
     title,
     releaseDate,
     changelog: summary,
-    commit_id: sha,
     commitId: sha,
     theme_url: `${repoUrl}/tree/${sha}`
   }
 }
 
 const fetchThemeCommitVersions = async (theme) => {
-  const repo = normalizeGithubRepo(theme?.url)
-  const branch = normalizeBranch(theme?.branch) || normalizeBranch(repo?.branch)
-  if (!repo || !branch) return null
+  const source = resolveThemeCommitSource(theme)
+  if (!source) {
+    return { attempted: false, failed: false, versions: null }
+  }
+
+  const { repo, branch } = source
 
   try {
     const apiUrl = new URL(`https://api.github.com/repos/${repo.owner}/${repo.repo}/commits`)
@@ -91,46 +99,58 @@ const fetchThemeCommitVersions = async (theme) => {
       }
     })
 
-    if (!res.ok) return null
+    if (!res.ok) return { attempted: true, failed: true, versions: null }
 
     const commits = await res.json()
-    if (!Array.isArray(commits)) return null
+    if (!Array.isArray(commits)) return { attempted: true, failed: true, versions: null }
 
     const versions = commits
       .map(commit => buildCommitVersion(repo.url, commit))
       .filter(Boolean)
 
-    return versions.length ? versions : null
+    return {
+      attempted: true,
+      failed: versions.length === 0,
+      versions: versions.length ? versions : null
+    }
   } catch (_) {
-    return null
+    return { attempted: true, failed: true, versions: null }
   }
 }
 
 const normalizeTheme = async (theme) => {
   const normalizedTheme = theme && typeof theme === 'object' && !Array.isArray(theme) ? theme : {}
-  const versions = Array.isArray(normalizedTheme.versions) ? normalizedTheme.versions : []
-  const commitVersions = await fetchThemeCommitVersions(normalizedTheme)
+  const commitResult = await fetchThemeCommitVersions(normalizedTheme)
 
   return {
-    ...normalizedTheme,
-    versions: commitVersions || versions
+    theme: {
+      ...normalizedTheme,
+      versions: commitResult.versions || []
+    },
+    commitFetchFailed: commitResult.failed
   }
 }
 
 const normalizeThemeStore = async (data) => {
   if (data && typeof data === 'object' && !Array.isArray(data)) {
-    const themes = Array.isArray(data.themes)
+    const normalizedThemes = Array.isArray(data.themes)
       ? await Promise.all(data.themes.map(normalizeTheme))
       : []
 
     return {
-      ...data,
-      schema: data.schema || 1,
-      themes
+      themeStore: {
+        ...data,
+        schema: data.schema || 1,
+        themes: normalizedThemes.map(result => result.theme)
+      },
+      hasCommitFetchFailure: normalizedThemes.some(result => result.commitFetchFailed)
     }
   }
 
-  return createEmptyThemeStore()
+  return {
+    themeStore: createEmptyThemeStore(),
+    hasCommitFetchFailure: false
+  }
 }
 
 export async function handleTheme() {
@@ -149,7 +169,11 @@ export async function handleTheme() {
     }
 
     const data = await res.json()
-    const themeStore = await normalizeThemeStore(data)
+    const { themeStore, hasCommitFetchFailure } = await normalizeThemeStore(data)
+    if (hasCommitFetchFailure) {
+      return cachedThemeStore || themeStore
+    }
+
     cachedThemeStore = themeStore
     cacheTime = now
     return themeStore

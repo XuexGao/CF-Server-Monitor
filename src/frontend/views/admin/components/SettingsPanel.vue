@@ -149,7 +149,9 @@
               <option v-for="option in expireReminderOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
             </select>
           </div>
+
         </div>
+
         <div class="form-row">
           <div class="form-group flex-1">
             <label class="form-label">{{ trans.telegramToken }}</label>
@@ -174,6 +176,79 @@
         <div class="form-row">
           <div class="form-group flex-1">
             <button type="button" @click="$emit('send-test-notification')" class="btn btn-primary" :disabled="testNotificationLoading">{{ testNotificationLoading ? '⏳' : '📨' }} {{ trans.sendTestNotification }}</button>
+          </div>
+        </div>
+
+        <div class="resource-alert-header">
+          <div class="section-subtitle">{{ trans.resourceAlert }}</div>
+          <button type="button" class="btn btn-primary btn-sm" @click="addResourceAlertRule">+ {{ trans.resourceAlertAddRule }}</button>
+        </div>
+        <p class="text-muted text-sm mt-1">{{ trans.resourceAlertTip }}</p>
+
+        <div v-if="resourceAlertRules.length === 0" class="resource-alert-empty text-muted text-sm">
+          {{ trans.resourceAlertEmpty }}
+        </div>
+
+        <div v-for="(rule, index) in resourceAlertRules" :key="rule.id || index" class="resource-alert-rule">
+          <div class="resource-alert-rule-title">
+            <span>{{ trans.resourceAlertRule }} #{{ index + 1 }}</span>
+            <button type="button" class="btn btn-red btn-sm" @click="removeResourceAlertRule(index)">{{ trans.delete }}</button>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group flex-1">
+              <label class="form-label">{{ trans.resourceAlertRuleName }}</label>
+              <input type="text" v-model="rule.name" class="form-input" :placeholder="trans.resourceAlertRuleNamePlaceholder">
+            </div>
+
+            <div class="form-group flex-1">
+              <label class="form-label">{{ trans.resourceAlertMetric }}</label>
+              <select v-model="rule.metric" class="form-select" @change="normalizeRuleThreshold(rule)">
+                <option v-for="option in resourceAlertMetricOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+              </select>
+            </div>
+
+            <div class="form-group flex-1">
+              <label class="form-label">{{ trans.resourceAlertThreshold }}</label>
+              <input type="number" min="0" :max="resourceAlertThresholdMax(rule.metric)" step="1" v-model="rule.threshold" class="form-input" :placeholder="resourceAlertThresholdPlaceholder(rule.metric)">
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group flex-1">
+              <label class="form-label">{{ trans.resourceAlertServers }}</label>
+              <details class="resource-alert-server-dropdown">
+                <summary class="form-select resource-alert-server-summary">
+                  {{ resourceAlertServerSelectLabel(rule) }}
+                </summary>
+                <div class="resource-alert-server-menu">
+                  <label v-for="server in resourceAlertServerOptions" :key="server.id" class="resource-alert-server-option">
+                    <input
+                      type="checkbox"
+                      :checked="resourceAlertRuleHasServer(rule, server.id)"
+                      :disabled="isLastResourceAlertRuleServer(rule, server.id)"
+                      @change="toggleResourceAlertRuleServer(rule, server.id, $event.target.checked)"
+                    >
+                    <span>{{ server.name }}</span>
+                  </label>
+                </div>
+              </details>
+            </div>
+
+            <div class="form-group flex-1">
+              <label class="form-label">{{ trans.resourceAlertInterval }}</label>
+              <select v-model="rule.intervalMinutes" class="form-select">
+                <option v-for="option in resourceAlertIntervalOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+              </select>
+            </div>
+
+            <div class="form-group flex-1">
+              <label class="form-label">{{ trans.resourceAlertMode }}</label>
+              <select v-model="rule.mode" class="form-select">
+                <option value="average">{{ trans.resourceAlertModeAverage }}</option>
+                <option value="continuous">{{ trans.resourceAlertModeContinuous }}</option>
+              </select>
+            </div>
           </div>
         </div>
       </div>
@@ -384,12 +459,13 @@
 </template>
 
 <script setup>
-import { computed, reactive } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive } from 'vue'
 import { PING_NODE_FIELDS, validatePingNode } from '../../../utils/pingNode.js'
 
 const props = defineProps({
   trans: { type: Object, required: true },
   settings: { type: Object, required: true },
+  servers: { type: Array, default: () => [] },
   passwordVisible: { type: Object, required: true },
   activeTab: { type: String, default: 'settings' },
   selectedApiBase: { type: String, default: '' },
@@ -441,6 +517,137 @@ const expireReminderOptions = computed(() => [
   })
 ])
 
+const ensureResourceAlertRules = () => {
+  if (!Array.isArray(props.settings.resource_alert_rules)) {
+    props.settings.resource_alert_rules = []
+  }
+  const serverIds = props.servers.map(server => String(server.id || '').trim()).filter(Boolean)
+  if (serverIds.length > 0) {
+    for (const rule of props.settings.resource_alert_rules) {
+      if (!Array.isArray(rule.servers) || rule.servers.length === 0) {
+        rule.servers = [...serverIds]
+      }
+    }
+  }
+  return props.settings.resource_alert_rules
+}
+
+const resourceAlertRules = computed(() => ensureResourceAlertRules())
+
+const resourceAlertMetricOptions = computed(() => [
+  { value: 'cpu', label: props.trans.resourceAlertMetricCpu || 'CPU (%)' },
+  { value: 'ram', label: props.trans.resourceAlertMetricRam || 'RAM (%)' },
+  { value: 'disk', label: props.trans.resourceAlertMetricDisk || 'DISK (%)' },
+  { value: 'netIn', label: props.trans.resourceAlertMetricNetIn || 'NET In (Mbps)' },
+  { value: 'netOut', label: props.trans.resourceAlertMetricNetOut || 'NET Out (Mbps)' }
+])
+
+const resourceAlertIntervalOptions = computed(() => (
+  Array.from({ length: 6 }, (_, index) => {
+    const minutes = index + 5
+    const label = props.trans.resourceAlertIntervalMinutes
+      ? props.trans.resourceAlertIntervalMinutes.replace('{minutes}', minutes)
+      : `${minutes} min`
+
+    return {
+      value: String(minutes),
+      label
+    }
+  })
+))
+
+const resourceAlertServerOptions = computed(() => (
+  props.servers
+    .map(server => ({
+      id: String(server.id || '').trim(),
+      name: server.name || server.id
+    }))
+    .filter(server => server.id)
+))
+
+const getResourceAlertRuleServerIds = (rule) => (
+  Array.isArray(rule.servers)
+    ? rule.servers.map(item => String(item || '').trim()).filter(Boolean)
+    : []
+)
+
+const resourceAlertRuleHasServer = (rule, serverId) => (
+  getResourceAlertRuleServerIds(rule).includes(String(serverId))
+)
+
+const isLastResourceAlertRuleServer = (rule, serverId) => {
+  const selected = getResourceAlertRuleServerIds(rule)
+  return selected.length === 1 && selected[0] === String(serverId)
+}
+
+const toggleResourceAlertRuleServer = (rule, serverId, checked) => {
+  const id = String(serverId || '').trim()
+  if (!id) return
+
+  const selected = getResourceAlertRuleServerIds(rule)
+  const selectedSet = new Set(selected)
+  if (checked) {
+    selectedSet.add(id)
+  } else if (selectedSet.size > 1) {
+    selectedSet.delete(id)
+  }
+  rule.servers = Array.from(selectedSet)
+}
+
+const closeResourceAlertServerDropdowns = (event) => {
+  const target = event?.target
+  if (!(target instanceof Element)) return
+  const currentDropdown = target.closest('.resource-alert-server-dropdown')
+
+  document.querySelectorAll('.resource-alert-server-dropdown[open]').forEach(dropdown => {
+    if (dropdown === currentDropdown) return
+    dropdown.removeAttribute('open')
+  })
+}
+
+const resourceAlertServerSelectLabel = (rule) => {
+  const options = resourceAlertServerOptions.value
+  const total = options.length
+  if (total === 0) return props.trans.noServers || 'No servers'
+
+  const optionMap = new Map(options.map(server => [server.id, server.name]))
+  const selected = getResourceAlertRuleServerIds(rule).filter(id => optionMap.has(id))
+  if (selected.length === total) return `${props.trans.all || 'All'} (${total})`
+  if (selected.length === 1) return optionMap.get(selected[0])
+  return `${selected.length}/${total} ${props.trans.servers || 'Servers'}`
+}
+
+const createRuleId = () => `rule_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
+const isNetworkAlertMetric = metric => metric === 'netIn' || metric === 'netOut'
+const resourceAlertThresholdPlaceholder = metric => isNetworkAlertMetric(metric) ? '100' : '80'
+const resourceAlertThresholdMax = metric => isNetworkAlertMetric(metric) ? 100000 : 100
+
+const normalizeRuleThreshold = (rule) => {
+  const threshold = Number(rule.threshold)
+  const max = resourceAlertThresholdMax(rule.metric)
+  if (!Number.isFinite(threshold) || threshold <= 0 || threshold > max) {
+    rule.threshold = resourceAlertThresholdPlaceholder(rule.metric)
+  }
+}
+
+const addResourceAlertRule = () => {
+  const rules = ensureResourceAlertRules()
+  const metric = 'cpu'
+  rules.push({
+    id: createRuleId(),
+    name: `${props.trans.resourceAlertRule || 'Resource Alert'} ${rules.length + 1}`,
+    metric,
+    threshold: resourceAlertThresholdPlaceholder(metric),
+    servers: resourceAlertServerOptions.value.map(server => server.id),
+    intervalMinutes: '5',
+    mode: 'average'
+  })
+}
+
+const removeResourceAlertRule = (index) => {
+  ensureResourceAlertRules().splice(index, 1)
+}
+
 const pingNodeErrorMessage = computed(() => (
   props.trans.invalidPingNodeFormat || 'Use domain, IPv4, or host:port. Port must be 1-65535.'
 ))
@@ -486,6 +693,14 @@ const validateCspField = (field) => {
   cspErrors[field] = ''
   return true
 }
+
+onMounted(() => {
+  document.addEventListener('click', closeResourceAlertServerDropdowns)
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('click', closeResourceAlertServerDropdowns)
+})
 
 defineExpose({ validateCspField, cspErrors, validatePingNodes, pingNodeErrors })
 </script>
