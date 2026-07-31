@@ -1,6 +1,5 @@
 #!/bin/sh
 # ==============================================================================
-# V1.3.4
 # CF-Server-Monitor 安装/卸载脚本 (OpenWrt 专用版)
 # 支持: OpenWrt / LEDE / ImmortalWrt (procd + opkg)
 # 纯 POSIX sh 实现，无 bash 依赖
@@ -11,7 +10,7 @@
 
 set -eu
 
-AGENT_VERSION="1.3.4"
+AGENT_VERSION="1.3.5"
 
 # 路径定义（配置文件系统）
 CONFIG_DIR="/etc/config/cf-probe"
@@ -1206,9 +1205,13 @@ while true; do
 {"cpu":"$CPU","ram_total":"$RAM_TOTAL","ram_used":"$RAM_USED","swap_total":"$SWAP_TOTAL","swap_used":"$SWAP_USED","disk_total":"$DISK_TOTAL","disk_used":"$DISK_USED","load_avg":"$LOAD_AVG","boot_time":"$BOOT_TIME","net_rx":"$RX_NOW","net_tx":"$TX_NOW","net_rx_monthly":"$RX_MONTHLY","net_tx_monthly":"$TX_MONTHLY","net_in_speed":"$RX_SPEED","net_out_speed":"$TX_SPEED","os":"$EOS","arch":"$EARCH","kernel_version":"$EKERNEL","cpu_info":"$ECPU","cpu_cores":"$CPU_CORES","processes":"$PROCESSES","tcp_conn":"$TCP_CONN","udp_conn":"$UDP_CONN","ip_v4":"$IPV4","ip_v6":"$IPV6","ping_ct":$PING_CT_JSON,"ping_cu":$PING_CU_JSON,"ping_cm":$PING_CM_JSON,"ping_bd":$PING_BD_JSON,"loss_ct":$LOSS_CT_JSON,"loss_cu":$LOSS_CU_JSON,"loss_cm":$LOSS_CM_JSON,"loss_bd":$LOSS_BD_JSON}
 EOF
 )
+    SAMPLE_METRICS_JSON=$(cat <<EOF
+{"cpu":"$CPU","ram_total":"$RAM_TOTAL","ram_used":"$RAM_USED","swap_total":"$SWAP_TOTAL","swap_used":"$SWAP_USED","net_in_speed":"$RX_SPEED","net_out_speed":"$TX_SPEED"}
+EOF
+)
     if [ "$COLLECT_INTERVAL" -gt 0 ]; then
         SAMPLE_TS=$((LOOP_START_TIME * 1000))
-        SAMPLE_JSON="{\"ts\":$SAMPLE_TS,\"metrics\":$METRICS_JSON}"
+        SAMPLE_JSON="{\"ts\":$SAMPLE_TS,\"metrics\":$SAMPLE_METRICS_JSON}"
         if [ -z "$SAMPLES_JSON" ]; then
             SAMPLES_JSON="$SAMPLE_JSON"
         else

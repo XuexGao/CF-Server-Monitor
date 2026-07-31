@@ -187,7 +187,7 @@ Headers: (可选) Authorization: Bearer <jwt>, X-Turnstile-Token / X-Turnstile-V
   },
   "verified": false,
   "turnstile_verified": null,
-  "show_long_history": true
+  "long_history_points": 120
 }
 ```
 
@@ -207,7 +207,7 @@ Headers: (可选) Authorization: Bearer <jwt>, X-Turnstile-Token / X-Turnstile-V
 | `theme_options`      | object       | 第三方主题自定义配置；未配置时为空对象 |
 | `verified`           | boolean      | 当前请求是否已验证       |
 | `turnstile_verified` | string\|null | 已验证凭证，缓存复用 1 小时 |
-| `show_long_history`  | boolean      | 是否允许查看超过 1 小时历史 |
+| `long_history_points` | number      | 长历史查询返回的采样点数，可选 `60`、`120`、`180`、`240` |
 
 `theme_options` 对第三方主题是只读运行时配置。需要修改主题配置时，跳转到内置后台 `/admin#admin`，不要在第三方主题内调用管理端接口。
 
@@ -326,11 +326,32 @@ Headers: (按需) Authorization, X-Turnstile-Token/Verified
   "boot_time": "1700000000000",
   "last_updated": 1737638400000,
   "timestamp": 1737638400000,
-  "sysConfig": { "show_long_history": true }
+  "latestReportUpdates": [
+    {
+      "serverId": "9b2c...",
+      "reportTs": 1737638405000,
+      "reportAgeMs": 1200,
+      "samples": [
+        {
+          "ts": 1737638400000,
+          "data": {
+            "cpu": 12.34,
+            "ram_total": 8192,
+            "ram_used": 3700,
+            "swap_total": 1024,
+            "swap_used": 64,
+            "net_in_speed": 1024,
+            "net_out_speed": 512
+          }
+        }
+      ]
+    }
+  ],
+  "sysConfig": { "long_history_points": 120 }
 }
 ```
 
-`tags` 为英文逗号分隔字符串。`note` 属于管理端内部字段，不从 dashboard 公共接口返回。`gpu` 已废弃，主题应使用 `gpu_info`；新版上报和 WebSocket 实时数据为 `[{ id, name, info }]` 数组，历史/详情 REST 响应中可能是同结构的 JSON 字符串。
+`tags` 为英文逗号分隔字符串。`note` 属于管理端内部字段，不从 dashboard 公共接口返回。`latestReportUpdates` 与 `/api/servers` 同名字段形状一致，REST 样本统一为 `{ ts, data }` 并按探针采样包透传；内置探针默认只在普通采样点上报 `cpu`、`ram_total`、`ram_used`、`swap_total`、`swap_used`、`net_in_speed`、`net_out_speed`；缓存约 5 分钟，允许为空数组。`gpu` 已废弃，主题应使用 `gpu_info`；新版上报和 WebSocket 实时数据为 `[{ id, name, info }]` 数组，历史/详情 REST 响应中可能是同结构的 JSON 字符串。
 
 **失败返回**：
 
@@ -371,8 +392,8 @@ Headers: (按需) Authorization, X-Turnstile-Token/Verified
 
 **注意**：
 
-- 未登录用户 `hours > 1` 时返回 `401`
-- 服务端最多返回约 160 个采样点，会按查询时长自动降采样
+- 未登录用户 `hours > 24` 时返回 `401`
+- 服务端按后台 `long_history_points` 配置返回采样点，默认 120 个点
 - 数据库字段缺失且需要升级时可能返回 `409 { "message": "databaseUpgradeRequired" }`
 
 **示例**：
@@ -435,7 +456,9 @@ Headers: Upgrade: websocket, Connection: Upgrade
 | `subscribed` | S → C | `{ type: "subscribed", ts: number, subscribed: string, count: number }` |
 | `ping` | C → S | `{ type: "ping", ts: number }` |
 | `pong` | 双向 | `{ type: "pong", ts: number }` |
-| `batchUpdate` | S → C | `{ type: "batchUpdate", ts: number, updates: Array<{serverId, samples: Array<{ts, data}>}> }` |
+| `batchUpdate` | S → C | `{ type: "batchUpdate", ts: number, updates: Array<{serverId, samples: Array<{ts, data: Partial<Server>}>}> }` |
+
+`batchUpdate.samples[].data` 是增量字段：批次内的高频采样点主要包含 CPU、内存、Swap、网速和时间字段；每次上报的最后一个样本会额外携带本次完整报告状态，用于同步磁盘、GPU、进程、连接数、探针、Ping/丢包等报告级数据。
 
 **示例（subscribe=all，带 ID 过滤）**：
 
@@ -573,7 +596,7 @@ interface SysConfig {
   show_expire?: boolean;
   show_tf?: boolean;
   show_time?: boolean;
-  show_long_history?: boolean;
+  long_history_points?: number;
 }
 
 interface SiteConfig {
@@ -589,7 +612,7 @@ interface SiteConfig {
   theme_options: Record<string, unknown>;
   verified: boolean;
   turnstile_verified: string | null;
-  show_long_history: boolean;
+  long_history_points: number;
 }
 
 interface WsMessage {
@@ -602,7 +625,7 @@ interface WsMessage {
   serverId?: string;
   updates?: Array<{
     serverId: string;
-    samples: Array<{ ts: number; data: Server }>;
+    samples: Array<{ ts: number; data: Partial<Server> }>;
   }>;
 }
 ```

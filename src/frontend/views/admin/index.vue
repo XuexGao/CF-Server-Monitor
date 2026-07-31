@@ -469,6 +469,7 @@ import { hasMultipleApiBases } from '../../utils/config.js'
 import { t, useTranslation } from '../../utils/i18n'
 import { PING_NODE_FIELDS, validatePingNode } from '../../utils/pingNode.js'
 import { normalizeDisplayMode, resolveDisplayMode } from '../../utils/displayMode.js'
+import { HISTORY } from '../../utils/constants.js'
 import { usePasswordVisibility } from '../../composables/usePasswordVisibility'
 import { useTurnstile } from './composables/useTurnstile'
 import { detectBillingCycle, detectCurrencySymbol, normalizeBillingCycle, normalizeCurrency, normalizePrice, renewExpireDateIfNeeded } from '../../utils/server.js'
@@ -512,6 +513,15 @@ const normalizeExpireReminderSetting = (value) => {
 }
 
 const isExpireReminderEnabled = (value) => normalizeExpireReminderSetting(value) !== '0'
+
+const normalizeLongHistoryPointsSetting = (value) => {
+  const points = Number(value)
+  return String(
+    HISTORY.LONG_RANGE_POINT_OPTIONS.includes(points)
+      ? points
+      : HISTORY.DEFAULT_LONG_RANGE_POINTS
+  )
+}
 
 const normalizeResourceAlertModeSetting = (value) => {
   const mode = String(value || '').trim().toLowerCase()
@@ -662,7 +672,7 @@ const settings = ref({
   show_expire: true,
   show_tf: true,
   show_time: true,
-  show_long_history: false,
+  long_history_points: String(HISTORY.DEFAULT_LONG_RANGE_POINTS),
   tg_notify: '0',
   expire_reminder: '0',
   resource_alert_rules: [],
@@ -1004,7 +1014,7 @@ const loadSettings = async () => {
         show_expire: settingsData.show_expire === 'true',
         show_tf: settingsData.show_tf === 'true',
         show_time: settingsData.show_time === 'true',
-        show_long_history: settingsData.show_long_history === 'true',
+        long_history_points: normalizeLongHistoryPointsSetting(settingsData.long_history_points),
         tg_notify: normalizeTgNotifySetting(settingsData.tg_notify),
         expire_reminder: normalizeExpireReminderSetting(settingsData.expire_reminder),
         resource_alert_rules: normalizeResourceAlertRulesSetting(settingsData.resource_alert_rules),
@@ -1127,7 +1137,7 @@ const saveSettings = async () => {
       show_expire: settings.value.show_expire ? 'true' : 'false',
       show_tf: settings.value.show_tf ? 'true' : 'false',
       show_time: settings.value.show_time ? 'true' : 'false',
-      show_long_history: settings.value.show_long_history ? 'true' : 'false',
+      long_history_points: normalizeLongHistoryPointsSetting(settings.value.long_history_points),
       tg_notify: normalizeTgNotifySetting(settings.value.tg_notify),
       expire_reminder: normalizeExpireReminderSetting(settings.value.expire_reminder),
       resource_alert_rules: normalizeResourceAlertRulesSetting(settings.value.resource_alert_rules),

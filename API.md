@@ -395,7 +395,7 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
     "a": 1,
     "b": 2
   },
-  "show_long_history": true
+  "long_history_points": 120
 }
 ```
 
@@ -414,7 +414,7 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
 | `last_workers_version` | string\|null | **仅登录时出现**；远程最新 Workers 版本，来源为 GitHub `version.json`，后端缓存 5 分钟 |
 | `last_agent_version` | string\|null | **仅登录时出现**；远程最新 Agent 版本，来源为 GitHub `version.json`，后端缓存 5 分钟 |
 | `theme_options`      | object       | 第三方主题自定义配置；未配置时为空对象，匿名请求也会返回 |
-| `show_long_history`  | boolean      | 前端长历史显示开关；服务端历史接口仍始终要求 `hours > 1` 的请求携带有效 JWT |
+| `long_history_points` | number      | 长历史查询返回的采样点数，后台可选 `60`、`120`、`180`、`240` |
 
 > ~~`X-Turnstile-Token` 携带且验证成功时，响应头会同步设置 `X-Turnstile-Verified`。~~ **2026-07-26 修订**：当前前端从响应体的 `turnstile_verified` 保存凭证；响应 Header 尚未实际写入。
 
@@ -439,7 +439,18 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
       "reportTs": 1737638405000,
       "reportAgeMs": 1200,
       "samples": [
-        { "ts": 1737638400000, "data": { "cpu": 12.34, "ram_used": 3700 } }
+        {
+          "ts": 1737638400000,
+          "data": {
+            "cpu": 12.34,
+            "ram_total": 8192,
+            "ram_used": 3700,
+            "swap_total": 1024,
+            "swap_used": 64,
+            "net_in_speed": 1024,
+            "net_out_speed": 512
+          }
+        }
       ]
     }
   ],
@@ -466,7 +477,7 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
 | 字段            | 说明                                                                    |
 | ------------- | --------------------------------------------------------------------- |
 | `servers`     | 已合并最新指标的服务器列表（按 `sort_order ASC`），未登录用户**自动过滤** **`is_hidden = '1'`** |
-| `latestReportUpdates` | 每台服务器最近一次完整批量上报，用于新页面连续回放；来自 Worker/DO 内存缓存，缓存约 5 分钟，进程重启或 DO 回收后允许为空。样本对象在 Worker 本地缓存命中时可能使用 `payload`，经 DO 规范化后使用 `data`，客户端应兼容两者 |
+| `latestReportUpdates` | 每台服务器最近一次批量上报的采样回放数据，用于新页面连续回放；来自 Worker/DO 内存缓存，缓存约 5 分钟，进程重启或 DO 回收后允许为空。REST 响应中的样本统一为 `{ ts, data }`，`data` 按探针批量采样包透传；内置探针默认只在普通采样点上报 `cpu`、`ram_total`、`ram_used`、`swap_total`、`swap_used`、`net_in_speed`、`net_out_speed` |
 | `stats`       | 聚合统计：在线阈值 300 秒（5 分钟无上报视为离线）                                          |
 | `regionStats` | 按 ISO 区域码（大写）统计的服务器数                                                  |
 | `sysConfig`   | 当前站点开关：`show_price`、`show_expire`、`show_tf`、`show_time`、`display_mode`。~~旧版示例中的 `site_title` 不在该对象内。~~（2026-07-26 修订） |
@@ -539,11 +550,33 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
   "boot_time": "1700000000000",
   "last_updated": 1737638400000,
   "timestamp": 1737000000000,
-  "sysConfig": { "show_long_history": true }
+  "latestReportUpdates": [
+    {
+      "serverId": "9b2c...",
+      "reportTs": 1737638405000,
+      "reportAgeMs": 1200,
+      "samples": [
+        {
+          "ts": 1737638400000,
+          "data": {
+            "cpu": 12.34,
+            "ram_total": 8192,
+            "ram_used": 3700,
+            "swap_total": 1024,
+            "swap_used": 64,
+            "net_in_speed": 1024,
+            "net_out_speed": 512
+          }
+        }
+      ]
+    }
+  ],
+  "sysConfig": { "long_history_points": 120 }
 }
 ```
 
 > `last_updated` 来自最新指标；`timestamp` 是服务器配置记录的创建/导入时间字段，普通编辑不会刷新它。~~两者都表示最近上报时间。~~（2026-07-26 修订）
+> `latestReportUpdates` 与 `/api/servers` 同名字段形状一致，仅包含当前服务器最近一次批量上报的采样回放包；用于详情页打开时连续回放。REST 样本统一为 `{ ts, data }`，`data` 按探针采样包透传。缓存约 5 分钟，Worker/DO 重启后允许为空数组。
 
 **失败返回**：
 
@@ -584,10 +617,10 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
 
 **采样间隔（自动）**
 
-~~旧版按 `≤1 / 1~6 / 6~12 / 12~24 / 24~48 / 48~96 / 96~168` 小时使用固定步长，并把大于 168 的值截断。~~ **2026-07-26 修订**：当前不接受白名单之外的时长；查询以最多约 160 个点动态计算窗口：
+~~旧版按 `≤1 / 1~6 / 6~12 / 12~24 / 24~48 / 48~96 / 96~168` 小时使用固定步长，并把大于 168 的值截断。~~ **2026-07-26 修订**：当前不接受白名单之外的时长；长历史查询按后台 `long_history_points` 配置动态计算窗口，默认 120 个点：
 
 ```text
-intervalMs = max(10_000, ceil(hours * 60 * 60 * 1000 / 160))
+intervalMs = max(10_000, ceil(hours * 60 * 60 * 1000 / long_history_points))
 ```
 
 > 历史查询使用 `ROW_NUMBER() OVER (PARTITION BY ts/interval ORDER BY ts)` 取每个采样窗口的第一条。
@@ -603,7 +636,7 @@ intervalMs = max(10_000, ceil(hours * 60 * 60 * 1000 / 160))
 | ≥ 30  | 3 分钟  |
 | < 30  | 1 分钟  |
 
-**未登录限制**：`hours > 1` 时强制 `401`。
+**未登录限制**：`hours > 24` 时强制 `401`。
 
 **数据库升级提示**：当 D1 缺少新字段时返回：
 
@@ -672,11 +705,11 @@ Sec-WebSocket-Version: 13
          "samples": [
            {
              "ts": 1737638398000,
-             "data": { /* Server 对象 */ }
+             "data": { /* Server 增量字段 */ }
            },
            {
              "ts": 1737638399000,
-             "data": { /* Server 对象 */ }
+             "data": { /* Server 增量字段；批次最后一条包含本次完整报告状态 */ }
            }
          ]
        },
@@ -685,13 +718,15 @@ Sec-WebSocket-Version: 13
          "samples": [
            {
              "ts": 1737638398500,
-             "data": { /* Server 对象 */ }
+             "data": { /* Server 增量字段；批次最后一条包含本次完整报告状态 */ }
            }
          ]
        }
      ]
    }
    ```
+
+   批量样本中的高频采样点主要包含 `cpu`、内存、Swap、网速和时间字段；每次上报的最后一个样本会额外携带报告级字段，用于同步磁盘、GPU、进程、连接数、探针、Ping/丢包等无需按采样率刷新的数据。
 
 **客户端 → 服务端消息**（可选）：
 
@@ -1043,7 +1078,7 @@ Header：`X-Turnstile-Token: <token>`（当 `site_options.turnstile_enabled` 或
     "show_expire": "true",
     "show_tf": "true",
     "show_time": "true",
-    "show_long_history": "true",
+    "long_history_points": "120",
     "tg_notify": "0",
     "tg_bot_token": "",
     "tg_chat_id": "",
@@ -1068,7 +1103,7 @@ Header：`X-Turnstile-Token: <token>`（当 `site_options.turnstile_enabled` 或
 **字段分类**：
 
 - `APPEARANCE_FIELDS`（写入 `appearance_options` JSON）：`site_title`、`custom_bg`、`custom_head`、`custom_script`、`csp_static`、`csp_api`、`display_mode`、`theme_options`
-- `SITE_FIELDS`（写入 `site_options` JSON）：`is_public`、`show_price`、`show_expire`、`show_tf`、`show_time`、`show_long_history`、通知、Turnstile、账号、Cloudflare、Ping 节点、`expire_reminder`、`theme_url`、历史优化字段等站点级配置
+- `SITE_FIELDS`（写入 `site_options` JSON）：`is_public`、`show_price`、`show_expire`、`show_tf`、`show_time`、`long_history_points`、通知、Turnstile、账号、Cloudflare、Ping 节点、`expire_reminder`、`theme_url`、历史优化字段等站点级配置
 - 任何未列出的字段会被忽略
 
 **特殊处理**：
@@ -1546,7 +1581,7 @@ UUID 缺失或格式非法时返回 `400 { "error": "invalidServerId", "code": 4
   show_expire: 'true' | 'false',
   show_tf: 'true' | 'false',
   show_time: 'true' | 'false',
-  show_long_history: 'true' | 'false',
+  long_history_points: '60' | '120' | '180' | '240',
   tg_notify: '0' | '2' ... '30',    // 0 = 关闭；旧值 false 兼容为 0，true 兼容为 5
   tg_bot_token: string,
   tg_chat_id: string,
@@ -1579,7 +1614,7 @@ UUID 缺失或格式非法时返回 `400 { "error": "invalidServerId", "code": 4
 | `subscribed` | S → C | `{ ts: number, subscribed: string, count: number }` |
 | `ping`   | C → S | 精确文本 `{"type":"ping"}`                       |
 | `pong`   | S → C | 自动响应的精确文本 `{"type":"pong"}`，不带 `ts`   |
-| `batchUpdate` | S → C | `{ ts: number, updates: Array<{ serverId: string, samples: Array<{ ts: number, data: <Server> }> }> }` |
+| `batchUpdate` | S → C | `{ ts: number, updates: Array<{ serverId: string, samples: Array<{ ts: number, data: Partial<Server> }> }> }` |
 
 客户端发来的 `pong` 会被静默忽略；它不是服务端定时发送的双向心跳协议。
 
@@ -1729,7 +1764,7 @@ curl -X POST https://status.example.com/admin/api \
     "settings":{
       "site_title":"My Status",
       "is_public":"true",
-      "show_long_history":"true",
+      "long_history_points":"120",
       "turnstile_enabled":"true",
       "turnstile_site_key":"1x00000000000000000000AA",
       "turnstile_secret_key":"1x0000000000000000000000000000000AA"

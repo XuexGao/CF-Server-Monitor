@@ -297,14 +297,15 @@ import Footer from '../components/Footer.vue'
 import OsIcon from '../components/OsIcon.vue'
 import { fetchServerDetail, fetchAllHistory, formatBytes, isAdminLoggedIn, createLiveSocket, getFlagRegionCode, isServerOnline } from '../utils/api.js'
 import { getTrafficUsageBytes } from '../composables/useServerCardData'
-import { hasMultipleApiBases, getPublicAssetUrl } from '../utils/config.js'
+import { getPublicAssetUrl } from '../utils/config.js'
 import Chart from 'chart.js/auto'
 import 'chartjs-adapter-date-fns'
 import { t, currentLang, useTranslation } from '../utils/i18n'
-import { CHART } from '../utils/constants'
-import { formatDateTime } from '../utils/time.js'
+import { CHART, HISTORY } from '../utils/constants'
+import { formatDateTime, normalizeTimestamp as normalizeMetricTimestamp } from '../utils/time.js'
 import useTheme from '../composables/useTheme'
 import { isDisabledProbeMetric } from '../utils/server.js'
+import { resolvePlaybackCursor } from '../utils/playback.js'
 
 const route = useRoute()
 const router = useRouter()
@@ -326,7 +327,9 @@ if (indexParam !== undefined && indexParam !== null && !isNaN(parseInt(indexPara
 }
 
 const server = ref({})
-const currentHours = ref(0.167)
+const REALTIME_HISTORY_HOURS = 0.167
+const LATEST_REPORT_MAX_REPLAY_DELAY = 120000
+const currentHours = ref(REALTIME_HISTORY_HOURS)
 const lastUpdateText = ref('')
 const config = ref(null)
 const showLoginModal = ref(false)
@@ -341,27 +344,18 @@ const PING_FIELD_DEFS = [
   { field: 'ping_bd', lossField: 'loss_bd', labelKey: 'pingBd', className: 'ping-bd', datasetIndex: 3 }
 ]
 
-const isMultipleMode = computed(() => hasMultipleApiBases())
-
 const timeOptions = computed(() => {
-  const options = [
-    { hours: 0.167, label: '10m' },
+  return [
+    { hours: REALTIME_HISTORY_HOURS, label: '10m' },
     { hours: 0.5, label: '30m' },
     { hours: 1, label: '1h' },
     { hours: 6, label: '6h' },
     { hours: 12, label: '12h' },
     { hours: 24, label: '24h' },
+    { hours: 48, label: '2d' },
+    { hours: 96, label: '4d' },
+    { hours: 168, label: '7d' },
   ]
-
-  if (!isMultipleMode.value && config.value?.show_long_history) {
-    options.push(
-      { hours: 48, label: '2d' },
-      { hours: 96, label: '4d' },
-      { hours: 168, label: '7d' },
-    )
-  }
-
-  return options
 })
 
 const isOnline = computed(() => isServerOnline(server.value))
@@ -547,6 +541,46 @@ const hexToRgba = (hex, alpha) => {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`
 }
 
+const getChartTimestamp = (point) => {
+  const ts = Number(point?.x ?? point)
+  return Number.isFinite(ts) ? ts : 0
+}
+
+const createChartPoint = (timestamp, y) => ({
+  x: String(timestamp),
+  y
+})
+
+const formatChartAxisTime = (value) => {
+  const ts = Number(value)
+  if (!Number.isFinite(ts)) return String(value || '')
+  const date = new Date(ts)
+  const pad = (num) => String(num).padStart(2, '0')
+  const time = `${pad(date.getHours())}:${pad(date.getMinutes())}`
+  if (currentHours.value <= 1) return `${time}:${pad(date.getSeconds())}`
+  if (currentHours.value <= 3) return time
+  return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${time}`
+}
+
+const syncChartLabels = (chart) => {
+  if (!chart) return
+  const seen = new Set()
+  const labels = []
+  for (const dataset of chart.data.datasets || []) {
+    for (const point of dataset.data || []) {
+      const ts = getChartTimestamp(point)
+      if (!ts) continue
+      const label = String(ts)
+      if (!seen.has(label)) {
+        seen.add(label)
+        labels.push(label)
+      }
+    }
+  }
+  labels.sort((a, b) => Number(a) - Number(b))
+  chart.data.labels = labels
+}
+
 const ds = (label, color, opts = {}) => ({
   label, data: [], borderColor: color,
   backgroundColor: opts.fill ? hexToRgba(color, 0.05) : 'transparent',
@@ -654,7 +688,8 @@ const initCharts = () => {
         callbacks: {
           title: function(items) {
             if (items.length > 0 && items[0].raw) {
-              const date = new Date(items[0].raw.x)
+              const label = items[0].raw.x ?? items[0].chart?.data?.labels?.[items[0].dataIndex]
+              const date = new Date(Number(label))
               return '> ' + date.toLocaleString(undefined, {
                 year: 'numeric',
                 month: '2-digit',
@@ -686,12 +721,7 @@ const initCharts = () => {
     },
     scales: {
       x: {
-        type: 'time',
-        time: {
-          unit: currentHours.value <= 3 ? 'minute' : 'hour',
-          displayFormats: { minute: 'HH:mm', hour: 'MM-dd HH:mm' },
-          tooltipFormat: 'yyyy-MM-dd HH:mm:ss'
-        },
+        type: 'category',
         title: {
           display: false,
           text: '',
@@ -703,7 +733,10 @@ const initCharts = () => {
           color: axisLabelColor,
           font: { size: 9, family: "'JetBrains Mono', monospace" },
           maxRotation: 0,
-          padding: 8
+          padding: 8,
+          callback: function(value) {
+            return formatChartAxisTime(this.getLabelForValue(value))
+          }
         },
         grid: { color: 'rgba(30, 42, 58, 0.5)', drawBorder: false, tickLength: 0 }
       },
@@ -729,7 +762,7 @@ const initCharts = () => {
     if (!ref) continue
     charts[def.key] = new Chart(ref.getContext('2d'), {
       type: 'line',
-      data: { datasets: def.datasets.map(d => ({ ...d })) },
+      data: { labels: [], datasets: def.datasets.map(d => ({ ...d })) },
       options: createChartOptions(def.unit || '', def.legend, def.formatValue, def.tickFormat)
     })
   }
@@ -769,10 +802,14 @@ const updateChartsTheme = (theme) => {
 const { onThemeChange } = useTheme()
 onThemeChange(updateChartsTheme)
 
-// ≤1h: gap超过5分钟断线; >1h: 总时长/160，最低5分钟基础阈值
+// ≤1h: gap超过5分钟断线; >1h: 按后端采样点数计算，最低5分钟基础阈值
 const getHistoryGapBreakMs = (hours = currentHours.value) => {
   if (hours <= 1) return 5 * 60 * 1000
-  return Math.max(5 * 60 * 1000, Math.ceil(hours * 60 * 60 * 1000 / 160))
+  const configuredPoints = Number(config.value?.long_history_points)
+  const samplePoints = HISTORY.LONG_RANGE_POINT_OPTIONS.includes(configuredPoints)
+    ? configuredPoints
+    : HISTORY.DEFAULT_LONG_RANGE_POINTS
+  return Math.max(5 * 60 * 1000, Math.ceil(hours * 60 * 60 * 1000 / samplePoints))
 }
 
 const shouldBreakGap = (prevPoint, nextPoint) => {
@@ -794,8 +831,10 @@ const applyGapBreak = (data) => {
     result.push(data[i])
     if (i < data.length - 1) {
       if (shouldBreakGap(data[i], data[i + 1])) {
-        const gap = data[i + 1].x - data[i].x
-        result.push({ x: data[i].x + gap / 2, y: null })
+        const currentTime = getChartTimestamp(data[i])
+        const nextTime = getChartTimestamp(data[i + 1])
+        const gap = nextTime - currentTime
+        result.push(createChartPoint(currentTime + gap / 2, null))
       }
     }
   }
@@ -813,10 +852,21 @@ const appendPointWithGapBreak = (data, point) => {
     }
   }
   if (lastPoint && shouldBreakGap(lastPoint, point)) {
-    data.push({ x: lastPoint.x + (point.x - lastPoint.x) / 2, y: null })
+    const lastTime = getChartTimestamp(lastPoint)
+    const pointTime = getChartTimestamp(point)
+    data.push(createChartPoint(lastTime + (pointTime - lastTime) / 2, null))
   }
   data.push(point)
   return data
+}
+
+const getLastDatasetTimestamp = (data) => {
+  if (!Array.isArray(data)) return 0
+  for (let i = data.length - 1; i >= 0; i--) {
+    const x = getChartTimestamp(data[i])
+    if (Number.isFinite(x)) return x
+  }
+  return 0
 }
 
 const sampleData = (dataPoints) => {
@@ -831,27 +881,20 @@ const updateChartDataset = (chart, datasetIndex, dataPoints, yAccessor) => {
   const dataset = chart.data.datasets[datasetIndex]
   if (!dataset) return
 
-  const endTime = Date.now()
-  const startTime = endTime - currentHours.value * 60 * 60 * 1000
-
   let processedData = []
   if (dataPoints && dataPoints.length > 0) {
     const sampledData = sampleData(dataPoints)
 
     processedData = sampledData.map(d => {
-      return { x: new Date(d.timestamp).getTime(), y: yAccessor(d) }
+      return createChartPoint(new Date(d.timestamp).getTime(), yAccessor(d))
     })
 
-    processedData.sort((a, b) => a.x - b.x)
+    processedData.sort((a, b) => getChartTimestamp(a) - getChartTimestamp(b))
     processedData = applyGapBreak(processedData)
   }
 
-  if (chart.options && chart.options.scales && chart.options.scales.x) {
-    chart.options.scales.x.min = startTime
-    chart.options.scales.x.max = endTime
-  }
-
   dataset.data = processedData
+  syncChartLabels(chart)
   chart.update('none')
 }
 
@@ -868,9 +911,6 @@ const fieldAccessor = (field, allowZero = false) => (d) => {
 
 const updateLoadChart = (chart, dataPoints) => {
   if (!chart) return
-
-  const endTime = Date.now()
-  const startTime = endTime - currentHours.value * 60 * 60 * 1000
 
   let processedData = []
   if (dataPoints && dataPoints.length > 0) {
@@ -890,18 +930,14 @@ const updateLoadChart = (chart, dataPoints) => {
     processedData.sort((a, b) => a.x - b.x)
   }
 
-  if (chart.options && chart.options.scales && chart.options.scales.x) {
-    chart.options.scales.x.min = startTime
-    chart.options.scales.x.max = endTime
-  }
-
-  const load1Data = processedData.map(d => ({ x: d.x, y: d.load1 }))
-  const load5Data = processedData.map(d => ({ x: d.x, y: d.load5 }))
-  const load15Data = processedData.map(d => ({ x: d.x, y: d.load15 }))
+  const load1Data = processedData.map(d => createChartPoint(d.x, d.load1))
+  const load5Data = processedData.map(d => createChartPoint(d.x, d.load5))
+  const load15Data = processedData.map(d => createChartPoint(d.x, d.load15))
   
   chart.data.datasets[0].data = applyGapBreak(load1Data)
   chart.data.datasets[1].data = applyGapBreak(load5Data)
   chart.data.datasets[2].data = applyGapBreak(load15Data)
+  syncChartLabels(chart)
   chart.update('none')
 }
 
@@ -977,7 +1013,7 @@ const loadAllHistory = async (hours) => {
   } catch (e) {
     if (e && e.status === 401) {
       showLoginModal.value = true
-      currentHours.value = 0.167
+      currentHours.value = REALTIME_HISTORY_HOURS
       historyLoaded.value = true
       return
     }
@@ -995,19 +1031,18 @@ const loadAllHistory = async (hours) => {
 }
 
 const updateAllChartTimeUnits = (hours) => {
-  const unit = hours <= 3 ? 'minute' : 'hour'
   const maxTicks = hours <= 3 ? CHART.MAX_TICKS : CHART.MAX_TICKS_HOUR
-  const endTime = Date.now()
-  const startTime = endTime - hours * 60 * 60 * 1000
 
   Object.values(charts).forEach(chart => {
-    if (chart && chart.options && chart.options.scales && chart.options.scales.x && chart.options.scales.x.time) {
-      chart.options.scales.x.time.unit = unit
+    if (chart?.options?.scales?.x) {
       chart.options.scales.x.ticks.maxTicksLimit = maxTicks
-      chart.options.scales.x.min = startTime
-      chart.options.scales.x.max = endTime
+      delete chart.options.scales.x.min
+      delete chart.options.scales.x.max
     }
-    if (chart) chart.update('none')
+    if (chart) {
+      syncChartLabels(chart)
+      chart.update('none')
+    }
   })
 }
 
@@ -1018,8 +1053,10 @@ const appendDataToChart = (chart, datasetIndex, timestamp, value, isPing = false
   if (!dataset) return
   
   const time = new Date(timestamp).getTime()
-  const endTime = Date.now()
-  const startTime = endTime - currentHours.value * 60 * 60 * 1000
+  const lastTime = getLastDatasetTimestamp(dataset.data)
+  if (lastTime && time <= lastTime) return
+
+  const startTime = Date.now() - currentHours.value * 60 * 60 * 1000
 
   let yVal
   if (isPing) {
@@ -1031,23 +1068,21 @@ const appendDataToChart = (chart, datasetIndex, timestamp, value, isPing = false
     yVal = parseFloat(value) || 0
   }
   
-  dataset.data = appendPointWithGapBreak(dataset.data, { x: time, y: yVal })
+  dataset.data = appendPointWithGapBreak(dataset.data, createChartPoint(time, yVal))
   
   while (dataset.data.length > CHART.MAX_DATA_POINTS) {
     dataset.data.shift()
   }
   
-  dataset.data = dataset.data.filter(d => d.x >= startTime)
-  
-  if (chart.options && chart.options.scales && chart.options.scales.x) {
-    chart.options.scales.x.min = startTime
-    chart.options.scales.x.max = endTime
-  }
+  dataset.data = dataset.data.filter(d => getChartTimestamp(d) >= startTime)
+  syncChartLabels(chart)
   
   chart.update('none')
 }
 
 const STATIC_FIELDS = ['id', 'name', 'region', 'arch', 'os', 'kernel_version', 'cpu_info', 'cpu_cores', 'gpu_info', 'expire_date', 'server_group', 'traffic_limit', 'net_rx_monthly', 'net_tx_monthly', 'boot_time', 'timestamp', 'ip_v4', 'ip_v6']
+const REALTIME_SAMPLE_FIELDS = new Set(['cpu', 'ram_total', 'ram_used', 'swap_total', 'swap_used', 'net_in_speed', 'net_out_speed'])
+const TIMING_FIELDS = new Set(['last_updated', 'sample_timestamp'])
 
 const appendLoadChartData = (timestamp, loadAvg) => {
   const chart = charts.load
@@ -1055,27 +1090,184 @@ const appendLoadChartData = (timestamp, loadAvg) => {
 
   const loads = parseLoadAvg(loadAvg)
   const time = new Date(timestamp).getTime()
-  const endTime = Date.now()
-  const startTime = endTime - currentHours.value * 60 * 60 * 1000
+  const lastTime = getLastDatasetTimestamp(chart.data.datasets[0]?.data)
+  if (lastTime && time <= lastTime) return
+
+  const startTime = Date.now() - currentHours.value * 60 * 60 * 1000
 
   for (let i = 0; i < 3; i++) {
-    chart.data.datasets[i].data = appendPointWithGapBreak(chart.data.datasets[i].data, { x: time, y: loads[i] })
+    chart.data.datasets[i].data = appendPointWithGapBreak(chart.data.datasets[i].data, createChartPoint(time, loads[i]))
     while (chart.data.datasets[i].data.length > CHART.MAX_DATA_POINTS) {
       chart.data.datasets[i].data.shift()
     }
-    chart.data.datasets[i].data = chart.data.datasets[i].data.filter(d => d.x >= startTime)
+    chart.data.datasets[i].data = chart.data.datasets[i].data.filter(d => getChartTimestamp(d) >= startTime)
   }
 
-  if (chart.options?.scales?.x) {
-    chart.options.scales.x.min = startTime
-    chart.options.scales.x.max = endTime
-  }
-
+  syncChartLabels(chart)
   chart.update('none')
 }
 
-const fetchCurrentStatus = async (incomingData) => {
+const isRealtimeHistoryRange = () => Math.abs(Number(currentHours.value) - REALTIME_HISTORY_HOURS) < 0.001
+
+let latestReportReplayTimers = new Set()
+
+const clearLatestReportReplayTimers = () => {
+  latestReportReplayTimers.forEach(timer => clearTimeout(timer))
+  latestReportReplayTimers.clear()
+}
+
+const getReplaySampleData = (sample) => {
+  if (!sample || typeof sample !== 'object') return null
+  return sample.data || sample.payload || sample.metrics || null
+}
+
+const buildLiveStatusData = (event) => {
+  const receiveTs = Date.now()
+  return {
+    ...event.data,
+    sample_timestamp: event.ts,
+    last_updated: receiveTs,
+    timestamp: receiveTs
+  }
+}
+
+const scheduleLatestReportReplay = (event, delay) => {
+  const timer = setTimeout(() => {
+    latestReportReplayTimers.delete(timer)
+    fetchCurrentStatus(buildLiveStatusData(event), {
+      mergeMode: 'sample',
+      chartMode: 'sample'
+    })
+  }, delay)
+  latestReportReplayTimers.add(timer)
+}
+
+const toReplayEvents = (update, messageTs = Date.now()) => {
+  if (!update || String(update.serverId) !== String(serverId)) return []
+  const samples = Array.isArray(update.samples) ? update.samples : []
+  return samples
+    .map(sample => {
+      const data = getReplaySampleData(sample)
+      if (!data) return null
+      const ts = normalizeMetricTimestamp(
+        sample.ts ?? sample.timestamp ?? data.sample_timestamp ?? data.last_updated ?? data.timestamp ?? update.ts ?? messageTs,
+        null
+      )
+      return ts ? { ts, data } : null
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.ts - b.ts)
+}
+
+const replayReportUpdate = (update, { messageTs = Date.now(), replayCachedReport = false, includeReportUpdate = true } = {}) => {
+  const events = toReplayEvents(update, messageTs)
+  if (events.length === 0) return
+
+  const shouldReplaySamples = isRealtimeHistoryRange()
+  if (includeReportUpdate) {
+    const latestEvent = events[events.length - 1]
+    fetchCurrentStatus(buildLiveStatusData(latestEvent), {
+      mergeMode: shouldReplaySamples ? 'report' : 'all',
+      chartMode: 'report'
+    })
+  }
+  if (!shouldReplaySamples) return
+
+  const reportTs = normalizeMetricTimestamp(update.reportTs ?? update.report_timestamp, messageTs)
+  const reportAge = Number(update.reportAgeMs)
+  const reportAgeMs = Math.max(0, Number.isFinite(reportAge)
+    ? reportAge
+    : (reportTs ? Date.now() - reportTs : 0))
+  const playbackStartTs = replayCachedReport
+    ? resolvePlaybackCursor(events[0].ts, null, { replayCachedReport: true, reportAgeMs })
+    : events[0].ts
+  if (playbackStartTs === null) return
+
+  let immediateEvent = null
+  const futureEvents = []
+  for (const event of events) {
+    if (event.ts <= playbackStartTs) {
+      immediateEvent = event
+    } else {
+      futureEvents.push(event)
+    }
+  }
+
+  if (immediateEvent) {
+    scheduleLatestReportReplay(immediateEvent, 0)
+  }
+
+  for (const event of futureEvents) {
+    const delay = Math.max(0, Math.min(event.ts - playbackStartTs, LATEST_REPORT_MAX_REPLAY_DELAY))
+    scheduleLatestReportReplay(event, delay)
+  }
+}
+
+const replayLatestReportUpdates = (detailData) => {
+  clearLatestReportReplayTimers()
+  const updates = Array.isArray(detailData?.latestReportUpdates) ? detailData.latestReportUpdates : []
+  for (const update of updates) {
+    replayReportUpdate(update, {
+      messageTs: Date.now(),
+      replayCachedReport: true,
+      includeReportUpdate: false
+    })
+  }
+}
+
+const appendRealtimeSampleCharts = (data, dataTimestamp) => {
+  appendDataToChart(charts.cpu, 0, dataTimestamp, data.cpu)
+  const ramPercent = (parseFloat(data.ram_total) > 0) ? (parseFloat(data.ram_used) / parseFloat(data.ram_total)) * 100 : 0
+  appendDataToChart(charts.ram, 0, dataTimestamp, ramPercent)
+  const swapPercent = (parseFloat(data.swap_total) > 0) ? (parseFloat(data.swap_used) / parseFloat(data.swap_total)) * 100 : 0
+  appendDataToChart(charts.ram, 1, dataTimestamp, swapPercent)
+  appendDataToChart(charts.net, 0, dataTimestamp, data.net_in_speed)
+  appendDataToChart(charts.net, 1, dataTimestamp, data.net_out_speed)
+}
+
+const appendReportCharts = (data, dataTimestamp) => {
+  rebuildGpuChartDatasets()
+  const latestGpuList = parseGpuInfo(data.gpu_info)
+  for (let i = 0; i < charts.gpu.data.datasets.length; i++) {
+    const dataset = charts.gpu.data.datasets[i]
+    const gpuId = dataset.gpuId
+    const found = latestGpuList.find(g => String(g.id) === String(gpuId))
+    const gpuVal = found ? found.info : null
+    if (gpuVal === null || gpuVal === undefined) {
+      appendDataToChart(charts.gpu, i, dataTimestamp, null, false, true)
+    } else {
+      appendDataToChart(charts.gpu, i, dataTimestamp, gpuVal)
+    }
+  }
+  const diskPercent = (parseFloat(data.disk_total) > 0) ? (parseFloat(data.disk_used) / parseFloat(data.disk_total)) * 100 : 0
+  appendDataToChart(charts.disk, 0, dataTimestamp, diskPercent)
+  appendDataToChart(charts.proc, 0, dataTimestamp, data.processes)
+  appendDataToChart(charts.conn, 0, dataTimestamp, data.tcp_conn)
+  appendDataToChart(charts.conn, 1, dataTimestamp, data.udp_conn)
+  appendDataToChart(charts.ping, 0, dataTimestamp, data.ping_ct, true)
+  appendDataToChart(charts.ping, 1, dataTimestamp, data.ping_cu, true)
+  appendDataToChart(charts.ping, 2, dataTimestamp, data.ping_cm, true)
+  appendDataToChart(charts.ping, 3, dataTimestamp, data.ping_bd, true)
+  appendDataToChart(charts.loss, 0, dataTimestamp, data.loss_ct, false, true)
+  appendDataToChart(charts.loss, 1, dataTimestamp, data.loss_cu, false, true)
+  appendDataToChart(charts.loss, 2, dataTimestamp, data.loss_cm, false, true)
+  appendDataToChart(charts.loss, 3, dataTimestamp, data.loss_bd, false, true)
+  appendLoadChartData(dataTimestamp, data.load_avg)
+}
+
+const shouldMergeIncomingField = (key, mergeMode) => {
+  if (STATIC_FIELDS.includes(key)) return false
+  if (mergeMode === 'sample') return REALTIME_SAMPLE_FIELDS.has(key) || TIMING_FIELDS.has(key)
+  if (mergeMode === 'report') return !REALTIME_SAMPLE_FIELDS.has(key)
+  return true
+}
+
+const fetchCurrentStatus = async (incomingData, options = {}) => {
   try {
+    const {
+      mergeMode = 'all',
+      chartMode = 'all'
+    } = options
     let data = incomingData
     if (!data) {
       data = await fetchServerDetail(serverId, apiIndex.value)
@@ -1086,7 +1278,7 @@ const fetchCurrentStatus = async (incomingData) => {
     if (incomingData) {
       const newServer = { ...server.value }
       for (const key of Object.keys(data)) {
-        if (STATIC_FIELDS.includes(key)) {
+        if (!shouldMergeIncomingField(key, mergeMode)) {
           continue
         }
         newServer[key] = data[key]
@@ -1099,54 +1291,25 @@ const fetchCurrentStatus = async (incomingData) => {
     }
     syncProbeChartVisibility()
 
-    if (data.last_updated && chartsReady.value) {
+    if (data.last_updated && chartsReady.value && isRealtimeHistoryRange()) {
       const dataTimestamp = new Date(data.last_updated).getTime()
-      appendDataToChart(charts.cpu, 0, dataTimestamp, data.cpu)
-      rebuildGpuChartDatasets()
-      const latestGpuList = parseGpuInfo(data.gpu_info)
-      for (let i = 0; i < charts.gpu.data.datasets.length; i++) {
-        const dataset = charts.gpu.data.datasets[i]
-        const gpuId = dataset.gpuId
-        const found = latestGpuList.find(g => String(g.id) === String(gpuId))
-        const gpuVal = found ? found.info : null
-        if (gpuVal === null || gpuVal === undefined) {
-          appendDataToChart(charts.gpu, i, dataTimestamp, null, false, true)
-        } else {
-          appendDataToChart(charts.gpu, i, dataTimestamp, gpuVal)
-        }
-      }
-      const ramPercent = (parseFloat(data.ram_total) > 0) ? (parseFloat(data.ram_used) / parseFloat(data.ram_total)) * 100 : 0
-      appendDataToChart(charts.ram, 0, dataTimestamp, ramPercent)
-      const swapPercent = (parseFloat(data.swap_total) > 0) ? (parseFloat(data.swap_used) / parseFloat(data.swap_total)) * 100 : 0
-      appendDataToChart(charts.ram, 1, dataTimestamp, swapPercent)
-      const diskPercent = (parseFloat(data.disk_total) > 0) ? (parseFloat(data.disk_used) / parseFloat(data.disk_total)) * 100 : 0
-      appendDataToChart(charts.disk, 0, dataTimestamp, diskPercent)
-      appendDataToChart(charts.proc, 0, dataTimestamp, data.processes)
-      appendDataToChart(charts.net, 0, dataTimestamp, data.net_in_speed)
-      appendDataToChart(charts.net, 1, dataTimestamp, data.net_out_speed)
-      appendDataToChart(charts.conn, 0, dataTimestamp, data.tcp_conn)
-      appendDataToChart(charts.conn, 1, dataTimestamp, data.udp_conn)
-      appendDataToChart(charts.ping, 0, dataTimestamp, data.ping_ct, true)
-      appendDataToChart(charts.ping, 1, dataTimestamp, data.ping_cu, true)
-      appendDataToChart(charts.ping, 2, dataTimestamp, data.ping_cm, true)
-      appendDataToChart(charts.ping, 3, dataTimestamp, data.ping_bd, true)
-      appendDataToChart(charts.loss, 0, dataTimestamp, data.loss_ct, false, true)
-      appendDataToChart(charts.loss, 1, dataTimestamp, data.loss_cu, false, true)
-      appendDataToChart(charts.loss, 2, dataTimestamp, data.loss_cm, false, true)
-      appendDataToChart(charts.loss, 3, dataTimestamp, data.loss_bd, false, true)
-      appendLoadChartData(dataTimestamp, data.load_avg)
+      if (chartMode === 'sample' || chartMode === 'all') appendRealtimeSampleCharts(data, dataTimestamp)
+      if (chartMode === 'report' || chartMode === 'all') appendReportCharts(data, dataTimestamp)
     }
 
     if (data.last_updated) {
       lastUpdateText.value = formatTimestamp(data.last_updated)
     }
+    return data
   } catch (e) {
     console.error('[ERROR] Update status failed:', e)
+    return null
   }
 }
 
 const setTimeRange = (hours) => {
-  if (hours > 1 && !isAdminLoggedIn()) {
+  clearLatestReportReplayTimers()
+  if (hours > 24 && !isAdminLoggedIn()) {
     showLoginModal.value = true
     return
   }
@@ -1189,23 +1352,36 @@ const initChartsOnMount = async () => {
 const handleVisibility = () => {
   if (!liveSocket) return
   if (document.hidden) {
+    clearLatestReportReplayTimers()
     liveSocket.close()
   } else {
     liveSocket.reconnect()
   }
 }
 
+const handleLiveMessage = (msg) => {
+  if (!msg || msg.type !== 'batchUpdate') return
+  const updates = Array.isArray(msg.updates) ? msg.updates : []
+  const matchedUpdates = updates.filter(update => update && String(update.serverId) === String(serverId))
+  if (matchedUpdates.length === 0) return
+
+  clearLatestReportReplayTimers()
+  const messageTs = normalizeMetricTimestamp(msg.ts, Date.now())
+  for (const update of matchedUpdates) {
+    replayReportUpdate(update, { messageTs })
+  }
+}
+
 const init = async () => {
-  await fetchCurrentStatus()
+  const initialData = await fetchCurrentStatus()
   await initChartsOnMount()
 
-  loadAllHistory(currentHours.value)
+  await loadAllHistory(currentHours.value)
+  replayLatestReportUpdates(initialData)
 
   liveSocket = createLiveSocket(String(serverId), {
-    onUpdate: ({ serverId: sid, data }) => {
-      if (String(sid) !== String(serverId)) return
-      fetchCurrentStatus(data)
-    },
+    replay: false,
+    onMessage: handleLiveMessage,
     onStatus: ({ connected }) => {}
   }, apiIndex.value)
 
@@ -1225,6 +1401,7 @@ onMounted(() => {
 onUnmounted(() => {
   document.removeEventListener('visibilitychange', handleVisibility)
   if (liveSocket) liveSocket.close()
+  clearLatestReportReplayTimers()
   lastGpuSignature = ''
   safeDestroyCharts()
 })

@@ -127,9 +127,12 @@
           </div>
         </div>
 
-        <div class="form-group checkbox-item">
-          <input type="checkbox" id="cfg_show_long_history" v-model="settings.show_long_history">
-          <label>{{ trans.showLongHistory }} <span class="text-muted text-sm">{{ trans.showLongHistoryTip }}</span></label>
+        <div class="form-group">
+          <label class="form-label">{{ trans.longHistoryPoints }}</label>
+          <select v-model="settings.long_history_points" class="form-select">
+            <option v-for="option in longHistoryPointOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+          </select>
+          <p class="text-muted text-sm mt-1">{{ trans.longHistoryPointsTip }}</p>
         </div>
       </div>
 
@@ -460,6 +463,7 @@
 
 <script setup>
 import { computed, onBeforeUnmount, onMounted, reactive } from 'vue'
+import { HISTORY } from '../../../utils/constants.js'
 import { PING_NODE_FIELDS, validatePingNode } from '../../../utils/pingNode.js'
 
 const props = defineProps({
@@ -516,6 +520,15 @@ const expireReminderOptions = computed(() => [
     }
   })
 ])
+
+const longHistoryPointOptions = computed(() => (
+  HISTORY.LONG_RANGE_POINT_OPTIONS.map(points => ({
+    value: String(points),
+    label: props.trans.historyPointCount
+      ? props.trans.historyPointCount.replace('{points}', points)
+      : `${points} points`
+  }))
+))
 
 const ensureResourceAlertRules = () => {
   if (!Array.isArray(props.settings.resource_alert_rules)) {
