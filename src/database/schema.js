@@ -53,6 +53,7 @@ export async function initDatabase(db) {
           expire_date TEXT DEFAULT '',
           traffic_limit TEXT DEFAULT '',
           traffic_calc_type TEXT DEFAULT 'total',
+          "interface" TEXT DEFAULT '',
           reset_day INTEGER DEFAULT 1,
           collect_interval INTEGER DEFAULT 0,
           report_interval INTEGER DEFAULT 60,
@@ -116,7 +117,6 @@ export async function initDatabase(db) {
           os TEXT DEFAULT '',
           kernel_version TEXT DEFAULT '',
           region TEXT DEFAULT '',
-          ip TEXT DEFAULT '',
           ip_v4 TEXT DEFAULT '0',
           ip_v6 TEXT DEFAULT '0',
           boot_time TEXT DEFAULT '',
@@ -435,7 +435,7 @@ export async function weeklyCleanup(db) {
   }
 }
 
-export async function saveMetricsHistory(db, serverId, historyPartitionId, metrics, regionCode = '', timestamp = null, agentVersion = '', ip = '') {
+export async function saveMetricsHistory(db, serverId, historyPartitionId, metrics, regionCode = '', timestamp = null, agentVersion = '') {
   const historyId = buildHistoryId(historyPartitionId, timestamp);
   const rawTimestamp = Number(timestamp);
   const now = Number.isFinite(rawTimestamp) && rawTimestamp > 0
@@ -467,7 +467,7 @@ export async function saveMetricsHistory(db, serverId, historyPartitionId, metri
       loss_ct, loss_cu, loss_cm, loss_bd,
       ram_total, ram_used, swap_total, swap_used,
       disk_total, disk_used,
-      cpu_cores, cpu_info, gpu_info, arch, os, kernel_version, region, ip, ip_v4, ip_v6, boot_time,
+      cpu_cores, cpu_info, gpu_info, arch, os, kernel_version, region, ip_v4, ip_v6, boot_time,
       net_rx_monthly, net_tx_monthly
     ) VALUES (
       ?, ?, ?, ?, ?,
@@ -477,7 +477,7 @@ export async function saveMetricsHistory(db, serverId, historyPartitionId, metri
       ?, ?, ?, ?,
       ?, ?, ?, ?,
       ?, ?, ?,
-      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
       ?, ?
     )
   `).bind(
@@ -515,7 +515,6 @@ export async function saveMetricsHistory(db, serverId, historyPartitionId, metri
     metrics.os || '',
     metrics.kernel_version || '',
     regionCode,
-    ip || '',
     metrics.ip_v4 || '0',
     metrics.ip_v6 || '0',
     metrics.boot_time || '',

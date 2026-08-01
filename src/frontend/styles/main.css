@@ -10,6 +10,30 @@
 /* --------------------------------------------------------------------------
    2. CSS Variables (Design Tokens)
    -------------------------------------------------------------------------- */
+@property --ring-value {
+    syntax: '<number>';
+    inherits: true;
+    initial-value: 0;
+}
+
+@property --swap-ring-value {
+    syntax: '<number>';
+    inherits: true;
+    initial-value: 0;
+}
+
+@property --ring-color {
+    syntax: '<color>';
+    inherits: true;
+    initial-value: #4da6ff;
+}
+
+@property --swap-ring-color {
+    syntax: '<color>';
+    inherits: true;
+    initial-value: #4da6ff;
+}
+
 :root {
     /* Background Colors */
     --bg-primary: #0a0e14;
@@ -750,6 +774,151 @@ body::before {
     text-transform: uppercase;
 }
 
+.stat-action-item {
+    appearance: none;
+    -webkit-appearance: none;
+    border: none;
+    border-radius: 0;
+    color: inherit;
+    cursor: pointer;
+    display: block;
+    font-family: var(--terminal-font);
+    width: 100%;
+    transition: background 0.2s, box-shadow 0.2s;
+}
+
+.stat-action-item:hover {
+    background: var(--bg-hover);
+}
+
+.stat-action-item:focus-visible {
+    outline: 2px solid var(--accent-cyan);
+    outline-offset: -2px;
+}
+
+.finance-currency-code {
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 600;
+    margin-left: 4px;
+    text-shadow: none;
+}
+
+.finance-stat-sub-info {
+    font-size: 11px;
+}
+
+.finance-modal-dialog {
+    width: 620px;
+}
+
+.finance-summary-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 1px;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    overflow: hidden;
+    margin-bottom: 18px;
+}
+
+.finance-summary-card {
+    background: var(--bg-card);
+    min-width: 0;
+    padding: 14px;
+}
+
+.finance-summary-label,
+.finance-section-label {
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+}
+
+.finance-summary-value {
+    color: var(--accent-cyan);
+    font-size: 22px;
+    font-weight: 700;
+    line-height: 1.2;
+    margin-top: 8px;
+    overflow-wrap: anywhere;
+    text-shadow: 0 0 8px rgba(57, 210, 192, 0.25);
+}
+
+.finance-summary-symbol {
+    color: var(--text-secondary);
+    font-size: 14px;
+    margin-right: 2px;
+}
+
+.finance-summary-currency,
+.finance-source-text {
+    color: var(--text-muted);
+    font-size: 11px;
+    margin-top: 5px;
+}
+
+.finance-rate-toolbar {
+    align-items: center;
+    display: flex;
+    gap: 12px;
+    justify-content: space-between;
+    margin-bottom: 12px;
+}
+
+.finance-currency-picker {
+    align-items: center;
+    color: var(--text-secondary);
+    display: flex;
+    flex: 0 0 auto;
+    font-size: 11px;
+    gap: 8px;
+    text-transform: uppercase;
+}
+
+.finance-currency-picker .form-select {
+    min-width: 96px;
+    padding: 6px 10px;
+}
+
+.finance-rate-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px 12px;
+}
+
+.finance-rate-row {
+    align-items: center;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    color: var(--text-secondary);
+    display: flex;
+    font-size: 12px;
+    justify-content: space-between;
+    min-width: 0;
+    padding: 8px 10px;
+}
+
+.finance-rate-row b {
+    color: var(--text-primary);
+    font-weight: 700;
+    margin-left: 8px;
+    overflow-wrap: anywhere;
+    text-align: right;
+}
+
+.finance-modal-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 14px;
+    color: var(--text-muted);
+    font-size: 11px;
+    margin-top: 14px;
+}
+
 .stats-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -821,12 +990,14 @@ body::before {
     color: inherit;
     transition: all 0.2s;
     display: block;
+    position: relative;
 }
 
 .server-card:hover {
     border-color: var(--accent-cyan);
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
     transform: translateY(-2px);
+    z-index: 3;
 }
 
 .server-card-header {
@@ -876,6 +1047,54 @@ body::before {
 .card-meta {
     display: flex;
     gap: 12px;
+}
+
+.card-meta-item {
+    position: relative;
+}
+
+.card-meta-tooltip {
+    position: absolute;
+    left: 0;
+    top: calc(100% + 8px);
+    z-index: 20;
+    display: block;
+    min-width: max-content;
+    max-width: min(260px, 70vw);
+    padding: 7px 10px;
+    border: 1px solid var(--border-active);
+    border-radius: 4px;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.4;
+    letter-spacing: 0;
+    opacity: 0;
+    pointer-events: none;
+    text-transform: none;
+    transform: translateY(-4px);
+    transition: opacity 0.16s ease, transform 0.16s ease;
+    white-space: nowrap;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.38), 0 0 12px rgba(57, 210, 192, 0.08);
+}
+
+.card-meta-tooltip::before {
+    content: "";
+    position: absolute;
+    left: 14px;
+    top: -5px;
+    width: 8px;
+    height: 8px;
+    border-left: 1px solid var(--border-active);
+    border-top: 1px solid var(--border-active);
+    background: var(--bg-primary);
+    transform: rotate(45deg);
+}
+
+.card-meta-expire:hover .card-meta-tooltip {
+    opacity: 1;
+    transform: translateY(0);
 }
 
 .card-meta-item .expired {
@@ -995,6 +1214,11 @@ body::before {
     align-items: center;
     justify-content: center;
     --ring-thickness: 5px;
+    transition:
+        --ring-value 0.3s ease,
+        --ring-color 0.3s ease,
+        --swap-ring-value 0.3s ease,
+        --swap-ring-color 0.3s ease;
 }
 
 .metric-ring-track,
@@ -1014,6 +1238,7 @@ body::before {
     background: conic-gradient(from -90deg, var(--ring-color) 0 calc(var(--ring-value) * 1%), rgba(255, 255, 255, 0.03) 0 100%);
     -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - var(--ring-thickness)), #000 calc(100% - var(--ring-thickness) + 1px));
     mask: radial-gradient(farthest-side, transparent calc(100% - var(--ring-thickness)), #000 calc(100% - var(--ring-thickness) + 1px));
+    transition: background 0.3s ease;
 }
 
 .metric-ring-chart-memory {
@@ -1037,6 +1262,7 @@ body::before {
     background: conic-gradient(from -90deg, var(--swap-ring-color) 0 calc(var(--swap-ring-value) * 1%), rgba(255, 255, 255, 0.025) 0 100%);
     -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - var(--swap-ring-thickness)), #000 calc(100% - var(--swap-ring-thickness) + 1px));
     mask: radial-gradient(farthest-side, transparent calc(100% - var(--swap-ring-thickness)), #000 calc(100% - var(--swap-ring-thickness) + 1px));
+    transition: background 0.3s ease;
 }
 
 .metric-ring-chart-memory.has-swap-ring .metric-ring-center {
@@ -1159,7 +1385,7 @@ body::before {
     height: 100%;
     border-radius: 999px;
     background: var(--accent-blue);
-    transition: width 0.3s ease;
+    transition: width 0.3s ease, background 0.3s ease;
 }
 
 /* Ping row — ring card */
@@ -1223,7 +1449,7 @@ body::before {
 .stat-bar-fill {
     height: 100%;
     border-radius: 2px;
-    transition: width 0.3s ease;
+    transition: width 0.3s ease, background 0.3s ease;
 }
 
 .stat-value {
@@ -1342,27 +1568,6 @@ body::before {
     gap: 8px;
 }
 
-.group-tag,
-.price-tag {
-    display: inline-block;
-    padding: 2px 8px;
-    border-radius: 3px;
-    font-weight: 600;
-    letter-spacing: 0.5px;
-}
-
-.group-tag {
-    background: rgba(77, 166, 255, 0.1);
-    color: var(--accent-blue);
-    border: 1px solid rgba(77, 166, 255, 0.2);
-}
-
-.price-tag {
-    background: rgba(255, 184, 112, 0.1);
-    color: var(--accent-yellow);
-    border: 1px solid rgba(255, 184, 112, 0.2);
-}
-
 .tag-list {
     display: flex;
     flex-wrap: wrap;
@@ -1385,6 +1590,38 @@ body::before {
 
 .note-text.note-copied,.spec-text.spec-copied {
     color: var(--accent-green);
+}
+
+.server-ip-list {
+    display: inline-flex;
+    flex-direction: column;
+    gap: 2px;
+    max-width: 142px;
+    color: var(--text-secondary);
+    cursor: pointer;
+}
+
+.server-ip-list.spec-copied {
+    color: var(--accent-green);
+}
+
+.server-ip-line {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    min-width: 0;
+}
+
+.server-ip-label {
+    flex: 0 0 auto;
+    color: var(--text-muted);
+}
+
+.server-ip-value {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 /* --------------------------------------------------------------------------
@@ -1701,6 +1938,59 @@ body::before {
     align-items: center;
     gap: 12px;
     margin: 6px 0 12px;
+}
+
+.resource-alert-toggle {
+    appearance: none;
+    -webkit-appearance: none;
+    align-items: center;
+    background: transparent;
+    border: 0;
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: inline-flex;
+    flex: 1;
+    font-family: var(--terminal-font);
+    gap: 8px;
+    min-width: 0;
+    padding: 0;
+    text-align: left;
+}
+
+.resource-alert-toggle:hover .section-subtitle,
+.resource-alert-toggle:focus-visible .section-subtitle {
+    color: var(--text-primary);
+}
+
+.resource-alert-toggle:focus-visible {
+    outline: 2px solid var(--accent-cyan);
+    outline-offset: 3px;
+}
+
+.resource-alert-caret {
+    color: var(--accent-green);
+    display: inline-block;
+    flex: 0 0 auto;
+    font-size: 12px;
+    line-height: 1;
+    transition: transform 0.2s;
+}
+
+.resource-alert-caret.expanded {
+    transform: rotate(90deg);
+}
+
+.resource-alert-count,
+.resource-alert-toggle-text {
+    color: var(--text-muted);
+    flex: 0 0 auto;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.resource-alert-body {
+    margin-top: 4px;
 }
 
 .resource-alert-empty {
@@ -2218,6 +2508,7 @@ body::before {
    -------------------------------------------------------------------------- */
 .status-bar {
     margin-top: 20px;
+    font-size: 12px;
     padding: 10px 16px;
     background: var(--bg-secondary);
     border: 1px solid var(--border-color);
@@ -3359,6 +3650,20 @@ body::before {
 
     .global-stats {
         grid-template-columns: 1fr;
+    }
+
+    .finance-summary-grid,
+    .finance-rate-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .finance-rate-toolbar {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .finance-currency-picker {
+        justify-content: space-between;
     }
 
     .stats-grid {

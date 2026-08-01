@@ -141,6 +141,7 @@ export async function addServerColumns(db) {
       rx_correction: "REAL DEFAULT NULL",
       tx_correction: "REAL DEFAULT NULL",
       traffic_calc_type: "TEXT DEFAULT 'total'",
+      interface: "TEXT DEFAULT ''",
       history_partition_id: "INTEGER DEFAULT 0",
       timestamp: "INTEGER DEFAULT 0"
     };
@@ -148,7 +149,8 @@ export async function addServerColumns(db) {
     let added = 0;
     for (const [colName, colDef] of Object.entries(newCols)) {
       if (!existingCols.includes(colName)) {
-        await db.prepare(`ALTER TABLE servers ADD COLUMN ${colName} ${colDef}`).run();
+        const colSqlName = colName === 'interface' ? '"interface"' : colName;
+        await db.prepare(`ALTER TABLE servers ADD COLUMN ${colSqlName} ${colDef}`).run();
         added++;
       }
     }
@@ -213,7 +215,6 @@ export async function addHistoryColumns(db) {
       os: "TEXT DEFAULT ''",
       kernel_version: "TEXT DEFAULT ''",
       region: "TEXT DEFAULT ''",
-      ip: "TEXT DEFAULT ''",
       ip_v4: "TEXT DEFAULT '0'",
       ip_v6: "TEXT DEFAULT '0'",
       boot_time: "TEXT DEFAULT ''",

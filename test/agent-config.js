@@ -10,6 +10,7 @@ import {
   serializeCorrection,
   shouldSendAgentUpdate,
   validateAgentConfigInput,
+  validateNetworkInterfaces,
   validatePingNode
 } from '../src/utils/agentConfig.js';
 import { md5Hash } from '../src/utils/common.js';
@@ -19,7 +20,7 @@ const server = {
   report_interval: 60,
   reset_day: 15
 };
-const expected = 'collect_interval=1&report_interval=60&reset_day=15&schema_version=2&custom_ct=&custom_cu=&custom_cm=&custom_bd=';
+const expected = 'collect_interval=1&report_interval=60&reset_day=15&schema_version=3&custom_ct=&custom_cu=&custom_cm=&custom_bd=&interface=';
 
 const config = buildAgentConfig(server);
 assert.equal(serializeAgentConfig(config), expected);
@@ -57,6 +58,8 @@ assert.equal(isValidTrafficCorrection('-1'), false);
 assert.equal(isValidTrafficCorrection('1e3'), false);
 assert.equal(isValidTrafficCorrection('0x10'), false);
 assert.equal(isValidTrafficCorrection('1000000.1'), false);
+assert.deepEqual(validateNetworkInterfaces('eth0, ens3,eth0'), { valid: true, value: 'eth0,ens3' });
+assert.equal(validateNetworkInterfaces('eth0/1').valid, false);
 
 for (const value of ['', 'abc', '中文', 'a'.repeat(1000)]) {
   assert.equal(await md5Hash(value), createHash('md5').update(value).digest('hex'));
@@ -73,7 +76,8 @@ assert.deepEqual(buildAgentConfig({}), {
   custom_cu: '',
   custom_cm: '',
   custom_bd: '',
-  schema_version: 2
+  interface: '',
+  schema_version: 3
 });
 
 // Test server-level ping node priority
@@ -92,6 +96,7 @@ assert.equal(resolvedConfig.custom_ct, 'ct-server.example.com');
 assert.equal(resolvedConfig.custom_cu, 'cu-global.example.com');
 assert.equal(resolvedConfig.custom_cm, 'cm-global.example.com');
 assert.equal(resolvedConfig.custom_bd, 'bd-global.example.com');
+assert.equal(buildAgentConfig({ interface: 'eth0, ens3,eth0' }).interface, 'eth0,ens3');
 assert.equal(buildAgentConfig({ custom_ct: 'gd-ct-v4.ip.zstaticcdn.com:80' }).custom_ct, 'gd-ct-v4.ip.zstaticcdn.com:80');
 assert.equal(buildAgentConfig({ custom_ct: 'GD-CT-V4.IP.ZSTATICCDN.COM:080' }).custom_ct, 'gd-ct-v4.ip.zstaticcdn.com:80');
 assert.equal(buildAgentConfig({ custom_ct: 'a'.repeat(100) }).custom_ct, '');

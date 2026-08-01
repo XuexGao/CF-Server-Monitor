@@ -226,6 +226,7 @@
         :custom-cu="customCu"
         :custom-cm="customCm"
         :custom-bd="customBd"
+        :network-interface="networkInterface"
         :reset-day="resetDay"
         :rx-correction="rxCorrection"
         :tx-correction="txCorrection"
@@ -335,33 +336,33 @@
             </div>
 
             <div class="quota-section mt-4">
-              <div class="quota-section-title">{{ trans.last24HoursUsage }}</div>
+              <div class="quota-section-title">{{ trans.yesterdayUsage }}</div>
               <div class="quota-progress-list">
                 <div class="quota-progress-item">
                   <div class="flex-justify-between text-sm mb-1">
-                    <span>{{ trans.d1RowsRead }}：{{ formatNumber(d1UsageResult.usage.last24Hours.rowsRead) }} / {{ formatNumber(5000000) }}</span>
-                    <span>{{ getUsagePercent(d1UsageResult.usage.last24Hours.rowsRead, 5000000) }}%</span>
+                    <span>{{ trans.d1RowsRead }}：{{ formatNumber(d1UsageResult.usage.yesterday.rowsRead) }} / {{ formatNumber(5000000) }}</span>
+                    <span>{{ getUsagePercent(d1UsageResult.usage.yesterday.rowsRead, 5000000) }}%</span>
                   </div>
                   <div class="quota-progress-bar">
-                    <div class="quota-progress-fill" :style="{ width: getUsagePercent(d1UsageResult.usage.last24Hours.rowsRead, 5000000) + '%' }"></div>
+                    <div class="quota-progress-fill" :style="{ width: getUsagePercent(d1UsageResult.usage.yesterday.rowsRead, 5000000) + '%' }"></div>
                   </div>
                 </div>
                 <div class="quota-progress-item">
                   <div class="flex-justify-between text-sm mb-1">
-                    <span>{{ trans.d1RowsWritten }}：{{ formatNumber(d1UsageResult.usage.last24Hours.rowsWritten) }} / {{ formatNumber(100000) }}</span>
-                    <span>{{ getUsagePercent(d1UsageResult.usage.last24Hours.rowsWritten, 100000) }}%</span>
+                    <span>{{ trans.d1RowsWritten }}：{{ formatNumber(d1UsageResult.usage.yesterday.rowsWritten) }} / {{ formatNumber(100000) }}</span>
+                    <span>{{ getUsagePercent(d1UsageResult.usage.yesterday.rowsWritten, 100000) }}%</span>
                   </div>
                   <div class="quota-progress-bar">
-                    <div class="quota-progress-fill" :style="{ width: getUsagePercent(d1UsageResult.usage.last24Hours.rowsWritten, 100000) + '%' }"></div>
+                    <div class="quota-progress-fill" :style="{ width: getUsagePercent(d1UsageResult.usage.yesterday.rowsWritten, 100000) + '%' }"></div>
                   </div>
                 </div>
-                <div v-if="d1UsageResult.usage.last24Hours.workersRequests" class="quota-progress-item">
+                <div v-if="d1UsageResult.usage.yesterday.workersRequests" class="quota-progress-item">
                   <div class="flex-justify-between text-sm mb-1">
-                    <span>{{ trans.workersRequests }}：{{ formatNumber(d1UsageResult.usage.last24Hours.workersRequests) }} / {{ formatNumber(100000) }}</span>
-                    <span>{{ getUsagePercent(d1UsageResult.usage.last24Hours.workersRequests, 100000) }}%</span>
+                    <span>{{ trans.workersRequests }}：{{ formatNumber(d1UsageResult.usage.yesterday.workersRequests) }} / {{ formatNumber(100000) }}</span>
+                    <span>{{ getUsagePercent(d1UsageResult.usage.yesterday.workersRequests, 100000) }}%</span>
                   </div>
                   <div class="quota-progress-bar">
-                    <div class="quota-progress-fill" :style="{ width: getUsagePercent(d1UsageResult.usage.last24Hours.workersRequests, 100000) + '%' }"></div>
+                    <div class="quota-progress-fill" :style="{ width: getUsagePercent(d1UsageResult.usage.yesterday.workersRequests, 100000) + '%' }"></div>
                   </div>
                 </div>
               </div>
@@ -703,7 +704,13 @@ const clearAdminPasswordInputs = () => {
   settings.value.confirm_password = ''
 }
 
+const isAdminUsernameEmpty = () => !String(settings.value.username || '').trim()
+
 const toggleAdminPasswordChange = () => {
+  if (isAdminUsernameEmpty()) {
+    changeAdminPassword.value = true
+    return
+  }
   changeAdminPassword.value = !changeAdminPassword.value
   if (!changeAdminPassword.value) {
     clearAdminPasswordInputs()
@@ -736,6 +743,7 @@ const editForm = ref({
   expire_date: '',
   traffic_limit: '',
   traffic_calc_type: 'total',
+  interface: '',
   reset_day: 1,
   collect_interval: 0,
   report_interval: 60,
@@ -788,6 +796,7 @@ const customCt = ref('')
 const customCu = ref('')
 const customCm = ref('')
 const customBd = ref('')
+const networkInterface = ref('')
 const resetDay = ref(1)
 const rxCorrection = ref('')
 const txCorrection = ref('')
@@ -916,6 +925,7 @@ const logout = async () => {
   latestAgentVersion.value = ''
   clearTurnstile()
   await loadTurnstileConfig()
+  window.location.href = '/'
 }
 
 const checkLoginStatus = () => {
@@ -1038,13 +1048,22 @@ const loadSettings = async () => {
         csp_static: settingsData.csp_static || '',
         csp_api: settingsData.csp_api || ''
       }
-      changeAdminPassword.value = false
+      changeAdminPassword.value = !String(settings.value.username || '').trim()
       apiSecret.value = data.api_secret || ''
     }
   } catch (e) {
     console.error('[ERROR] Load settings failed:', e)
   }
 }
+
+watch(
+  () => settings.value.username,
+  () => {
+    if (isAdminUsernameEmpty()) {
+      changeAdminPassword.value = true
+    }
+  }
+)
 
 const saveSettings = async () => {
   if (saving.value) return
@@ -1261,6 +1280,7 @@ const copyCmd = (serverId) => {
   customCu.value = server?.custom_cu || settings.value.custom_cu
   customCm.value = server?.custom_cm || settings.value.custom_cm
   customBd.value = server?.custom_bd || settings.value.custom_bd
+  networkInterface.value = server?.interface || ''
   resetDay.value = server?.reset_day ?? 1
   rxCorrection.value = server?.rx_correction ?? ''
   txCorrection.value = server?.tx_correction ?? ''
@@ -1289,6 +1309,7 @@ const getCustomInstallCommand = () => {
     if (customCu.value) params.push(`-CuNode '${customCu.value}'`)
     if (customCm.value) params.push(`-CmNode '${customCm.value}'`)
     if (customBd.value) params.push(`-BdNode '${customBd.value}'`)
+    if (networkInterface.value) params.push(`-Interface '${networkInterface.value}'`)
     if (hasCorrectionValue(rxCorrection.value)) params.push(`-RxCorrection ${rxCorrection.value}`)
     if (hasCorrectionValue(txCorrection.value)) params.push(`-TxCorrection ${txCorrection.value}`)
     return `irm ${HOST}/cf-server-monitor.ps1 -OutFile cf-server-monitor.ps1; powershell -ExecutionPolicy Bypass -File .\\cf-server-monitor.ps1 ${params.join(' ')}`
@@ -1305,6 +1326,7 @@ const getCustomInstallCommand = () => {
   if (customCu.value) cmd += ` -cu=${customCu.value}`
   if (customCm.value) cmd += ` -cm=${customCm.value}`
   if (customBd.value) cmd += ` -bd=${customBd.value}`
+  if (networkInterface.value) cmd += ` -interface=${networkInterface.value}`
   if (hasCorrectionValue(rxCorrection.value)) cmd += ` -rx_correction=${rxCorrection.value}`
   if (hasCorrectionValue(txCorrection.value)) cmd += ` -tx_correction=${txCorrection.value}`
   return cmd
@@ -1365,6 +1387,7 @@ const openEditModal = (server) => {
     expire_date: server.expire_date || '',
     traffic_limit: server.traffic_limit || '',
     traffic_calc_type: server.traffic_calc_type || 'total',
+    interface: server.interface || '',
     reset_day: server.reset_day ?? 1,
     collect_interval: server.collect_interval ?? 0,
     report_interval: server.report_interval || 60,
@@ -1449,6 +1472,7 @@ const saveEdit = async () => {
     expire_date: normalizedExpireDate,
     traffic_limit: editForm.value.traffic_limit,
     traffic_calc_type: editForm.value.traffic_calc_type,
+    interface: editForm.value.interface,
     reset_day: editForm.value.reset_day,
     collect_interval: editForm.value.collect_interval,
     report_interval: editForm.value.report_interval,

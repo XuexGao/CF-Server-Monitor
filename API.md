@@ -189,7 +189,7 @@
 ### 0.5 限流与配额
 
 - ~~Cloudflare Workers / D1 固定限制为 D1 500 万行读、10 万行写、Workers 10 万次请求/日。~~ **2026-07-26 修订**：配额取决于 Cloudflare 当前套餐与计费策略，不属于本项目 API 的固定契约，应以 Cloudflare Dashboard 和官方文档为准。
-- `/admin/api?action=d1_usage` 可查询当前账户当日用量与近 24h 用量。
+- `/admin/api?action=d1_usage` 可查询当前账户 UTC 当日用量与 UTC 昨日用量。
 
 ### 0.6 CORS
 
@@ -222,7 +222,7 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
   ```
   Content-Type: application/json
   X-Agent-Version: <探针版本号>
-  X-Agent-Config-Schema: 2
+  X-Agent-Config-Schema: 3
   X-Agent-Config-Md5: <最后成功应用的配置 MD5，首次为 none>
   ```
   动态配置请求头为新版探针使用的可选字段；未携带时保持旧版响应协议。
@@ -258,8 +258,8 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
       "processes": "256",
       "tcp_conn": "32",
       "udp_conn": "4",
-      "ip_v4": "1",
-      "ip_v6": "1",
+      "ip_v4": "203.0.113.10",
+      "ip_v6": "2001:db8::10",
       "ping_ct": "23",
       "ping_cu": "25",
       "ping_cm": "30",
@@ -319,8 +319,8 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
 | `processes`      | string\|number | -   | 是  | 进程数                                         |
 | `tcp_conn`       | string\|number | -   | 是  | TCP 活跃连接数                                   |
 | `udp_conn`       | string\|number | -   | 是  | UDP 套接字数                                    |
-| `ip_v4`          | string\|number | -   | 是  | `1`/`0`，IPv4 可达性                            |
-| `ip_v6`          | string\|number | -   | 是  | `1`/`0`，IPv6 可达性                            |
+| `ip_v4`          | string\|number | -   | 是  | 公网 IPv4 地址；`0` 表示不可达；兼容旧探针 `1` 表示可达但未上报地址 |
+| `ip_v6`          | string\|number | -   | 是  | 公网 IPv6 地址；`0` 表示不可达；兼容旧探针 `1` 表示可达但未上报地址 |
 | `ping_ct`        | string\|number\|false\|null | ms  | 否  | 电信节点延时；空值表示未取到，`false` / `"false"` 表示禁用 |
 | `ping_cu`        | string\|number\|false\|null | ms  | 否  | 联通节点延时                                      |
 | `ping_cm`        | string\|number\|false\|null | ms  | 否  | 移动节点延时                                      |
@@ -332,7 +332,7 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
 
 **Response**
 
-- 旧版探针（未携带 `X-Agent-Config-Schema: 2`）：返回 `200 OK`：
+- 旧版探针（未携带 `X-Agent-Config-Schema: 3`）：返回 `200 OK`：
   ```
   OK
   ```
@@ -341,10 +341,10 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
 - 新版探针且配置 MD5 不一致，或仍有待确认流量修正：返回 `200 OK`，响应头携带当前
   `X-Agent-Config-Schema` 与 `X-Agent-Config-Md5`，响应体以固定顺序的完整 QueryParam 配置开头：
   ```text
-  collect_interval=0&report_interval=60&reset_day=1&schema_version=2&custom_ct=gd-ct-dualstack.ip.zstaticcdn.com&custom_cu=gd-cu-dualstack.ip.zstaticcdn.com&custom_cm=gd-cm-dualstack.ip.zstaticcdn.com&custom_bd=ip.zstaticcdn.com
+  collect_interval=0&report_interval=60&reset_day=1&schema_version=3&custom_ct=gd-ct-dualstack.ip.zstaticcdn.com&custom_cu=gd-cu-dualstack.ip.zstaticcdn.com&custom_cm=gd-cm-dualstack.ip.zstaticcdn.com&custom_bd=ip.zstaticcdn.com&interface=
   ```
   （`Content-Type: application/x-www-form-urlencoded; charset=utf-8`）
-- ~~动态配置包含 `traffic_calc_type`、`traffic_limit`、`auto_update` 等全部探针运行参数。~~ **2026-07-26 修订**：MD5 覆盖的规范配置仅包含 `collect_interval`、`report_interval`、`reset_day`、`schema_version`、`custom_ct`、`custom_cu`、`custom_cm`、`custom_bd`。待应用的 `rx_correction`、`tx_correction` 会追加到响应体，但不参与配置 MD5；启用自动更新且版本不一致时追加 `update=1`。
+- ~~动态配置包含 `traffic_calc_type`、`traffic_limit`、`auto_update` 等全部探针运行参数。~~ **2026-07-26 修订，2026-07-31 更新**：MD5 覆盖的规范配置仅包含 `collect_interval`、`report_interval`、`reset_day`、`schema_version`、`custom_ct`、`custom_cu`、`custom_cm`、`custom_bd`、`interface`。待应用的 `rx_correction`、`tx_correction` 会追加到响应体，但不参与配置 MD5；启用自动更新且版本不一致时追加 `update=1`。
 - 探针应用流量修正后，可在下一次 `POST /update` 顶层回传 `rx_correction` / `tx_correction`。值匹配时后端清空待修正字段并直接返回纯文本 `OK`，本次请求不要求 `metrics`。
 - 失败：
   ```json
@@ -508,6 +508,7 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
   "expire_date": "2026-12-31",
   "traffic_limit": "1TB",
   "traffic_calc_type": "total",
+  "interface": "eth0,ens3",
   "reset_day": 1,
   "collect_interval": 1,
   "report_interval": 60,
@@ -1026,7 +1027,7 @@ Header：`X-Turnstile-Token: <token>`（当 `site_options.turnstile_enabled` 或
       "rowsWritten": 678,
       "workersRequests": 1234
     },
-    "last24Hours": {
+    "yesterday": {
       "rowsRead": 23456,
       "rowsWritten": 789,
       "workersRequests": 2345
@@ -1037,6 +1038,8 @@ Header：`X-Turnstile-Token: <token>`（当 `site_options.turnstile_enabled` 或
 ```
 
 > ~~响应会返回日期、套餐限额、剩余额度、数据库数量和 Account ID。~~ **2026-07-26 修订**：当前只返回两个时间范围的 `rowsRead`、`rowsWritten`、`workersRequests`；额度由前端自行展示，不属于 API 响应。
+>
+> **统计窗口**：`today` 为 UTC 当日 `00:00:00` 至 `23:59:59`；`yesterday` 为 UTC 昨日 `00:00:00` 至 `23:59:59`。
 
 **Response 失败**
 
@@ -1222,6 +1225,7 @@ Header：`X-Turnstile-Token: <token>`（当 `site_options.turnstile_enabled` 或
   "expire_date": "2026-12-31",
   "traffic_limit": "1TB",
   "traffic_calc_type": "total",       // total | ...
+  "interface": "eth0,ens3",           // 指定统计网卡，多个用英文逗号分隔；空值自动汇总
   "reset_day": 1,                     // 必传整数：0 ~ 31
   "collect_interval": 1,              // 必传：0 | 1 | 2 | 5 | 10
   "report_interval": 60,              // 必传：30 | 60 | 120 | 180
@@ -1506,6 +1510,7 @@ UUID 缺失或格式非法时返回 `400 { "error": "invalidServerId", "code": 4
 | `expire_date`                                 | string             | 到期日 `YYYY-MM-DD`          |
 | `traffic_limit`                               | string             | 流量上限文本                    |
 | `traffic_calc_type`                           | string             | `total` / 其他              |
+| `interface`                                   | string             | 指定网卡统计，多个用英文逗号分隔；空值保持自动汇总 |
 | `reset_day`                                   | number             | 流量重置日 `0..31`；`0` 表示不重置 |
 | `collect_interval`                            | number             | 采集间隔枚举：`0` / `1` / `2` / `5` / `10` 秒 |
 | `report_interval`                             | number             | 上报间隔枚举：`30` / `60` / `120` / `180` 秒 |
@@ -1541,8 +1546,8 @@ UUID 缺失或格式非法时返回 `400 { "error": "invalidServerId", "code": 4
 | `kernel_version`                              | string             | 内核版本                    |
 | `agent_version`                               | string             | 最新一次上报的探针版本号              |
 | `region`                                      | string             | `request.cf.country` 或 `cf-ipcountry` 的原始值；通常为大写两字母国家/地区代码 |
-| `ip_v4`                                       | string `"0"`/`"1"` | IPv4 可达性                  |
-| `ip_v6`                                       | string `"0"`/`"1"` | IPv6 可达性                  |
+| `ip_v4`                                       | string `"0"`/`"1"` | 公共 REST 接口仅返回 IPv4 可达性，不暴露公网地址 |
+| `ip_v6`                                       | string `"0"`/`"1"` | 公共 REST 接口仅返回 IPv6 可达性，不暴露公网地址 |
 | `boot_time`                                   | string             | 启动时间（毫秒）                  |
 | `last_updated`                                | number             | 最新指标记录的 `timestamp`（毫秒） |
 | `is_online`                                   | boolean            | 5 分钟内是否有上报（仅 `list` 接口计算） |
@@ -1677,7 +1682,7 @@ curl -X POST https://status.example.com/update \
       "os":"Ubuntu 22.04","arch":"x86_64","kernel_version":"6.8.0-36-generic","cpu_info":"Intel Xeon","cpu_cores":"4",
       "gpu_info":[{"id":"0","name":"NVIDIA GPU","info":12.5}],
       "processes":"256","tcp_conn":"32","udp_conn":"4",
-      "ip_v4":"1","ip_v6":"1",
+      "ip_v4":"203.0.113.10","ip_v6":"2001:db8::10",
       "ping_ct":"23","ping_cu":"25","ping_cm":"30","ping_bd":"40"
     }
   }'

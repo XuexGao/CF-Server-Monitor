@@ -61,6 +61,7 @@ param(
     [string]$CuNode = "",
     [string]$CmNode = "",
     [string]$BdNode = "",
+    [string]$Interface = "",
     
     [switch]$STA
 )
@@ -87,6 +88,7 @@ if (-not $STA -and $host.Runspace.ApartmentState -ne 'STA') {
     if ($CuNode) { $argList += " -CuNode `"$CuNode`"" }
     if ($CmNode) { $argList += " -CmNode `"$CmNode`"" }
     if ($BdNode) { $argList += " -BdNode `"$BdNode`"" }
+    if ($Interface) { $argList += " -Interface `"$Interface`"" }
     Start-Process powershell.exe -ArgumentList $argList
     exit 0
 }
@@ -96,7 +98,7 @@ $DebugPreference = "SilentlyContinue"
 $ErrorActionPreference = "Stop"
 
 $APP_NAME = "CF-Server-Monitor"
-$AGENT_VERSION = "1.3.5"
+$AGENT_VERSION = "1.3.8"
 $TASK_NAME = "CFProbe"
 # 获取脚本所在目录
 if ($MyInvocation.MyCommand.Path) {
@@ -257,6 +259,50 @@ function ConvertTo-BinaryFlag {
     return $Default
 }
 
+function Normalize-NetworkInterfaceList {
+    param(
+        [string]$Value,
+        [switch]$Strict
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Value)) { return "" }
+    $raw = $Value.Trim()
+    $invalid = $false
+    if ($raw.Length -gt 255 -or $raw -match '[/@?#\\\[\]]') {
+        $invalid = $true
+    }
+
+    $seen = @{}
+    $items = New-Object System.Collections.Generic.List[string]
+    if (-not $invalid) {
+        foreach ($part in ($raw -split ',')) {
+            $name = $part.Trim()
+            if ([string]::IsNullOrWhiteSpace($name)) { continue }
+            if ($name.Length -gt 64 -or $name -notmatch '^[A-Za-z0-9_.:-]+$') {
+                $invalid = $true
+                break
+            }
+            $key = $name.ToLowerInvariant()
+            if (-not $seen.ContainsKey($key)) {
+                $seen[$key] = $true
+                [void]$items.Add($name)
+            }
+        }
+    }
+
+    if ($invalid) {
+        if ($Strict) { throw "Interface 参数非法，请使用英文逗号分隔的网卡名" }
+        return ""
+    }
+
+    $normalized = [string]::Join(',', [string[]]$items)
+    if ($normalized.Length -gt 255) {
+        if ($Strict) { throw "Interface 参数非法，请使用英文逗号分隔的网卡名" }
+        return ""
+    }
+    return $normalized
+}
+
 function ConvertTo-PowerShellLiteral {
     param([string]$Value)
     return "'" + $Value.Replace("'", "''") + "'"
@@ -375,12 +421,12 @@ function ConvertFrom-AgentConfigResponse {
     if ([string]::IsNullOrEmpty($bodyText) -or [Text.Encoding]::UTF8.GetByteCount($bodyText) -gt 1024) {
         throw "动态配置响应长度无效"
     }
-    if ($bodyText -notmatch '^[a-z0-9_=&.\-:]+$') { throw "动态配置包含非法字符" }
+    if ($bodyText -notmatch '^[A-Za-z0-9_=&.,:\-]+$') { throw "动态配置包含非法字符" }
 
     $allowedKeys = @(
         'collect_interval', 'report_interval', 'reset_day', 'schema_version',
         'custom_ct', 'custom_cu', 'custom_cm', 'custom_bd',
-        'rx_correction', 'tx_correction', 'update'
+        'interface', 'rx_correction', 'tx_correction', 'update'
     )
     $values = @{}
     foreach ($part in $bodyText.Split('&')) {
@@ -399,7 +445,7 @@ function ConvertFrom-AgentConfigResponse {
         throw "动态配置 update 无效"
     }
 
-    $requiredKeys = @('collect_interval', 'report_interval', 'reset_day', 'schema_version', 'custom_ct', 'custom_cu', 'custom_cm', 'custom_bd')
+    $requiredKeys = @('collect_interval', 'report_interval', 'reset_day', 'schema_version', 'custom_ct', 'custom_cu', 'custom_cm', 'custom_bd', 'interface')
     $hasConfig = $false
     foreach ($key in $requiredKeys) {
         if ($values.ContainsKey($key)) {
@@ -434,7 +480,8 @@ function ConvertFrom-AgentConfigResponse {
     $schema = [int]$values['schema_version']
     if (@(0, 1, 2, 5, 10) -notcontains $collect) { throw "collect_interval 无效" }
     if (@(30, 60, 120, 180) -notcontains $report -or $report -lt $collect) { throw "report_interval 无效" }
-    if ($reset -lt 0 -or $reset -gt 31 -or $schema -ne 2) { throw "reset_day 或 schema_version 无效" }
+    if ($reset -lt 0 -or $reset -gt 31 -or $schema -ne 3) { throw "reset_day 或 schema_version 无效" }
+    $networkInterface = Normalize-NetworkInterfaceList -Value $values['interface'] -Strict
 
     $result = @{
         has_config = $true
@@ -446,6 +493,7 @@ function ConvertFrom-AgentConfigResponse {
         cu_node = $values['custom_cu']
         cm_node = $values['custom_cm']
         bd_node = $values['custom_bd']
+        interface = $networkInterface
     }
 
     if ($values.ContainsKey('rx_correction') -and $values['rx_correction'] -ne '') {
@@ -489,6 +537,7 @@ function Invoke-AsAdmin {
     if ($CuNode) { $argList += " -CuNode `"$CuNode`"" }
     if ($CmNode) { $argList += " -CmNode `"$CmNode`"" }
     if ($BdNode) { $argList += " -BdNode `"$BdNode`"" }
+    if ($Interface) { $argList += " -Interface `"$Interface`"" }
     Start-Process powershell.exe -Verb RunAs -ArgumentList $argList -Wait
 }
 
@@ -607,13 +656,27 @@ function Get-DiskInfo {
 }
 
 function Get-NetworkStats {
+    param([string]$Interface = "")
     try {
+        $normalizedInterface = Normalize-NetworkInterfaceList -Value $Interface
+        $wanted = @{}
+        if (-not [string]::IsNullOrWhiteSpace($normalizedInterface)) {
+            foreach ($name in ($normalizedInterface -split ',')) {
+                if (-not [string]::IsNullOrWhiteSpace($name)) {
+                    $wanted[$name.ToLowerInvariant()] = $true
+                }
+            }
+        }
         $adapters = Get-NetAdapterStatistics -ErrorAction SilentlyContinue
         if ($adapters) {
             $totalRx = 0
             $totalTx = 0
             foreach ($adapter in $adapters) {
                 try {
+                    if ($wanted.Count -gt 0) {
+                        $adapterName = ([string]$adapter.Name).Trim().ToLowerInvariant()
+                        if (-not $wanted.ContainsKey($adapterName)) { continue }
+                    }
                     $totalRx += [long]$adapter.ReceivedBytes
                     $totalTx += [long]$adapter.SentBytes
                 } catch {}
@@ -897,28 +960,28 @@ function Remove-PingBackgroundJob {
 # IP 检测
 # ============================================================
 
-function Test-PublicIPv4 {
+function Get-PublicIPv4 {
     try {
         $ip = (Invoke-RestMethod -Uri "https://ipv4.icanhazip.com" -TimeoutSec 3 -ErrorAction Stop).Trim()
-        if ($ip -match '\.') { return $true }
+        if ($ip -match '\.') { return $ip }
     } catch {}
     try {
         $ip = (Invoke-RestMethod -Uri "https://api.ipify.org" -TimeoutSec 3 -ErrorAction Stop).Trim()
-        if ($ip -match '\.') { return $true }
+        if ($ip -match '\.') { return $ip }
     } catch {}
-    return $false
+    return "0"
 }
 
-function Test-PublicIPv6 {
+function Get-PublicIPv6 {
     try {
         $ip = (Invoke-RestMethod -Uri "https://ipv6.icanhazip.com" -TimeoutSec 3 -ErrorAction Stop).Trim()
-        if ($ip -match ':') { return $true }
+        if ($ip -match ':') { return $ip }
     } catch {}
     try {
         $ip = (Invoke-RestMethod -Uri "https://api64.ipify.org" -TimeoutSec 3 -ErrorAction Stop).Trim()
-        if ($ip -match ':') { return $true }
+        if ($ip -match ':') { return $ip }
     } catch {}
-    return $false
+    return "0"
 }
 
 # ============================================================
@@ -953,7 +1016,7 @@ function Save-TrafficData {
 }
 
 function Apply-TrafficCorrection {
-    param([string]$RxCorrection, [string]$TxCorrection)
+    param([string]$RxCorrection, [string]$TxCorrection, [string]$Interface = "")
     if ([string]::IsNullOrEmpty($RxCorrection)) { $RxCorrection = "0" }
     if ([string]::IsNullOrEmpty($TxCorrection)) { $TxCorrection = "0" }
     if (-not (Test-CorrectionValue $RxCorrection) -or -not (Test-CorrectionValue $TxCorrection)) { return $false }
@@ -974,6 +1037,11 @@ function Apply-TrafficCorrection {
         }
     }
 
+    $normalizedInterface = Normalize-NetworkInterfaceList -Value $Interface
+    $currentNet = Get-NetworkStats -Interface $normalizedInterface
+    $saved.RX_PREV = ([long]$currentNet.rx).ToString()
+    $saved.TX_PREV = ([long]$currentNet.tx).ToString()
+    $saved.INTERFACE = $normalizedInterface
     $saved.RX_PERIOD = $rxBytes.ToString()
     $saved.TX_PERIOD = $txBytes.ToString()
     Write-Log "流量校正已应用: RX=${RxCorrection}GB (${rxBytes} bytes) TX=${TxCorrection}GB (${txBytes} bytes)" "INFO"
@@ -1024,11 +1092,11 @@ function Send-CorrectionConfirm {
 }
 
 function Invoke-TrafficCorrection {
-    param([string]$ServerId, [string]$Secret, [string]$WorkerUrl, [string]$RxCorrection, [string]$TxCorrection)
+    param([string]$ServerId, [string]$Secret, [string]$WorkerUrl, [string]$RxCorrection, [string]$TxCorrection, [string]$Interface = "")
     $rxValue = Normalize-CorrectionValue $RxCorrection
     $txValue = Normalize-CorrectionValue $TxCorrection
 
-    if (Apply-TrafficCorrection -RxCorrection $rxValue -TxCorrection $txValue) {
+    if (Apply-TrafficCorrection -RxCorrection $rxValue -TxCorrection $txValue -Interface $Interface) {
         [void](Send-CorrectionConfirm -ServerId $ServerId -Secret $Secret -WorkerUrl $WorkerUrl -RxCorrection $rxValue -TxCorrection $txValue)
     }
 }
@@ -1060,8 +1128,9 @@ function Convert-ToLongOrDefault {
 }
 
 function Update-MonthlyTraffic {
-    param([long]$CurrentRx, [long]$CurrentTx, [int]$ResetDay)
+    param([long]$CurrentRx, [long]$CurrentTx, [int]$ResetDay, [string]$Interface = "")
     $nowTs = [long]([DateTimeOffset]::Now.ToUnixTimeSeconds())
+    $normalizedInterface = Normalize-NetworkInterfaceList -Value $Interface
     $saved = Get-TrafficData
     $savedRxPrev = Convert-ToLongOrDefault $saved["RX_PREV"]
     $savedTxPrev = Convert-ToLongOrDefault $saved["TX_PREV"]
@@ -1069,6 +1138,15 @@ function Update-MonthlyTraffic {
     $savedTxPeriod = Convert-ToLongOrDefault $saved["TX_PERIOD"]
     $savedLastCheck = Convert-ToLongOrDefault $saved["LAST_CHECK"]
     $savedPeriodStart = Convert-ToLongOrDefault $saved["PERIOD_START"]
+    $savedInterface = if ($saved.ContainsKey("INTERFACE")) { [string]$saved["INTERFACE"] } else { "" }
+    if ($savedInterface -ne $normalizedInterface) {
+        $savedRxPrev = 0
+        $savedTxPrev = 0
+        $savedRxPeriod = 0
+        $savedTxPeriod = 0
+        $savedLastCheck = 0
+        $savedPeriodStart = 0
+    }
 
     $periodStart = Get-PeriodStartTimestamp -ResetDay $ResetDay -NowTs $nowTs
     $rxDelta = 0; $txDelta = 0
@@ -1096,6 +1174,7 @@ function Update-MonthlyTraffic {
         TX_PERIOD = $savedTxPeriod.ToString()
         LAST_CHECK = $nowTs.ToString()
         PERIOD_START = $periodStart.ToString()
+        INTERFACE = $normalizedInterface
     }
     Save-TrafficData -Data $newData
     return @{ rx = $savedRxPeriod; tx = $savedTxPeriod }
@@ -1182,6 +1261,7 @@ function Start-TimerCollectLoop {
             } else {
                 "0"
             }
+            $newInterface = Normalize-NetworkInterfaceList -Value $Interface -Strict
         } catch {
             Write-Log "错误: $($_.Exception.Message)" "ERROR"
             return
@@ -1199,6 +1279,7 @@ function Start-TimerCollectLoop {
             cu_node = if ($CuNode) { $CuNode } else { "" }
             cm_node = if ($CmNode) { $CmNode } else { "" }
             bd_node = if ($BdNode) { $BdNode } else { "" }
+            interface = $newInterface
         }
         Save-Config -Config $config
         Write-Log "已保存配置到: $CONFIG_FILE" "INFO"
@@ -1225,6 +1306,16 @@ function Start-TimerCollectLoop {
     $cmNode = if ($CmNode) { $CmNode } else { Get-ConfigProperty $config 'cm_node' "" }
     $bdNode = if ($BdNode) { $BdNode } else { Get-ConfigProperty $config 'bd_node' "" }
     try {
+        $networkInterface = if ($Interface) {
+            Normalize-NetworkInterfaceList -Value $Interface -Strict
+        } else {
+            Normalize-NetworkInterfaceList -Value (Get-ConfigProperty $config 'interface' "")
+        }
+    } catch {
+        Write-Log "错误: $($_.Exception.Message)" "ERROR"
+        return
+    }
+    try {
         $autoUpdate = if ($AutoUpdate -ne "") {
             ConvertTo-BinaryFlag -Value $AutoUpdate -Default "0" -Strict
         } else {
@@ -1238,6 +1329,7 @@ function Start-TimerCollectLoop {
     $cuNode = $cuNode.Trim()
     $cmNode = $cmNode.Trim()
     $bdNode = $bdNode.Trim()
+    $networkInterface = $networkInterface.Trim()
 
     if ($workerUrl -notmatch '^https?://') {
         Write-Log "警告: worker_url 格式可能不正确: '$workerUrl'" "WARN"
@@ -1281,6 +1373,7 @@ function Start-TimerCollectLoop {
     $script:cs_cuNode = $cuNode
     $script:cs_cmNode = $cmNode
     $script:cs_bdNode = $bdNode
+    $script:cs_interface = $networkInterface
     $script:cs_autoUpdate = $autoUpdate
 
     # ========================================
@@ -1320,7 +1413,8 @@ function Start-TimerCollectLoop {
         Start-Sleep -Milliseconds 300
     } catch {}
 
-    Write-Log "探针已启动。 ServerID=$serverId Url='$workerUrl' ReportInterval=${reportInterval}s EffectiveReportInterval=${effectiveReportInterval}s CollectInterval=ignored AutoUpdate=$autoUpdate"
+    $interfaceLogValue = if ($networkInterface) { $networkInterface } else { "auto" }
+    Write-Log "探针已启动。 ServerID=$serverId Url='$workerUrl' ReportInterval=${reportInterval}s EffectiveReportInterval=${effectiveReportInterval}s CollectInterval=ignored Interface=$interfaceLogValue AutoUpdate=$autoUpdate"
 
     # ========================================
     # Timer 驱动采集：每次 Tick 执行一轮采集+上报
@@ -1337,6 +1431,7 @@ function Start-TimerCollectLoop {
             $cuN = [string]$script:cs_cuNode
             $cmN = [string]$script:cs_cmNode
             $bdN = [string]$script:cs_bdNode
+            $nicNames = [string]$script:cs_interface
             $rDay = $script:cs_resetDay
             $rInterval = $script:cs_reportInterval
             $pFile = $pingTempFile
@@ -1345,8 +1440,8 @@ function Start-TimerCollectLoop {
 
             # IP 检测（每 10 分钟）
             if ($now - $script:cs_lastIpCheck -ge 600 -or $script:cs_lastIpCheck -eq 0) {
-                $script:cs_ipV4 = if (Test-PublicIPv4) { "1" } else { "0" }
-                $script:cs_ipV6 = if (Test-PublicIPv6) { "1" } else { "0" }
+                $script:cs_ipV4 = Get-PublicIPv4
+                $script:cs_ipV6 = Get-PublicIPv6
                 $script:cs_lastIpCheck = $now
             }
 
@@ -1387,7 +1482,7 @@ function Start-TimerCollectLoop {
             $mem = Get-MemoryInfo
             $swap = Get-SwapInfo
 
-            $netStat = Get-NetworkStats
+            $netStat = Get-NetworkStats -Interface $nicNames
             $rxNow = [long]$netStat.rx
             $txNow = [long]$netStat.tx
 
@@ -1439,7 +1534,7 @@ function Start-TimerCollectLoop {
                 }
 
                 # 计算当月累计流量
-                $netTraffic = Update-MonthlyTraffic -CurrentRx $rxNow -CurrentTx $txNow -ResetDay $rDay
+                $netTraffic = Update-MonthlyTraffic -CurrentRx $rxNow -CurrentTx $txNow -ResetDay $rDay -Interface $nicNames
                 $script:cs_rxMonthly = $netTraffic.rx
                 $script:cs_txMonthly = $netTraffic.tx
 
@@ -1497,7 +1592,7 @@ function Start-TimerCollectLoop {
                 $json = $payload | ConvertTo-Json -Depth 10 -Compress
                 try {
                     $requestHeaders = @{
-                        'X-Agent-Config-Schema' = '2'
+                        'X-Agent-Config-Schema' = '3'
                         'X-Agent-Version' = $AGENT_VERSION
                         'X-Agent-Config-Md5' = if ($script:cs_configMd5) { $script:cs_configMd5 } else { 'none' }
                     }
@@ -1541,10 +1636,18 @@ function Start-TimerCollectLoop {
                                         if ($remoteConfig.ContainsKey('cu_node')) { $script:cs_cuNode = $remoteConfig.cu_node }
                                         if ($remoteConfig.ContainsKey('cm_node')) { $script:cs_cmNode = $remoteConfig.cm_node }
                                         if ($remoteConfig.ContainsKey('bd_node')) { $script:cs_bdNode = $remoteConfig.bd_node }
+                                        if ($remoteConfig.ContainsKey('interface')) { $script:cs_interface = $remoteConfig.interface }
+                                        $currentRemoteNet = Get-NetworkStats -Interface ([string]$script:cs_interface)
+                                        $script:cs_prevNet = @{
+                                            rx = [long]$currentRemoteNet.rx
+                                            tx = [long]$currentRemoteNet.tx
+                                            time = [DateTimeOffset]::Now.ToUnixTimeSeconds()
+                                        }
                                         $timer.Stop()
                                         $timer.Interval = $effectiveRemoteReportInterval * 1000
                                         $timer.Start()
-                                        Write-Log "动态配置已应用: md5=$($remoteConfig.config_md5) report_interval=$($remoteConfig.report_interval)s ct=$($remoteConfig.ct_node) cu=$($remoteConfig.cu_node) cm=$($remoteConfig.cm_node) bd=$($remoteConfig.bd_node)" "INFO"
+                                        $remoteInterfaceLog = if ($script:cs_interface) { $script:cs_interface } else { "auto" }
+                                        Write-Log "动态配置已应用: md5=$($remoteConfig.config_md5) report_interval=$($remoteConfig.report_interval)s interface=$remoteInterfaceLog ct=$($remoteConfig.ct_node) cu=$($remoteConfig.cu_node) cm=$($remoteConfig.cm_node) bd=$($remoteConfig.bd_node)" "INFO"
 
                                         $script:cs_lastPingCheck = 0
                                         $script:cs_pingCt = Get-ProbeInitialValue $script:cs_ctNode
@@ -1574,7 +1677,7 @@ function Start-TimerCollectLoop {
                             if ($hasRemoteConfig -and $configApplied -and ($remoteConfig.ContainsKey('rx_correction') -or $remoteConfig.ContainsKey('tx_correction'))) {
                                 $rxCorr = if ($remoteConfig.ContainsKey('rx_correction')) { $remoteConfig.rx_correction } else { "" }
                                 $txCorr = if ($remoteConfig.ContainsKey('tx_correction')) { $remoteConfig.tx_correction } else { "" }
-                                Invoke-TrafficCorrection -ServerId $srvId -Secret $sec -WorkerUrl $wUrl -RxCorrection $rxCorr -TxCorrection $txCorr
+                                Invoke-TrafficCorrection -ServerId $srvId -Secret $sec -WorkerUrl $wUrl -RxCorrection $rxCorr -TxCorrection $txCorr -Interface ([string]$script:cs_interface)
                             }
 
                             if ($remoteConfig.ContainsKey('update') -and $remoteConfig.update -eq "1") {
@@ -1612,6 +1715,7 @@ function Install-Service {
     Write-Host "  Id: '$Id'" -ForegroundColor Cyan
     Write-Host "  Secret: '********'" -ForegroundColor Cyan
     Write-Host "  Url: '$Url'" -ForegroundColor Cyan
+    Write-Host "  Interface: '$Interface'" -ForegroundColor Cyan
     Write-Host "  AutoUpdate: '$AutoUpdate'" -ForegroundColor Cyan
     Write-Host "  脚本目录: $SCRIPT_DIR" -ForegroundColor Cyan
     Write-Host "  配置文件: $CONFIG_FILE" -ForegroundColor Cyan
@@ -1640,6 +1744,16 @@ function Install-Service {
     $cleanSecret = if ($Secret) { $Secret.Trim().Trim("'").Trim('"') } else { "" }
     $cleanUrl = if ($Url) { $Url.Trim().Trim("'").Trim('"') } else { "" }
     try {
+        $existingInterface = if ($existingConfig) {
+            Normalize-NetworkInterfaceList -Value (Get-ConfigProperty $existingConfig 'interface' "")
+        } else {
+            ""
+        }
+        $interfaceValue = if ($Interface) {
+            Normalize-NetworkInterfaceList -Value $Interface -Strict
+        } else {
+            $existingInterface
+        }
         $existingAutoUpdate = if ($existingConfig -and $null -ne $existingConfig.auto_update) {
             ConvertTo-BinaryFlag -Value $existingConfig.auto_update -Default "0"
         } else {
@@ -1668,6 +1782,7 @@ function Install-Service {
         cu_node = if ($CuNode) { $CuNode } else { Get-ConfigProperty $existingConfig 'cu_node' "" }
         cm_node = if ($CmNode) { $CmNode } else { Get-ConfigProperty $existingConfig 'cm_node' "" }
         bd_node = if ($BdNode) { $BdNode } else { Get-ConfigProperty $existingConfig 'bd_node' "" }
+        interface = $interfaceValue
     }
 
     if (-not $config.server_id -or -not $config.secret -or -not $config.worker_url) {
@@ -1701,7 +1816,7 @@ function Install-Service {
     $hasTxCorr = $TxCorrection -ne ""
     if ($hasRxCorr -or $hasTxCorr) {
         Write-Host "应用流量校正..." -ForegroundColor Cyan
-        $netStat = Get-NetworkStats
+        $netStat = Get-NetworkStats -Interface ([string]$config.interface)
         $currentRx = [long]$netStat.rx
         $currentTx = [long]$netStat.tx
         $nowTs = [long]([DateTimeOffset]::Now.ToUnixTimeSeconds())
@@ -1714,6 +1829,7 @@ function Install-Service {
             TX_PERIOD = $txBytes.ToString()
             LAST_CHECK = $nowTs.ToString()
             PERIOD_START = "0"
+            INTERFACE = [string]$config.interface
         }
         Save-TrafficData -Data $trafficData
         if ($hasRxCorr) { Write-Host "  下行校正: ${RxCorrection}GB" -ForegroundColor Cyan }
@@ -1750,6 +1866,7 @@ function Install-Service {
     Write-Host "  上报间隔   : $($config.report_interval)秒"
     Write-Host "  实际间隔   : $effectiveInstallReportInterval秒"
     Write-Host "  采样间隔   : Windows PowerShell 版不启用 samples 缓存"
+    Write-Host "  统计网卡   : $(if ($config.interface) { $config.interface } else { '自动汇总' })"
     Write-Host "  流量重置日 : $($config.reset_day)号"
     Write-Host "  自动更新   : $($config.auto_update)"
     Write-Host "  配置文件   : $CONFIG_FILE"

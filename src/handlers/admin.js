@@ -8,7 +8,7 @@ import { AppError, createSuccessResponse, createBadRequestResponse, createUnauth
 import { addServerColumns } from '../database/updateDatabase.js';
 import { clearResourceAlertState, sendNotification } from '../services/notification.js';
 import { getNextServerHistoryPartitionId, HISTORY_MAX_PARTITION_ID } from '../database/indexOptimization.js';
-import { isValidTrafficCorrection, validateAgentConfigInput, validatePingNode } from '../utils/agentConfig.js';
+import { isValidTrafficCorrection, validateAgentConfigInput, validatePingNode, validateNetworkInterfaces } from '../utils/agentConfig.js';
 import { detectBillingCycle, detectCurrencySymbol, normalizeBillingCycle, normalizeCurrency, normalizePrice, renewExpireDateIfNeeded } from '../utils/serverBilling.js';
 
 const PING_NODE_FIELDS = ['custom_ct', 'custom_cu', 'custom_cm', 'custom_bd'];
@@ -100,6 +100,14 @@ function normalizePingNodeFields(source, fields = PING_NODE_FIELDS) {
     values[field] = result.value;
   }
   return { valid: true, values };
+}
+
+function normalizeNetworkInterfaceField(value) {
+  const result = validateNetworkInterfaces(value);
+  if (!result.valid) {
+    return { valid: false, value: '' };
+  }
+  return { valid: true, value: result.value };
 }
 
 function hasAppearanceInput(settings) {
@@ -226,12 +234,15 @@ function getUtcTodayRange() {
   };
 }
 
-function getLast24HoursRange() {
+function getUtcYesterdayRange() {
   const now = new Date();
-  const end = now;
-  const start = new Date(now.getTime() - 86400000);
+  const todayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const start = new Date(todayStart.getTime() - 86400000);
+  const end = new Date(todayStart.getTime() - 1);
   return {
-    date: start.toISOString().slice(0, 10) + ' ~ ' + end.toISOString().slice(0, 10),
+    date: start.toISOString().slice(0, 10),
+    start: start.toISOString().slice(0, 10),
+    end: end.toISOString().slice(0, 10),
     startTime: start.toISOString(),
     endTime: end.toISOString()
   };
@@ -255,7 +266,7 @@ async function cloudflareGraphql(query, variables, token) {
 }
 
 async function fetchCloudflareUsage(token, accountId, range) {
-  const query = `query CloudflareUsage($accountTag: string!, $start: Date, $end: Date, $startTime: string, $endTime: string) {
+  const query = `query CloudflareUsage($accountTag: string!, $start: Date, $end: Date, $startTime: Time!, $endTime: Time!) {
     viewer {
       accounts(filter: { accountTag: $accountTag }) {
         d1AnalyticsAdaptiveGroups(
@@ -276,8 +287,8 @@ async function fetchCloudflareUsage(token, accountId, range) {
   }`;
   const data = await cloudflareGraphql(query, {
     accountTag: accountId,
-    start: range.start || range.startTime.slice(0, 10),
-    end: range.end || range.endTime.slice(0, 10),
+    start: range.start,
+    end: range.end,
     startTime: range.startTime,
     endTime: range.endTime
   }, token);
@@ -299,12 +310,18 @@ async function getD1DailyUsage(token, accountId) {
   if (!accountId) throw new Error('cloudflareAccountIdRequired');
 
   const todayRange = getUtcTodayRange();
-  const last24Range = getLast24HoursRange();
+  const yesterdayRange = getUtcYesterdayRange();
 
-  const [todayUsage, last24Usage] = await Promise.all([
+  const [todayUsage, yesterdayUsage] = await Promise.all([
     fetchCloudflareUsage(token, accountId, todayRange),
-    fetchCloudflareUsage(token, accountId, last24Range)
+    fetchCloudflareUsage(token, accountId, yesterdayRange)
   ]);
+
+  const yesterday = {
+    rowsRead: yesterdayUsage.rowsRead,
+    rowsWritten: yesterdayUsage.rowsWritten,
+    workersRequests: yesterdayUsage.workersRequests
+  };
 
   return {
     today: {
@@ -312,11 +329,7 @@ async function getD1DailyUsage(token, accountId) {
       rowsWritten: todayUsage.rowsWritten,
       workersRequests: todayUsage.workersRequests
     },
-    last24Hours: {
-      rowsRead: last24Usage.rowsRead,
-      rowsWritten: last24Usage.rowsWritten,
-      workersRequests: last24Usage.workersRequests
-    }
+    yesterday
   };
 }
 
@@ -447,7 +460,6 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null)
         if (latestMetrics) {
           isOnline = (now - latestMetrics.timestamp) < ONLINE_THRESHOLD;
           mergeMetricsIntoServer(item, latestMetrics);
-          item.ip = latestMetrics.ip || '';
         } else {
           item.last_updated = 0;
           item.is_online = false;
@@ -456,7 +468,6 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null)
           item.arch = '';
           item.os = '';
           item.agent_version = '';
-          item.ip = '';
           item.ip_v4 = '0';
           item.ip_v6 = '0';
           item.boot_time = '';
@@ -647,6 +658,10 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null)
       if (!isValidName(name)) {
         return createBadRequestResponse('invalidServerName');
       }
+      const networkInterfaces = normalizeNetworkInterfaceField(data.interface);
+      if (!networkInterfaces.valid) {
+        return createBadRequestResponse('invalidNetworkInterface');
+      }
       
       const id = crypto.randomUUID();
       const group = data.server_group || 'Default';
@@ -660,9 +675,9 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null)
 
         await env.DB.prepare(`
           INSERT INTO servers
-          (id, name, server_group, region, sort_order, history_partition_id, timestamp)
-          VALUES (?, ?, ?, ?, ?, ?, ?)
-        `).bind(id, name, group, region, sortOrder, historyPartitionId, Date.now()).run();
+          (id, name, server_group, region, "interface", sort_order, history_partition_id, timestamp)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `).bind(id, name, group, region, networkInterfaces.value, sortOrder, historyPartitionId, Date.now()).run();
       } catch (e) {
         return handleServerMutationError(env.DB, e, 'serverAddFailed');
       }
@@ -711,7 +726,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null)
       });
     }
     else if (data.action === 'edit') {
-      const { id, name, server_group, region, tags, note, price, billing_cycle, auto_renewal, currency, expire_date, traffic_limit, traffic_calc_type, reset_day, collect_interval, report_interval, auto_update, custom_ct, custom_cu, custom_cm, custom_bd, rx_correction, tx_correction, offline_notify_disabled, is_hidden } = data;
+      const { id, name, server_group, region, tags, note, price, billing_cycle, auto_renewal, currency, expire_date, traffic_limit, traffic_calc_type, interface: networkInterfaceInput, reset_day, collect_interval, report_interval, auto_update, custom_ct, custom_cu, custom_cm, custom_bd, rx_correction, tx_correction, offline_notify_disabled, is_hidden } = data;
       if (!id || !isValidUUID(id)) {
         return createBadRequestResponse('invalidServerId');
       }
@@ -728,6 +743,10 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null)
       const pingNodes = normalizePingNodeFields({ custom_ct, custom_cu, custom_cm, custom_bd });
       if (!pingNodes.valid) {
         return createBadRequestResponse('invalidPingNodeFormat');
+      }
+      const networkInterfaces = normalizeNetworkInterfaceField(networkInterfaceInput);
+      if (!networkInterfaces.valid) {
+        return createBadRequestResponse('invalidNetworkInterface');
       }
       const safeTags = String(tags || '')
         .split(',')
@@ -758,7 +777,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null)
       try {
         await env.DB.prepare(`
           UPDATE servers
-          SET name = ?, server_group = ?, region = ?, tags = ?, note = ?, price = ?, billing_cycle = ?, auto_renewal = ?, currency = ?, expire_date = ?, traffic_limit = ?, traffic_calc_type = ?, reset_day = ?, collect_interval = ?, report_interval = ?, auto_update = ?, custom_ct = ?, custom_cu = ?, custom_cm = ?, custom_bd = ?, rx_correction = ?, tx_correction = ?, offline_notify_disabled = ?, is_hidden = ?
+          SET name = ?, server_group = ?, region = ?, tags = ?, note = ?, price = ?, billing_cycle = ?, auto_renewal = ?, currency = ?, expire_date = ?, traffic_limit = ?, traffic_calc_type = ?, "interface" = ?, reset_day = ?, collect_interval = ?, report_interval = ?, auto_update = ?, custom_ct = ?, custom_cu = ?, custom_cm = ?, custom_bd = ?, rx_correction = ?, tx_correction = ?, offline_notify_disabled = ?, is_hidden = ?
           WHERE id = ?
         `).bind(
           name || '',
@@ -773,6 +792,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null)
           billingData.expire_date,
           traffic_limit || '',
           traffic_calc_type || 'total',
+          networkInterfaces.value,
           normalizedAgentConfig.reset_day,
           normalizedAgentConfig.collect_interval,
           normalizedAgentConfig.report_interval,
@@ -885,15 +905,21 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null)
         existingIds.add(server.id);
 
         const billingData = normalizeServerBillingData(server);
+        const networkInterfaces = normalizeNetworkInterfaceField(server.interface);
+        if (!networkInterfaces.valid) {
+          skipped++;
+          skippedIds.push(server.id);
+          continue;
+        }
 
         try {
           await env.DB.prepare(`
             INSERT INTO servers (id, name, server_group, region, tags, note, price, billing_cycle, auto_renewal,
               currency, expire_date,
-              traffic_limit, traffic_calc_type, reset_day, collect_interval, report_interval,
+              traffic_limit, traffic_calc_type, "interface", reset_day, collect_interval, report_interval,
               auto_update, custom_ct, custom_cu, custom_cm, custom_bd, rx_correction, tx_correction,
               offline_notify_disabled, is_hidden, sort_order, history_partition_id, timestamp)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `).bind(
             server.id,
             server.name || '',
@@ -908,6 +934,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null)
             billingData.expire_date,
             server.traffic_limit || '',
             server.traffic_calc_type || 'total',
+            networkInterfaces.value,
             server.reset_day ?? 1,
             server.collect_interval ?? 0,
             server.report_interval ?? 60,

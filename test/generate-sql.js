@@ -128,6 +128,7 @@ CREATE TABLE IF NOT EXISTS servers (
   expire_date TEXT DEFAULT '',
   traffic_limit TEXT DEFAULT '',
   traffic_calc_type TEXT DEFAULT 'total',
+  "interface" TEXT DEFAULT '',
   reset_day INTEGER DEFAULT 1,
   collect_interval INTEGER DEFAULT 0,
   report_interval INTEGER DEFAULT 60,

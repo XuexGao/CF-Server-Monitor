@@ -12,12 +12,32 @@ import {
 
 const LATEST_REPORT_ID_CHUNK_SIZE = 500;
 
+function toPublicIpReachability(value) {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  return normalized && normalized !== '0' && normalized !== 'false' ? '1' : '0';
+}
+
+function normalizePublicIpFields(item, ensureFields = true) {
+  if (ensureFields || Object.prototype.hasOwnProperty.call(item, 'ip_v4')) {
+    item.ip_v4 = toPublicIpReachability(item.ip_v4);
+  }
+  if (ensureFields || Object.prototype.hasOwnProperty.call(item, 'ip_v6')) {
+    item.ip_v6 = toPublicIpReachability(item.ip_v6);
+  }
+  for (const field of ['data', 'payload', 'metrics']) {
+    if (item[field] && typeof item[field] === 'object' && !Array.isArray(item[field])) {
+      item[field] = normalizePublicIpFields({ ...item[field] }, false);
+    }
+  }
+  return item;
+}
+
 function withoutPrivateServerFields(server) {
   const item = { ...server };
   delete item.bandwidth;
   delete item.note;
   delete item.auto_update;
-  return item;
+  return normalizePublicIpFields(item);
 }
 
 function normalizeLatestReportSample(sample) {
@@ -25,8 +45,9 @@ function normalizeLatestReportSample(sample) {
   const data = sample?.data || sample?.payload || sample?.metrics;
   if (!data || typeof data !== 'object') return null;
 
+  const publicData = normalizePublicIpFields({ ...data }, false);
   const ts = sample.ts ?? sample.timestamp;
-  return ts === undefined ? { data } : { ts, data };
+  return ts === undefined ? { data: publicData } : { ts, data: publicData };
 }
 
 function normalizeLatestReportUpdate(update) {
@@ -177,6 +198,7 @@ export async function handleServersAPI(request, env, sys) {
       isOnline = (now - latestMetrics.timestamp) < 300000;
       mergeMetricsIntoServer(server, latestMetrics);
     }
+    normalizePublicIpFields(server);
     
     if (isOnline) {
       globalOnline++;

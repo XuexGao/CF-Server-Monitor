@@ -26,8 +26,8 @@
         </div>
 
         <div class="form-group flex-1">
-          <label class="form-label">{{ trans.region }}</label>
-          <input type="text" name="edit_region" autocomplete="off" v-model.trim="editForm.region" class="form-input" placeholder="e.g. HK">
+          <label class="form-label">{{ trans.region }} CN/US/GB</label>
+          <input type="text" name="edit_region" autocomplete="off" v-model.trim="editForm.region" class="form-input" :placeholder="trans.regionPlaceholder">
         </div>
       </div>
 
@@ -118,6 +118,10 @@
             <option :value="120">120</option>
             <option :value="180">180</option>
           </select>
+        </div>
+        <div class="form-group flex-1">
+          <label class="form-label">{{ trans.networkInterface }}</label>
+          <input type="text" name="edit_interface" autocomplete="off" v-model.trim="editForm.interface" class="form-input" :placeholder="trans.networkInterfacePlaceholder">
         </div>
       </div>
 

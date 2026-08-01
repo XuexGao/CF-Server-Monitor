@@ -18,14 +18,17 @@
       <div class="server-meta">
         <div class="card-meta">
           <div v-if="sysConfig.show_price && priceText" class="card-meta-item">💰 {{ priceText }}</div>
-          <div v-if="sysConfig.show_expire && server.expire_date" class="card-meta-item">📅 <span :class="{ 'expired': isExpired }">{{ expireText }}</span></div>
+          <div v-if="sysConfig.show_expire && server.expire_date" class="card-meta-item card-meta-expire">
+            📅 <span :class="{ 'expired': isExpired }">{{ expireText }}</span>
+            <span v-if="expireDateTitle" class="card-meta-tooltip">{{ expireDateTitle }}</span>
+          </div>
         </div>
         <div class="card-badges">
           <span v-for="(tag, index) in tagList" :key="tag" :class="['badge', 'badge-tag', tagColorClass(index)]">{{ tag }}</span>
-          <span v-if="server.ip_v4 === '1' && server.ip_v6 === '1'" class="badge badge-v4-v6">IPv4/6</span>
+          <span v-if="hasPublicIPv4 && hasPublicIPv6" class="badge badge-v4-v6">IPv4/6</span>
           <template v-else>
-            <span v-if="server.ip_v4 === '1'" class="badge badge-v4">IPv4</span>
-            <span v-if="server.ip_v6 === '1'" class="badge badge-v6">IPv6</span>
+            <span v-if="hasPublicIPv4" class="badge badge-v4">IPv4</span>
+            <span v-if="hasPublicIPv6" class="badge badge-v6">IPv6</span>
           </template>
         </div>
       </div>
@@ -158,6 +161,7 @@ const {
   totalRx,
   totalTx,
   priceText,
+  expireDateTitle,
   loadAvg,
   ramUsageText,
   memoryUsageTitle,
@@ -173,6 +177,8 @@ const {
   getPublicAssetUrl,
   tagList,
   tagColorClass,
+  hasPublicIPv4,
+  hasPublicIPv6,
   isExpired,
   expireText
 } = useServerCardData(props)

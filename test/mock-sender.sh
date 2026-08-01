@@ -6,7 +6,7 @@
 # curl -k -i -X POST 'https://localhost:8787/update' \
 #   -H 'Content-Type: application/json' \
 #   -H 'X-Agent-Version: 1.3.0' \
-#   -d '{"id":"550e8400-e29b-41d4-a716-446655440001","secret":"123456","metrics":{"cpu":"45.5","gpu_info":[{"name":"Mock GPU","info":60.5,"id":"0"}],"ram_total":"16","ram_used":"8","disk_total":"256","disk_used":"128","load_avg":"1.50 1.20 0.80","boot_time":"1700000000000","net_rx":"1000000000","net_tx":"500000000","net_rx_monthly":"5000000000","net_tx_monthly":"2000000000","net_in_speed":"10000000","net_out_speed":"5000000","os":"Ubuntu 22.04","arch":"x86_64","cpu_info":"Intel Core i7-12700K","cpu_cores":"8","processes":"256","tcp_conn":"128","udp_conn":"32","ip_v4":"1","ip_v6":"0","ping_ct":"35","ping_cu":"45","ping_cm":"55","ping_bd":"75","loss_ct":"0","loss_cu":"1","loss_cm":"2","loss_bd":"3"}}'
+#   -d '{"id":"550e8400-e29b-41d4-a716-446655440001","secret":"123456","metrics":{"cpu":"45.5","gpu_info":[{"name":"Mock GPU","info":60.5,"id":"0"}],"ram_total":"16","ram_used":"8","disk_total":"256","disk_used":"128","load_avg":"1.50 1.20 0.80","boot_time":"1700000000000","net_rx":"1000000000","net_tx":"500000000","net_rx_monthly":"5000000000","net_tx_monthly":"2000000000","net_in_speed":"10000000","net_out_speed":"5000000","os":"Ubuntu 22.04","arch":"x86_64","cpu_info":"Intel Core i7-12700K","cpu_cores":"8","processes":"256","tcp_conn":"128","udp_conn":"32","ip_v4":"203.0.113.10","ip_v6":"0","ping_ct":"35","ping_cu":"45","ping_cm":"55","ping_bd":"75","loss_ct":"0","loss_cu":"1","loss_cm":"2","loss_bd":"3"}}'
 
 set -euo pipefail
 
@@ -104,8 +104,17 @@ while true; do
     TX_PREV=${TX_NOW}
     PREV_LOOP_TIME=${LOOP_START_TIME}
     
-    IPV4=$(generate_int 0 1)
-    IPV6=$(generate_int 0 1)
+    if [ "$(generate_int 0 1)" -eq 1 ]; then
+        IPV4="203.0.113.$(generate_int 2 254)"
+    else
+        IPV4="0"
+    fi
+    if [ "$(generate_int 0 1)" -eq 1 ]; then
+        IPV6_SUFFIX=$(generate_int 2 4095)
+        IPV6=$(printf "2001:db8::%x" "$IPV6_SUFFIX")
+    else
+        IPV6="0"
+    fi
     PING_CT=$(generate_int 10 150)
     PING_CU=$(generate_int 20 200)
     PING_CM=$(generate_int 30 250)

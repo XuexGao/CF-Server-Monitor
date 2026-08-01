@@ -183,74 +183,93 @@
         </div>
 
         <div class="resource-alert-header">
-          <div class="section-subtitle">{{ trans.resourceAlert }}</div>
+          <button
+            type="button"
+            class="resource-alert-toggle"
+            :aria-expanded="resourceAlertExpanded"
+            @click="toggleResourceAlertExpanded"
+          >
+            <span class="resource-alert-caret" :class="{ expanded: resourceAlertExpanded }">▸</span>
+            <span class="section-subtitle">{{ trans.resourceAlert }}</span>
+            <span class="resource-alert-count">[{{ resourceAlertRules.length }}]</span>
+            <span class="resource-alert-toggle-text">{{ resourceAlertToggleText }}</span>
+          </button>
           <button type="button" class="btn btn-primary btn-sm" @click="addResourceAlertRule">+ {{ trans.resourceAlertAddRule }}</button>
         </div>
-        <p class="text-muted text-sm mt-1">{{ trans.resourceAlertTip }}</p>
 
-        <div v-if="resourceAlertRules.length === 0" class="resource-alert-empty text-muted text-sm">
-          {{ trans.resourceAlertEmpty }}
-        </div>
+        <div v-if="resourceAlertExpanded" class="resource-alert-body">
+          <p class="text-muted text-sm mt-1">{{ trans.resourceAlertTip }}</p>
 
-        <div v-for="(rule, index) in resourceAlertRules" :key="rule.id || index" class="resource-alert-rule">
-          <div class="resource-alert-rule-title">
-            <span>{{ trans.resourceAlertRule }} #{{ index + 1 }}</span>
-            <button type="button" class="btn btn-red btn-sm" @click="removeResourceAlertRule(index)">{{ trans.delete }}</button>
+          <div v-if="resourceAlertRules.length === 0" class="resource-alert-empty text-muted text-sm">
+            {{ trans.resourceAlertEmpty }}
           </div>
 
-          <div class="form-row">
-            <div class="form-group flex-1">
-              <label class="form-label">{{ trans.resourceAlertRuleName }}</label>
-              <input type="text" v-model="rule.name" class="form-input" :placeholder="trans.resourceAlertRuleNamePlaceholder">
+          <div v-for="(rule, index) in resourceAlertRules" :key="rule.id || index" class="resource-alert-rule">
+            <div class="resource-alert-rule-title">
+              <span>{{ trans.resourceAlertRule }} #{{ index + 1 }}</span>
+              <button type="button" class="btn btn-red btn-sm" @click="removeResourceAlertRule(index)">{{ trans.delete }}</button>
             </div>
 
-            <div class="form-group flex-1">
-              <label class="form-label">{{ trans.resourceAlertMetric }}</label>
-              <select v-model="rule.metric" class="form-select" @change="normalizeRuleThreshold(rule)">
-                <option v-for="option in resourceAlertMetricOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
-              </select>
+            <div class="form-row">
+              <div class="form-group flex-1">
+                <label class="form-label">{{ trans.resourceAlertRuleName }}</label>
+                <input
+                  :ref="el => setResourceAlertRuleNameInput(rule.id, el)"
+                  type="text"
+                  v-model="rule.name"
+                  class="form-input"
+                  :placeholder="trans.resourceAlertRuleNamePlaceholder"
+                >
+              </div>
+
+              <div class="form-group flex-1">
+                <label class="form-label">{{ trans.resourceAlertMetric }}</label>
+                <select v-model="rule.metric" class="form-select" @change="normalizeRuleThreshold(rule)">
+                  <option v-for="option in resourceAlertMetricOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+                </select>
+              </div>
+
+              <div class="form-group flex-1">
+                <label class="form-label">{{ trans.resourceAlertThreshold }}</label>
+                <input type="number" min="0" :max="resourceAlertThresholdMax(rule.metric)" step="1" v-model="rule.threshold" class="form-input" :placeholder="resourceAlertThresholdPlaceholder(rule.metric)">
+              </div>
             </div>
 
-            <div class="form-group flex-1">
-              <label class="form-label">{{ trans.resourceAlertThreshold }}</label>
-              <input type="number" min="0" :max="resourceAlertThresholdMax(rule.metric)" step="1" v-model="rule.threshold" class="form-input" :placeholder="resourceAlertThresholdPlaceholder(rule.metric)">
-            </div>
-          </div>
+            <div class="form-row">
+              <div class="form-group flex-1">
+                <label class="form-label">{{ trans.resourceAlertServers }}</label>
+                <details class="resource-alert-server-dropdown">
+                  <summary class="form-select resource-alert-server-summary">
+                    {{ resourceAlertServerSelectLabel(rule) }}
+                  </summary>
+                  <div class="resource-alert-server-menu">
+                    <label v-for="server in resourceAlertServerOptions" :key="server.id" class="resource-alert-server-option">
+                      <input
+                        type="checkbox"
+                        :checked="resourceAlertRuleHasServer(rule, server.id)"
+                        :disabled="isLastResourceAlertRuleServer(rule, server.id)"
+                        @change="toggleResourceAlertRuleServer(rule, server.id, $event.target.checked)"
+                      >
+                      <span>{{ server.name }}</span>
+                    </label>
+                  </div>
+                </details>
+              </div>
 
-          <div class="form-row">
-            <div class="form-group flex-1">
-              <label class="form-label">{{ trans.resourceAlertServers }}</label>
-              <details class="resource-alert-server-dropdown">
-                <summary class="form-select resource-alert-server-summary">
-                  {{ resourceAlertServerSelectLabel(rule) }}
-                </summary>
-                <div class="resource-alert-server-menu">
-                  <label v-for="server in resourceAlertServerOptions" :key="server.id" class="resource-alert-server-option">
-                    <input
-                      type="checkbox"
-                      :checked="resourceAlertRuleHasServer(rule, server.id)"
-                      :disabled="isLastResourceAlertRuleServer(rule, server.id)"
-                      @change="toggleResourceAlertRuleServer(rule, server.id, $event.target.checked)"
-                    >
-                    <span>{{ server.name }}</span>
-                  </label>
-                </div>
-              </details>
-            </div>
+              <div class="form-group flex-1">
+                <label class="form-label">{{ trans.resourceAlertInterval }}</label>
+                <select v-model="rule.intervalMinutes" class="form-select">
+                  <option v-for="option in resourceAlertIntervalOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+                </select>
+              </div>
 
-            <div class="form-group flex-1">
-              <label class="form-label">{{ trans.resourceAlertInterval }}</label>
-              <select v-model="rule.intervalMinutes" class="form-select">
-                <option v-for="option in resourceAlertIntervalOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
-              </select>
-            </div>
-
-            <div class="form-group flex-1">
-              <label class="form-label">{{ trans.resourceAlertMode }}</label>
-              <select v-model="rule.mode" class="form-select">
-                <option value="average">{{ trans.resourceAlertModeAverage }}</option>
-                <option value="continuous">{{ trans.resourceAlertModeContinuous }}</option>
-              </select>
+              <div class="form-group flex-1">
+                <label class="form-label">{{ trans.resourceAlertMode }}</label>
+                <select v-model="rule.mode" class="form-select">
+                  <option value="average">{{ trans.resourceAlertModeAverage }}</option>
+                  <option value="continuous">{{ trans.resourceAlertModeContinuous }}</option>
+                </select>
+              </div>
             </div>
           </div>
         </div>
@@ -462,8 +481,9 @@
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, onMounted, reactive } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { HISTORY } from '../../../utils/constants.js'
+import { currentLang } from '../../../utils/i18n.js'
 import { PING_NODE_FIELDS, validatePingNode } from '../../../utils/pingNode.js'
 
 const props = defineProps({
@@ -546,6 +566,27 @@ const ensureResourceAlertRules = () => {
 }
 
 const resourceAlertRules = computed(() => ensureResourceAlertRules())
+const resourceAlertExpanded = ref(false)
+const resourceAlertRuleNameInputs = new Map()
+const resourceAlertToggleText = computed(() => {
+  const isZh = currentLang.value === 'zh'
+  return resourceAlertExpanded.value
+    ? (isZh ? '收起' : 'Collapse')
+    : (isZh ? '展开' : 'Expand')
+})
+
+const toggleResourceAlertExpanded = () => {
+  resourceAlertExpanded.value = !resourceAlertExpanded.value
+}
+
+const setResourceAlertRuleNameInput = (ruleId, input) => {
+  if (!ruleId) return
+  if (input) {
+    resourceAlertRuleNameInputs.set(ruleId, input)
+  } else {
+    resourceAlertRuleNameInputs.delete(ruleId)
+  }
+}
 
 const resourceAlertMetricOptions = computed(() => [
   { value: 'cpu', label: props.trans.resourceAlertMetricCpu || 'CPU (%)' },
@@ -644,9 +685,10 @@ const normalizeRuleThreshold = (rule) => {
 }
 
 const addResourceAlertRule = () => {
+  resourceAlertExpanded.value = true
   const rules = ensureResourceAlertRules()
   const metric = 'cpu'
-  rules.push({
+  const rule = {
     id: createRuleId(),
     name: `${props.trans.resourceAlertRule || 'Resource Alert'} ${rules.length + 1}`,
     metric,
@@ -654,6 +696,12 @@ const addResourceAlertRule = () => {
     servers: resourceAlertServerOptions.value.map(server => server.id),
     intervalMinutes: '5',
     mode: 'average'
+  }
+  rules.push(rule)
+  nextTick(() => {
+    const input = resourceAlertRuleNameInputs.get(rule.id)
+    input?.focus()
+    input?.select()
   })
 }
 

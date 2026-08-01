@@ -56,6 +56,10 @@
           <span class="config-value">{{ isBlank(customBd) ? '-' : customBd }}</span>
         </div>
         <div class="config-row">
+          <span class="config-label">{{ trans.networkInterface }}</span>
+          <span class="config-value">{{ isBlank(networkInterface) ? '-' : networkInterface }}</span>
+        </div>
+        <div class="config-row">
           <span class="config-label">{{ trans.rxCorrection }} (GB)</span>
           <span class="config-value">{{ formatWithUnit(rxCorrection, 'GB') }}</span>
         </div>
@@ -95,6 +99,7 @@ defineProps({
   customCu: { type: String, default: '' },
   customCm: { type: String, default: '' },
   customBd: { type: String, default: '' },
+  networkInterface: { type: String, default: '' },
   resetDay: { type: [Number, String], default: 1 },
   rxCorrection: { type: [Number, String], default: '' },
   txCorrection: { type: [Number, String], default: '' },

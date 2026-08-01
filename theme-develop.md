@@ -581,8 +581,8 @@ interface Server {
   os: string;
   kernel_version: string;
   region: string;
-  ip_v4: '0' | '1';
-  ip_v6: '0' | '1';
+  ip_v4: '0' | '1'; // 公共 REST 接口仅返回 IPv4 可达性
+  ip_v6: '0' | '1'; // 公共 REST 接口仅返回 IPv6 可达性
   boot_time: string;
   agent_version?: string;
   last_updated: number;

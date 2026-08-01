@@ -115,6 +115,8 @@ export function useServerCardData(props) {
     .filter(Boolean)
   )
   const tagColorClass = (index) => `tag-color-${index % 6}`
+  const hasPublicIPv4 = computed(() => String(props.server.ip_v4 ?? '').trim() === '1')
+  const hasPublicIPv6 = computed(() => String(props.server.ip_v6 ?? '').trim() === '1')
 
   const netInSpeed = computed(() => formatBytes(props.server.net_in_speed))
   const netOutSpeed = computed(() => formatBytes(props.server.net_out_speed))
@@ -123,6 +125,26 @@ export function useServerCardData(props) {
   const totalRxMonthly = computed(() => formatBytes(props.server.net_rx_monthly))
   const totalTxMonthly = computed(() => formatBytes(props.server.net_tx_monthly))
   const priceText = computed(() => formatBillingPrice(props.server, currentLang.value))
+
+  const formatDateOnly = (value) => {
+    const raw = String(value || '').trim()
+    if (!raw) return ''
+    const dateOnly = raw.match(/^(\d{4}-\d{2}-\d{2})/)?.[1]
+    if (dateOnly) return dateOnly
+
+    const date = new Date(raw)
+    if (Number.isNaN(date.getTime())) return ''
+    return [
+      date.getFullYear(),
+      String(date.getMonth() + 1).padStart(2, '0'),
+      String(date.getDate()).padStart(2, '0')
+    ].join('-')
+  }
+
+  const expireDateTitle = computed(() => {
+    const expireDate = formatDateOnly(props.server.expire_date)
+    return expireDate ? `${trans.value.expirationDate || 'Expiration Date'}: ${expireDate}` : ''
+  })
 
   const loadAvg = computed(() => {
     const raw = String(props.server.load_avg || '').trim()
@@ -269,6 +291,8 @@ export function useServerCardData(props) {
     trafficLimitText,
     tagList,
     tagColorClass,
+    hasPublicIPv4,
+    hasPublicIPv6,
     netInSpeed,
     netOutSpeed,
     totalRx,
@@ -276,6 +300,7 @@ export function useServerCardData(props) {
     totalRxMonthly,
     totalTxMonthly,
     priceText,
+    expireDateTitle,
     loadAvg,
     uptimeText,
     ramUsageText,

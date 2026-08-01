@@ -1,6 +1,6 @@
 import { md5Hash } from './common.js';
 
-export const AGENT_CONFIG_SCHEMA_VERSION = 2;
+export const AGENT_CONFIG_SCHEMA_VERSION = 3;
 export const AGENT_CONFIG_SCHEMA_HEADER = 'X-Agent-Config-Schema';
 export const AGENT_CONFIG_MD5_HEADER = 'X-Agent-Config-Md5';
 export const MAX_TRAFFIC_CORRECTION_GB = 1000000;
@@ -10,6 +10,7 @@ const ALLOWED_REPORT_INTERVALS = new Set([30, 60, 120, 180]);
 const PING_NODE_HOST_PATTERN = /^[a-zA-Z0-9._-]+$/;
 const IPV4_PATTERN = /^(?:\d{1,3}\.){3}\d{1,3}$/;
 const IPV4_LIKE_PATTERN = /^(?:\d+\.){3}\d+$/;
+const NETWORK_INTERFACE_PATTERN = /^[A-Za-z0-9_.:-]+$/;
 
 function validateInteger(name, value, allowedValues = null, min = null, max = null) {
   if (typeof value !== 'number' || !Number.isInteger(value)) {
@@ -148,6 +149,37 @@ export function sanitizePingNode(value) {
   return result.valid ? result.value : '';
 }
 
+export function validateNetworkInterfaces(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return { valid: true, value: '' };
+  if (raw.length > 255 || /[/@?#\\[\]]/.test(raw)) {
+    return { valid: false };
+  }
+
+  const seen = new Set();
+  const interfaces = [];
+  for (const item of raw.split(',')) {
+    const name = item.trim();
+    if (!name) continue;
+    if (name.length > 64 || !NETWORK_INTERFACE_PATTERN.test(name)) {
+      return { valid: false };
+    }
+    if (!seen.has(name)) {
+      seen.add(name);
+      interfaces.push(name);
+    }
+  }
+
+  const normalized = interfaces.join(',');
+  if (normalized.length > 255) return { valid: false };
+  return { valid: true, value: normalized };
+}
+
+export function sanitizeNetworkInterfaces(value) {
+  const result = validateNetworkInterfaces(value);
+  return result.valid ? result.value : '';
+}
+
 export function isValidTrafficCorrection(value) {
   let number;
   if (typeof value === 'number') {
@@ -180,6 +212,7 @@ export function buildAgentConfig(server, settings = null) {
   const customCu = sanitizePingNode(server?.custom_cu || settings?.custom_cu || '');
   const customCm = sanitizePingNode(server?.custom_cm || settings?.custom_cm || '');
   const customBd = sanitizePingNode(server?.custom_bd || settings?.custom_bd || '');
+  const networkInterface = sanitizeNetworkInterfaces(server?.interface || '');
 
   return {
     collect_interval: collectInterval,
@@ -189,6 +222,7 @@ export function buildAgentConfig(server, settings = null) {
     custom_cu: customCu,
     custom_cm: customCm,
     custom_bd: customBd,
+    interface: networkInterface,
     schema_version: AGENT_CONFIG_SCHEMA_VERSION
   };
 }
@@ -201,7 +235,8 @@ export function serializeAgentConfig(config) {
     `&custom_ct=${config.custom_ct}` +
     `&custom_cu=${config.custom_cu}` +
     `&custom_cm=${config.custom_cm}` +
-    `&custom_bd=${config.custom_bd}`;
+    `&custom_bd=${config.custom_bd}` +
+    `&interface=${config.interface}`;
 }
 
 export function serializeCorrection(correction) {

@@ -55,6 +55,60 @@ function normalizeMetricTimestamp(value, fallback = Date.now()) {
   return number < 10000000000 ? number * 1000 : number;
 }
 
+function toPublicIpReachability(value) {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  return normalized && normalized !== '0' && normalized !== 'false' ? '1' : '0';
+}
+
+function maskPublicIpFields(data) {
+  if (!data || typeof data !== 'object') return data;
+  let masked = data;
+  const ensureMaskedCopy = () => {
+    if (masked === data) masked = { ...data };
+  };
+
+  if (Object.prototype.hasOwnProperty.call(data, 'ip_v4')) {
+    ensureMaskedCopy();
+    masked.ip_v4 = toPublicIpReachability(data.ip_v4);
+  }
+  if (Object.prototype.hasOwnProperty.call(data, 'ip_v6')) {
+    ensureMaskedCopy();
+    masked.ip_v6 = toPublicIpReachability(data.ip_v6);
+  }
+  for (const field of ['data', 'payload', 'metrics']) {
+    if (data[field] && typeof data[field] === 'object' && !Array.isArray(data[field])) {
+      const nested = maskPublicIpFields(data[field]);
+      if (nested !== data[field]) {
+        ensureMaskedCopy();
+        masked[field] = nested;
+      }
+    }
+  }
+  return masked;
+}
+
+function maskPublicIpSample(sample) {
+  if (!sample || typeof sample !== 'object') return sample;
+  if (sample.data && typeof sample.data === 'object') {
+    return { ...sample, data: maskPublicIpFields(sample.data) };
+  }
+  if (sample.payload && typeof sample.payload === 'object') {
+    return { ...sample, payload: maskPublicIpFields(sample.payload) };
+  }
+  if (sample.metrics && typeof sample.metrics === 'object') {
+    return { ...sample, metrics: maskPublicIpFields(sample.metrics) };
+  }
+  return sample;
+}
+
+function maskPublicIpUpdate(update) {
+  if (!update || !Array.isArray(update.samples)) return update;
+  return {
+    ...update,
+    samples: update.samples.map(maskPublicIpSample)
+  };
+}
+
 function normalizeResourceAlertSample(sample) {
   if (!sample || typeof sample !== 'object' || !sample.data || typeof sample.data !== 'object') {
     return null;
@@ -479,11 +533,11 @@ export class MetricsBroadcaster {
       const serverId = String(update.serverId);
       // delete + set 让 Map 的插入顺序同时代表最近更新时间，便于限制内存上限。
       this.latestReportUpdates.delete(serverId);
-      this.latestReportUpdates.set(serverId, {
+      this.latestReportUpdates.set(serverId, maskPublicIpUpdate({
         serverId,
         reportTs,
         samples: update.samples
-      });
+      }));
     }
 
     while (this.latestReportUpdates.size > MAX_LATEST_REPORT_SERVERS) {
@@ -500,10 +554,10 @@ export class MetricsBroadcaster {
     for (const serverId of serverIds) {
       const update = this.latestReportUpdates.get(serverId);
       if (update) {
-        updates.push({
+        updates.push(maskPublicIpUpdate({
           ...update,
           reportAgeMs: Math.max(0, now - update.reportTs)
-        });
+        }));
       }
     }
     return updates;
@@ -769,7 +823,9 @@ export class MetricsBroadcaster {
       const attachment = ws.deserializeAttachment();
       if (!attachment) continue;
 
-      const scopedUpdates = updates.filter(item => this._shouldDeliver(attachment.scope, item.serverId, attachment.serverIds));
+      const scopedUpdates = updates
+        .filter(item => this._shouldDeliver(attachment.scope, item.serverId, attachment.serverIds))
+        .map(maskPublicIpUpdate);
       if (scopedUpdates.length === 0) continue;
 
       const message = JSON.stringify({
