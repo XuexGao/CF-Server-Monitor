@@ -746,6 +746,7 @@ body::before {
     border-radius: 4px;
     overflow: hidden;
     margin-bottom: 20px;
+    align-items: center;
 }
 
 .stat-item {
@@ -853,7 +854,6 @@ body::before {
     margin-right: 2px;
 }
 
-.finance-summary-currency,
 .finance-source-text {
     color: var(--text-muted);
     font-size: 11px;
@@ -3734,119 +3734,39 @@ body.light.mikus-theme .modal-overlay {
     color: var(--mikus-text-muted);
 }
 
-.mikus-welcome-section {
+body.mikus-theme .mikus-global-stats {
     position: relative;
-    margin: 0 0 20px;
-    padding: 28px 32px;
+    min-height: 96px;
+    padding-left: 116px;
     overflow: visible;
-    border: 1px solid var(--mikus-border);
-    border-radius: 8px;
+    isolation: isolate;
     background: linear-gradient(135deg, var(--mikus-bg-card) 0%, var(--mikus-bg-soft) 50%, var(--mikus-bg-card) 100%);
     background-size: 200% 200%;
-    box-shadow: var(--mikus-shadow);
     animation: mikus-gradient-shift 8s ease infinite;
 }
 
-.mikus-welcome-decoration {
+body.mikus-theme .mikus-global-stats .stat-item {
+    position: relative;
+    z-index: 1;
+}
+
+body.mikus-theme .mikus-stats-mascot {
     position: absolute;
-    inset: 0;
-    overflow: hidden;
+    left: -28px;
+    top: -36px;
+    z-index: 2;
+    width: 140px;
+    height: 140px;
     pointer-events: none;
 }
 
-.mikus-sakura-petal {
-    position: absolute;
-    top: -18px;
-    width: 18px;
-    height: 18px;
-    background: url('/mikus/sakura.png') center / contain no-repeat;
-    opacity: 0;
-    transform-origin: center;
-    animation: mikus-sakura-fall 10s linear infinite;
-}
-
-.mikus-sakura-petal:nth-child(1) { left: 12%; animation-delay: 0s; animation-duration: 12s; }
-.mikus-sakura-petal:nth-child(2) { left: 30%; animation-delay: 2s; animation-duration: 10s; }
-.mikus-sakura-petal:nth-child(3) { left: 52%; animation-delay: 4s; animation-duration: 14s; }
-.mikus-sakura-petal:nth-child(4) { left: 72%; animation-delay: 1s; animation-duration: 11s; }
-.mikus-sakura-petal:nth-child(5) { left: 90%; animation-delay: 3s; animation-duration: 13s; }
-
-.mikus-welcome-content {
-    position: relative;
-    z-index: 1;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 24px;
-}
-
-.mikus-welcome-greeting {
-    position: relative;
-    display: flex;
-    align-items: center;
-    min-width: 0;
-    min-height: 96px;
-    padding-left: 112px;
-}
-
-.mikus-greeting-icon {
-    position: absolute;
-    left: -44px;
-    top: -76px;
-    z-index: 2;
-    width: 174px;
-    height: 174px;
+body.mikus-theme .mikus-stats-mascot-img {
+    width: 100%;
+    height: 100%;
     object-fit: contain;
     filter: drop-shadow(0 8px 18px rgba(45, 27, 61, 0.18));
     transform-origin: bottom center;
     animation: mikus-bounce 2s ease-in-out infinite;
-}
-
-.mikus-greeting-info {
-    display: flex;
-    min-width: 0;
-    flex-direction: column;
-    gap: 4px;
-}
-
-.mikus-greeting-text {
-    color: var(--mikus-text);
-    font-size: 24px;
-    font-weight: 700;
-    line-height: 1.25;
-    overflow-wrap: anywhere;
-}
-
-.mikus-greeting-subtitle {
-    color: var(--mikus-text-muted);
-    font-size: 12px;
-    line-height: 1.5;
-    overflow-wrap: anywhere;
-}
-
-.mikus-welcome-time {
-    display: flex;
-    min-width: 0;
-    flex-direction: column;
-    align-items: flex-end;
-    gap: 4px;
-    text-align: right;
-}
-
-.mikus-time-label {
-    color: var(--mikus-text-muted);
-    font-size: 12px;
-    font-weight: 500;
-    line-height: 1.4;
-}
-
-.mikus-time-value {
-    color: var(--mikus-accent);
-    font-size: 28px;
-    font-weight: 700;
-    font-family: var(--terminal-font);
-    line-height: 1.2;
-    text-shadow: 0 2px 10px rgba(232, 102, 138, 0.18);
 }
 
 @keyframes mikus-logo-breath {
@@ -3879,19 +3799,6 @@ body.light.mikus-theme .modal-overlay {
     100% {
         opacity: 0;
         transform: translate3d(var(--drift), 112vh, 0) rotate(var(--spin)) scale(0.86);
-    }
-}
-
-@keyframes mikus-sakura-fall {
-    0% {
-        opacity: 0;
-        transform: translateY(0) rotate(0deg) scale(0.8);
-    }
-    12% { opacity: 0.45; }
-    88% { opacity: 0.25; }
-    100% {
-        opacity: 0;
-        transform: translateY(140px) rotate(360deg) scale(0.65);
     }
 }
 
@@ -4274,55 +4181,20 @@ body.light.mikus-theme .modal-overlay {
         padding: 42px 16px;
     }
 
-    .mikus-welcome-section {
-        padding: 18px 16px;
-        margin-bottom: 16px;
+    body.mikus-theme .mikus-global-stats {
+        min-height: 0;
+        padding-left: 0;
+        overflow: hidden;
     }
 
-    .mikus-welcome-content {
-        gap: 14px;
-    }
-
-    .mikus-welcome-greeting {
-        min-height: 72px;
-        padding-left: 74px;
-    }
-
-    .mikus-greeting-icon {
-        left: -12px;
-        top: -42px;
-        width: 100px;
-        height: 100px;
-    }
-
-    .mikus-greeting-text {
-        font-size: 18px;
-    }
-
-    .mikus-greeting-subtitle,
-    .mikus-time-label {
-        font-size: 11px;
-    }
-
-    .mikus-time-value {
-        font-size: 20px;
-    }
-
-    .mikus-sakura-petal {
-        display: none;
-    }
-
-    @media (max-width: 560px) {
-        .mikus-welcome-content {
-            align-items: stretch;
-            flex-direction: column;
-        }
-
-        .mikus-welcome-time {
-            align-items: flex-start;
-            padding-left: 74px;
-            text-align: left;
-        }
+    body.mikus-theme .mikus-stats-mascot {
+        top: 50%;
+        transform: translateY(-50%);
+        left: 0;
+        width: 160px;
+        height: 160px;
+        opacity: 0.5;
+        z-index: 3;
     }
 
     .btn-lg {

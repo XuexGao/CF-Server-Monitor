@@ -67,26 +67,10 @@
       </div>
     </div>
 
-    <section v-if="isMikusTheme" class="mikus-welcome-section">
-      <div class="mikus-welcome-decoration" aria-hidden="true">
-        <div v-for="index in 5" :key="index" class="mikus-sakura-petal"></div>
+    <div class="global-stats" :class="{ 'mikus-global-stats': isMikusTheme }">
+      <div v-if="isMikusTheme" class="mikus-stats-mascot" aria-hidden="true">
+        <img class="mikus-stats-mascot-img" :src="mikusAsset('QWQ.webp')" alt="">
       </div>
-      <div class="mikus-welcome-content">
-        <div class="mikus-welcome-greeting">
-          <img class="mikus-greeting-icon" :src="mikusAsset('QWQ.webp')" alt="">
-          <div class="mikus-greeting-info">
-            <span class="mikus-greeting-text">{{ mikusGreetingText }}</span>
-            <span class="mikus-greeting-subtitle">{{ mikusGreetingSubtitle }}</span>
-          </div>
-        </div>
-        <div class="mikus-welcome-time">
-          <span class="mikus-time-label">{{ mikusDateText }}</span>
-          <span class="mikus-time-value">{{ mikusTimeText }}</span>
-        </div>
-      </div>
-    </section>
-
-    <div class="global-stats">
       <div class="stat-item">
         <div class="stat-label">{{ trans.totalServers }}</div>
         <div class="stat-main-value stat-main-value-sm stat-sub-info">
@@ -277,7 +261,6 @@
             <div class="finance-summary-value">
               <span class="finance-summary-symbol">{{ item.symbol }}</span>{{ item.value }}
             </div>
-            <div class="finance-summary-currency">{{ item.currency }}</div>
           </div>
         </div>
 
@@ -383,44 +366,6 @@ const isMikusTheme = computed(() => isMikusThemeEnabled(sysConfig.value.theme_op
 
 const mikusAsset = (filename) => getMikusAssetUrl(filename)
 
-const mikusGreetingText = computed(() => {
-  const hour = new Date(now.value).getHours()
-  if (currentLang.value === 'zh') {
-    if (hour < 5) return '夜深了'
-    if (hour < 12) return '早上好'
-    if (hour < 18) return '下午好'
-    return '晚上好'
-  }
-  if (hour < 5) return 'Good night'
-  if (hour < 12) return 'Good morning'
-  if (hour < 18) return 'Good afternoon'
-  return 'Good evening'
-})
-
-const mikusGreetingSubtitle = computed(() => {
-  const offline = Number(stats.value.offline || 0)
-  if (currentLang.value === 'zh') {
-    return offline > 0 ? `${offline} 台离线，请留意` : '欢迎回来，一切正常运行中'
-  }
-  return offline > 0 ? `${offline} offline, check when ready` : 'Welcome back, everything is running normally'
-})
-
-const mikusLocale = computed(() => currentLang.value === 'zh' ? 'zh-CN' : 'en-US')
-
-const mikusDateText = computed(() => new Intl.DateTimeFormat(mikusLocale.value, {
-  year: 'numeric',
-  month: 'long',
-  day: 'numeric',
-  weekday: 'long'
-}).format(new Date(now.value)))
-
-const mikusTimeText = computed(() => new Intl.DateTimeFormat(mikusLocale.value, {
-  hour: '2-digit',
-  minute: '2-digit',
-  second: '2-digit',
-  hour12: false
-}).format(new Date(now.value)))
-
 watch(isMikusTheme, (enabled) => {
   setMikusThemeClass(enabled)
 }, { immediate: true })
@@ -430,20 +375,16 @@ const formattedRemainingValue = computed(() => formatFinanceMetric(financeSummar
 const formattedTotalValue = computed(() => formatFinanceMetric(financeSummary.value.totalValueCNY))
 const formattedMonthlyAverageCost = computed(() => formatFinanceMetric(financeSummary.value.monthlyAverageCostCNY))
 
+const createFinanceSummaryItem = (label, metric) => ({
+  label,
+  symbol: metric.symbol,
+  value: metric.value
+})
+
 const financeSummaryItems = computed(() => [
-  {
-    label: trans.value.totalValue,
-    ...formattedTotalValue.value
-  },
-  {
-    label: trans.value.remainingValue,
-    ...formattedRemainingValue.value
-  },
-  {
-    label: trans.value.monthlyAverageCost,
-    ...formattedMonthlyAverageCost.value,
-    currency: `${formattedMonthlyAverageCost.value.currency}/${trans.value.month}`
-  }
+  createFinanceSummaryItem(trans.value.totalValue, formattedTotalValue.value),
+  createFinanceSummaryItem(trans.value.remainingValue, formattedRemainingValue.value),
+  createFinanceSummaryItem(trans.value.monthlyAverageCost, formattedMonthlyAverageCost.value)
 ])
 
 const exchangeRateRows = computed(() => {
