@@ -480,7 +480,7 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
 | `latestReportUpdates` | 每台服务器最近一次批量上报的采样回放数据，用于新页面连续回放；来自 Worker/DO 内存缓存，缓存约 5 分钟，进程重启或 DO 回收后允许为空。REST 响应中的样本统一为 `{ ts, data }`，`data` 按探针批量采样包透传；内置探针默认只在普通采样点上报 `cpu`、`ram_total`、`ram_used`、`swap_total`、`swap_used`、`net_in_speed`、`net_out_speed` |
 | `stats`       | 聚合统计：在线阈值 300 秒（5 分钟无上报视为离线）                                          |
 | `regionStats` | 按 ISO 区域码（大写）统计的服务器数                                                  |
-| `sysConfig`   | 当前站点开关：`show_price`、`show_expire`、`show_tf`、`show_time`、`display_mode`。~~旧版示例中的 `site_title` 不在该对象内。~~（2026-07-26 修订） |
+| `sysConfig`   | 当前站点开关：`show_price`、`show_expire`、`show_tf`、`show_time`、`display_mode`。主题配置请从 `/api/config` 的 `theme_options` 读取。~~旧版示例中的 `site_title` 不在该对象内。~~（2026-07-26 修订） |
 
 ***
 

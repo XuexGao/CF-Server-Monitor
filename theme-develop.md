@@ -260,7 +260,7 @@ Headers: (按需) Authorization: Bearer <jwt>, X-Turnstile-Token/Verified
 | `servers`     | 服务器列表（含最新指标），未登录用户自动过滤隐藏服务器；`tags` 始终随服务器返回 |
 | `stats`       | 聚合统计（在线阈值 5 分钟）             |
 | `regionStats` | 按区域统计服务器数量                  |
-| `sysConfig`   | 站点开关配置，控制 UI 显示             |
+| `sysConfig`   | 站点开关配置，控制 UI 显示；主题配置请从 `/api/config` 的 `theme_options` 读取 |
 
 **示例**：
 

@@ -1,10 +1,25 @@
 <template>
-  <div class="container">
+  <div class="container" :class="{ 'mikus-dashboard': isMikusTheme }">
     <TerminalHeader :title="sysConfig.site_title || DEFAULT_SITE_TITLE" />
     
-    <div v-if="isLoading" class="loading-state">
-      <div class="loading-spinner"></div>
-      <div class="loading-text">$ {{ trans.loading }}</div>
+    <div v-if="isLoading" class="loading-state" :class="{ 'mikus-loading-state': isMikusTheme }">
+      <template v-if="isMikusTheme">
+        <div class="mikus-loading-inner">
+          <img class="mikus-loading-gif" :src="mikusAsset('loli.gif')" alt="Loading">
+          <div class="mikus-loading-brand">
+            <img class="mikus-loading-logo" :src="mikusAsset('miku.png')" alt="">
+            <span>{{ sysConfig.site_title || 'Komari' }}</span>
+          </div>
+          <div class="mikus-loading-progress" aria-hidden="true">
+            <div class="mikus-loading-progress-fill"></div>
+          </div>
+          <div class="mikus-loading-status">$ {{ trans.loading }}</div>
+        </div>
+      </template>
+      <template v-else>
+        <div class="loading-spinner"></div>
+        <div class="loading-text">$ {{ trans.loading }}</div>
+      </template>
     </div>
 
     <template v-else>
@@ -51,6 +66,25 @@
         </span>
       </div>
     </div>
+
+    <section v-if="isMikusTheme" class="mikus-welcome-section">
+      <div class="mikus-welcome-decoration" aria-hidden="true">
+        <div v-for="index in 5" :key="index" class="mikus-sakura-petal"></div>
+      </div>
+      <div class="mikus-welcome-content">
+        <div class="mikus-welcome-greeting">
+          <img class="mikus-greeting-icon" :src="mikusAsset('QWQ.webp')" alt="">
+          <div class="mikus-greeting-info">
+            <span class="mikus-greeting-text">{{ mikusGreetingText }}</span>
+            <span class="mikus-greeting-subtitle">{{ mikusGreetingSubtitle }}</span>
+          </div>
+        </div>
+        <div class="mikus-welcome-time">
+          <span class="mikus-time-label">{{ mikusDateText }}</span>
+          <span class="mikus-time-value">{{ mikusTimeText }}</span>
+        </div>
+      </div>
+    </section>
 
     <div class="global-stats">
       <div class="stat-item">
@@ -286,7 +320,7 @@
 </template>
 
 <script setup>
-import { ref, computed, inject, onMounted, onUnmounted } from 'vue'
+import { ref, computed, inject, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import TerminalHeader from '../components/TerminalHeader.vue'
 import ServerBarCard from '../components/ServerBarCard.vue'
@@ -301,6 +335,7 @@ import { TIME, DEFAULT_SITE_TITLE, STORAGE } from '../utils/constants'
 import { normalizeTimestamp as normalizeMetricTimestamp } from '../utils/time.js'
 import { normalizeDashboardView, normalizeDisplayMode, resolveDisplayMode } from '../utils/displayMode.js'
 import { getPlaybackElapsedMs, resolvePlaybackCursor } from '../utils/playback.js'
+import { getMikusAssetUrl, isMikusThemeEnabled, normalizeThemeOptions, setMikusThemeClass } from '../utils/themeOptions.js'
 import {
   CURRENCY_SYMBOLS,
   DEFAULT_EXCHANGE_RATES,
@@ -317,13 +352,15 @@ import {
 const servers = ref([])
 const stats = ref({ total: '-', online: 0, offline: 0, globalNetRx: 0, globalNetTx: 0, globalSpeedIn: 0, globalSpeedOut: 0 })
 const unknownStats = ref(0)
+const appConfig = inject('appConfig', null)
 const sysConfig = ref({
   show_price: true,
   show_expire: true,
   show_tf: true,
   show_time: true,
   display_mode: 'bar',
-  site_title: DEFAULT_SITE_TITLE
+  site_title: DEFAULT_SITE_TITLE,
+  theme_options: normalizeThemeOptions(appConfig?.theme_options)
 })
 const regionStats = ref({})
 const currentView = ref('bar')
@@ -341,8 +378,52 @@ const now = ref(Date.now())
 const router = useRouter()
 
 const trans = useTranslation()
-const appConfig = inject('appConfig', null)
 const financeRateCurrencies = DISPLAY_FINANCE_CURRENCIES
+const isMikusTheme = computed(() => isMikusThemeEnabled(sysConfig.value.theme_options))
+
+const mikusAsset = (filename) => getMikusAssetUrl(filename)
+
+const mikusGreetingText = computed(() => {
+  const hour = new Date(now.value).getHours()
+  if (currentLang.value === 'zh') {
+    if (hour < 5) return '夜深了'
+    if (hour < 12) return '早上好'
+    if (hour < 18) return '下午好'
+    return '晚上好'
+  }
+  if (hour < 5) return 'Good night'
+  if (hour < 12) return 'Good morning'
+  if (hour < 18) return 'Good afternoon'
+  return 'Good evening'
+})
+
+const mikusGreetingSubtitle = computed(() => {
+  const offline = Number(stats.value.offline || 0)
+  if (currentLang.value === 'zh') {
+    return offline > 0 ? `${offline} 台离线，请留意` : '欢迎回来，一切正常运行中'
+  }
+  return offline > 0 ? `${offline} offline, check when ready` : 'Welcome back, everything is running normally'
+})
+
+const mikusLocale = computed(() => currentLang.value === 'zh' ? 'zh-CN' : 'en-US')
+
+const mikusDateText = computed(() => new Intl.DateTimeFormat(mikusLocale.value, {
+  year: 'numeric',
+  month: 'long',
+  day: 'numeric',
+  weekday: 'long'
+}).format(new Date(now.value)))
+
+const mikusTimeText = computed(() => new Intl.DateTimeFormat(mikusLocale.value, {
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+  hour12: false
+}).format(new Date(now.value)))
+
+watch(isMikusTheme, (enabled) => {
+  setMikusThemeClass(enabled)
+}, { immediate: true })
 
 const financeSummary = computed(() => calculateFinanceSummary(servers.value, exchangeRates.value, now.value))
 const formattedRemainingValue = computed(() => formatFinanceMetric(financeSummary.value.remainingValueCNY))
@@ -740,7 +821,8 @@ const loadDashboardConfig = async () => {
     sysConfig.value = {
       ...sysConfig.value,
       site_title: hasMultipleApiBases() && localTitle ? localTitle : (siteTitle || sysConfig.value.site_title),
-      display_mode: resolveDisplayMode(config)
+      display_mode: resolveDisplayMode(config),
+      theme_options: normalizeThemeOptions(config?.theme_options)
     }
   } catch (e) {
     console.log('[INFO] Dashboard config pending...', e)
@@ -771,7 +853,8 @@ const refreshData = async () => {
           show_tf: data.sysConfig?.show_tf ?? true,
           show_time: data.sysConfig?.show_time ?? true,
           display_mode: normalizeDisplayMode(data.sysConfig?.display_mode),
-          site_title: sysConfig.value.site_title || DEFAULT_SITE_TITLE
+          site_title: sysConfig.value.site_title || DEFAULT_SITE_TITLE,
+          theme_options: sysConfig.value.theme_options
         }
 
         if (data.corsErrorSites?.length && !hasCorsError.value) hasCorsError.value = [...data.corsErrorSites]
@@ -807,7 +890,8 @@ const refreshData = async () => {
       show_tf: data.sysConfig?.show_tf ?? true,
       show_time: data.sysConfig?.show_time ?? true,
       display_mode: normalizeDisplayMode(data.sysConfig?.display_mode),
-      site_title: sysConfig.value.site_title || DEFAULT_SITE_TITLE
+      site_title: sysConfig.value.site_title || DEFAULT_SITE_TITLE,
+      theme_options: sysConfig.value.theme_options
     }
 
     drawMarkers()

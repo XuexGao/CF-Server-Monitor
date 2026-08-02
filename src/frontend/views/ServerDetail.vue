@@ -295,7 +295,7 @@ import { useRoute, useRouter } from 'vue-router'
 import TerminalHeader from '../components/TerminalHeader.vue'
 import Footer from '../components/Footer.vue'
 import OsIcon from '../components/OsIcon.vue'
-import { fetchServerDetail, fetchAllHistory, formatBytes, isAdminLoggedIn, createLiveSocket, getFlagRegionCode, isServerOnline } from '../utils/api.js'
+import { fetchServerDetail, fetchAllHistory, fetchConfig, formatBytes, isAdminLoggedIn, createLiveSocket, getFlagRegionCode, isServerOnline } from '../utils/api.js'
 import { getTrafficUsageBytes } from '../composables/useServerCardData'
 import { getPublicAssetUrl } from '../utils/config.js'
 import Chart from 'chart.js/auto'
@@ -306,6 +306,7 @@ import { formatDateTime, normalizeTimestamp as normalizeMetricTimestamp } from '
 import useTheme from '../composables/useTheme'
 import { isDisabledProbeMetric } from '../utils/server.js'
 import { resolvePlaybackCursor } from '../utils/playback.js'
+import { applyMikusThemeOptions } from '../utils/themeOptions.js'
 
 const route = useRoute()
 const router = useRouter()
@@ -647,19 +648,35 @@ const rebuildGpuChartDatasets = () => {
   chart.update('none')
 }
 
+const getCssVar = (name, fallback) => {
+  if (typeof window === 'undefined') return fallback
+  const value = window.getComputedStyle(document.body).getPropertyValue(name).trim()
+  return value || fallback
+}
+
+const isLightBodyTheme = () => typeof document !== 'undefined' && document.body.classList.contains('light')
+
+const getChartThemeColors = () => ({
+  axis: getCssVar('--text-muted', isLightBodyTheme() ? 'rgba(10, 14, 20, 0.8)' : 'rgba(211, 218, 227, 0.8)'),
+  grid: getCssVar('--border-color', 'rgba(30, 42, 58, 0.5)'),
+  tooltipBg: getCssVar('--bg-primary', 'rgba(10, 14, 20, 0.95)'),
+  tooltipTitle: getCssVar('--accent-green', '#00d4aa'),
+  tooltipBody: getCssVar('--text-primary', '#d3dae3'),
+  tooltipBorder: getCssVar('--border-color', '#1e2a3a')
+})
+
 const initCharts = () => {
   safeDestroyCharts()
 
-  const isLight = document.body.classList.contains('light')
-  const axisLabelColor = isLight ? '#2c2c2c' : '#d3dae3'
+  const chartTheme = getChartThemeColors()
 
   Chart.defaults.font.family = "'JetBrains Mono', 'Courier New', monospace"
   Chart.defaults.font.size = 10
-  Chart.defaults.color = '#8999af'
-  Chart.defaults.plugins.tooltip.backgroundColor = 'rgba(10, 14, 20, 0.95)'
-  Chart.defaults.plugins.tooltip.titleColor = '#00d4aa'
-  Chart.defaults.plugins.tooltip.bodyColor = '#d3dae3'
-  Chart.defaults.plugins.tooltip.borderColor = '#1e2a3a'
+  Chart.defaults.color = chartTheme.axis
+  Chart.defaults.plugins.tooltip.backgroundColor = chartTheme.tooltipBg
+  Chart.defaults.plugins.tooltip.titleColor = chartTheme.tooltipTitle
+  Chart.defaults.plugins.tooltip.bodyColor = chartTheme.tooltipBody
+  Chart.defaults.plugins.tooltip.borderColor = chartTheme.tooltipBorder
   Chart.defaults.plugins.tooltip.borderWidth = 1
   Chart.defaults.plugins.tooltip.titleFont = { size: 12, weight: 'bold', family: "'JetBrains Mono', monospace" }
   Chart.defaults.plugins.tooltip.bodyFont = { size: 11, family: "'JetBrains Mono', monospace" }
@@ -680,7 +697,7 @@ const initCharts = () => {
           padding: 12,
           font: { size: 10, family: "'JetBrains Mono', monospace" },
           usePointStyle: true,
-          color: axisLabelColor,
+          color: chartTheme.axis,
           filter: (legendItem, chartData) => !chartData.datasets[legendItem.datasetIndex]?.disabledProbe
         }
       },
@@ -725,12 +742,12 @@ const initCharts = () => {
         title: {
           display: false,
           text: '',
-          color: axisLabelColor,
+          color: chartTheme.axis,
           font: { size: 10, family: "'JetBrains Mono', monospace" }
         },
         ticks: {
           maxTicksLimit: CHART.MAX_TICKS,
-          color: axisLabelColor,
+          color: chartTheme.axis,
           font: { size: 9, family: "'JetBrains Mono', monospace" },
           maxRotation: 0,
           padding: 8,
@@ -738,13 +755,13 @@ const initCharts = () => {
             return formatChartAxisTime(this.getLabelForValue(value))
           }
         },
-        grid: { color: 'rgba(30, 42, 58, 0.5)', drawBorder: false, tickLength: 0 }
+        grid: { color: chartTheme.grid, drawBorder: false, tickLength: 0 }
       },
       y: {
         beginAtZero: true,
-        grid: { color: 'rgba(30, 42, 58, 0.5)', drawBorder: false, tickLength: 0 },
+        grid: { color: chartTheme.grid, drawBorder: false, tickLength: 0 },
         ticks: {
-          color: axisLabelColor,
+          color: chartTheme.axis,
           font: { size: 9, family: "'JetBrains Mono', monospace" },
           padding: 8,
           callback: tickFormat || function(value) { return value + unit; }
@@ -771,28 +788,36 @@ const initCharts = () => {
   syncProbeChartVisibility()
 }
 
-const updateChartsTheme = (theme) => {
-  const axisLabelColor = theme === 'light' ? 'rgba(10, 14, 20, 0.8)' : 'rgba(211, 218, 227, 0.8)'
+const updateChartsTheme = () => {
+  const chartTheme = getChartThemeColors()
+
+  Chart.defaults.color = chartTheme.axis
+  Chart.defaults.plugins.tooltip.backgroundColor = chartTheme.tooltipBg
+  Chart.defaults.plugins.tooltip.titleColor = chartTheme.tooltipTitle
+  Chart.defaults.plugins.tooltip.bodyColor = chartTheme.tooltipBody
+  Chart.defaults.plugins.tooltip.borderColor = chartTheme.tooltipBorder
 
   Object.values(charts).forEach(chart => {
     if (!chart) return
 
     if (chart.options.plugins.legend.labels) {
-      chart.options.plugins.legend.labels.color = axisLabelColor
+      chart.options.plugins.legend.labels.color = chartTheme.axis
     }
 
     if (chart.options.scales.x) {
       if (chart.options.scales.x.title) {
-        chart.options.scales.x.title.color = axisLabelColor
+        chart.options.scales.x.title.color = chartTheme.axis
       }
-      chart.options.scales.x.ticks.color = axisLabelColor
+      chart.options.scales.x.ticks.color = chartTheme.axis
+      chart.options.scales.x.grid.color = chartTheme.grid
     }
 
     if (chart.options.scales.y) {
       if (chart.options.scales.y.title) {
-        chart.options.scales.y.title.color = axisLabelColor
+        chart.options.scales.y.title.color = chartTheme.axis
       }
-      chart.options.scales.y.ticks.color = axisLabelColor
+      chart.options.scales.y.ticks.color = chartTheme.axis
+      chart.options.scales.y.grid.color = chartTheme.grid
     }
 
     chart.update('none')
@@ -1372,8 +1397,22 @@ const handleLiveMessage = (msg) => {
   }
 }
 
+const loadThemeOptionsFromConfig = async () => {
+  try {
+    const runtimeConfig = await fetchConfig(apiIndex.value)
+    if (runtimeConfig && Object.prototype.hasOwnProperty.call(runtimeConfig, 'theme_options')) {
+      applyMikusThemeOptions(runtimeConfig.theme_options)
+    }
+  } catch (e) {
+    console.log('[INFO] Detail theme config pending...', e)
+  }
+}
+
 const init = async () => {
-  const initialData = await fetchCurrentStatus()
+  const [initialData] = await Promise.all([
+    fetchCurrentStatus(),
+    loadThemeOptionsFromConfig()
+  ])
   await initChartsOnMount()
 
   await loadAllHistory(currentHours.value)

@@ -82,12 +82,15 @@
               <div
                 v-if="getServerIpRows(server).length"
                 class="server-ip-list"
-                :class="{ 'spec-copied': isSpecCopied(server, 'ip') }"
-                @dblclick.stop="emitCopySpec(server, 'ip', formatServerIps(server))"
               >
-                <span v-for="ipItem in getServerIpRows(server)" :key="ipItem.label" class="server-ip-line">
-                  <span class="server-ip-label">{{ ipItem.label }}</span>
-                  <span v-if="ipItem.address" class="server-ip-value">{{ ipItem.address }}</span>
+                <span
+                  v-for="ipItem in getServerIpRows(server)"
+                  :key="ipItem.copyField"
+                  class="server-ip-line"
+                  :class="{ 'spec-copied': isSpecCopied(server, ipItem.copyField) }"
+                  @dblclick.stop="emitCopySpec(server, ipItem.copyField, ipItem.address)"
+                >
+                  <span class="server-ip-value">{{ ipItem.address }}</span>
                 </span>
               </div>
               <span v-else>-</span>
@@ -211,12 +214,9 @@ const getPublicIpAddress = (value) => {
   return normalized
 }
 const getServerIpRows = (server) => [
-  { label: 'V4', address: getPublicIpAddress(server.ip_v4), available: isPublicIpAvailable(server.ip_v4) },
-  { label: 'V6', address: getPublicIpAddress(server.ip_v6), available: isPublicIpAvailable(server.ip_v6) }
-].filter(item => item.available)
-const formatServerIps = (server) => getServerIpRows(server)
-  .map(item => item.address ? `${item.label}: ${item.address}` : item.label)
-  .join('\n')
+  { copyField: 'ip_v4', address: getPublicIpAddress(server.ip_v4) },
+  { copyField: 'ip_v6', address: getPublicIpAddress(server.ip_v6) }
+].filter(item => item.address)
 const trimDisplayPrice = (price) => String(price || '').replace(/\.00$/, '')
 const formatServerPrice = (server) => {
   const price = normalizePrice(server.price)

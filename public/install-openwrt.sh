@@ -1124,7 +1124,7 @@ write_probe_result() {
 get_cf_trace_ip() {
     local curl_family="$1"
     local ip_value
-    ip_value=$(curl "$curl_family" -s -m 2 --connect-timeout 2 https://cloudflare.com/cdn-cgi/trace 2>/dev/null | awk -F= '$1 == "ip" { print $2; exit }') || ip_value=""
+    ip_value=$(curl "$curl_family" --noproxy cloudflare.com -s -m 5 --connect-timeout 5 https://cloudflare.com/cdn-cgi/trace 2>/dev/null | awk -F= '$1 == "ip" { print $2; exit }') || ip_value=""
     if [ -n "$ip_value" ]; then
         printf '%s\n' "$ip_value"
     else

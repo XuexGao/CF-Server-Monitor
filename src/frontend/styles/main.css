@@ -1598,10 +1598,9 @@ body::before {
     gap: 2px;
     max-width: 142px;
     color: var(--text-secondary);
-    cursor: pointer;
 }
 
-.server-ip-list.spec-copied {
+.server-ip-line.spec-copied {
     color: var(--accent-green);
 }
 
@@ -1610,11 +1609,7 @@ body::before {
     align-items: baseline;
     gap: 6px;
     min-width: 0;
-}
-
-.server-ip-label {
-    flex: 0 0 auto;
-    color: var(--text-muted);
+    cursor: pointer;
 }
 
 .server-ip-value {
@@ -2186,6 +2181,16 @@ body::before {
     background: rgba(0, 212, 170, 0.1);
     color: var(--accent-green);
     font-weight: 600;
+}
+
+.theme-option-toggle {
+    margin-top: 8px;
+}
+
+.theme-option-toggle span {
+    flex: 1;
+    font-size: 12px;
+    cursor: pointer;
 }
 
 .highlight-box {
@@ -3387,7 +3392,516 @@ body::before {
 }
 
 /* --------------------------------------------------------------------------
-   42. Password Input Toggle Styles
+   42. Mikus Theme Option
+   -------------------------------------------------------------------------- */
+body.mikus-theme {
+    --bg-primary: #1a1822;
+    --bg-secondary: rgba(42, 33, 49, 0.78);
+    --bg-card: rgba(51, 39, 58, 0.76);
+    --bg-hover: rgba(67, 48, 72, 0.88);
+    --border-color: rgba(255, 183, 197, 0.24);
+    --border-active: rgba(255, 138, 166, 0.48);
+    --text-primary: #f8eef5;
+    --text-secondary: #d8c5d4;
+    --text-muted: rgba(248, 238, 245, 0.72);
+    --accent-green: #6fd3b2;
+    --accent-blue: #76b8ff;
+    --accent-purple: #b9a4ff;
+    --accent-pink: #ff8aa6;
+    --accent-yellow: #ffd166;
+    --accent-red: #ff6f86;
+    --accent-cyan: #ff8aa6;
+    --input-bg: rgba(27, 24, 34, 0.9);
+    --input-border: rgba(255, 183, 197, 0.26);
+    --color-inherit: #1a1822;
+    --color-active: #ffffff;
+    --mikus-bg-card: rgba(51, 39, 58, 0.9);
+    --mikus-bg-soft: rgba(35, 46, 59, 0.72);
+    --mikus-header-bg: rgba(20, 17, 26, 0.28);
+    --mikus-text: var(--text-primary);
+    --mikus-text-muted: var(--text-muted);
+    --mikus-border: var(--border-color);
+    --mikus-accent: var(--accent-pink);
+    --mikus-accent-soft: #ffb7c5;
+    --mikus-info: var(--accent-blue);
+    --mikus-shadow: 0 10px 34px rgba(8, 6, 12, 0.36);
+    --mikus-panel-shadow: 0 10px 32px rgba(8, 6, 12, 0.28);
+    background: linear-gradient(135deg, #1a1822 0%, #261d2e 48%, #182631 100%);
+    color: var(--text-primary);
+}
+
+body.light.mikus-theme {
+    --bg-primary: #f8f6f9;
+    --bg-secondary: rgba(255, 255, 255, 0.74);
+    --bg-card: rgba(255, 255, 255, 0.82);
+    --bg-hover: rgba(250, 248, 252, 0.94);
+    --border-color: #e8e0f0;
+    --border-active: #d9c9e7;
+    --text-primary: #2d1b3d;
+    --text-secondary: #6b5a7d;
+    --text-muted: rgba(45, 27, 61, 0.72);
+    --accent-green: #4caf7d;
+    --accent-blue: #5c9ced;
+    --accent-purple: #a78bfa;
+    --accent-pink: #e8668a;
+    --accent-yellow: #f5a623;
+    --accent-red: #e74c5e;
+    --accent-cyan: #e8668a;
+    --input-bg: #ffffff;
+    --input-border: #e8e0f0;
+    --color-inherit: #ffffff;
+    --color-active: #2d1b3d;
+    --mikus-bg-card: #ffffff;
+    --mikus-bg-soft: #f0edf3;
+    --mikus-header-bg: rgba(255, 246, 249, 0.72);
+    --mikus-text: var(--text-primary);
+    --mikus-text-muted: var(--text-muted);
+    --mikus-border: var(--border-color);
+    --mikus-accent: var(--accent-pink);
+    --mikus-accent-soft: #ffb7c5;
+    --mikus-info: var(--accent-blue);
+    --mikus-shadow: 0 8px 30px rgba(45, 27, 61, 0.12);
+    --mikus-panel-shadow: 0 8px 28px rgba(45, 27, 61, 0.1);
+    background: linear-gradient(135deg, #fff9fb 0%, #f3f8fb 48%, #f8f6f9 100%);
+}
+
+body.mikus-theme::before,
+body.light.mikus-theme::before {
+    background: none;
+}
+
+body.mikus-theme #loading {
+    background: var(--bg-primary);
+    overflow: hidden;
+}
+
+.mikus-sakura-background,
+.mikus-sakura-canvas {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    overflow: hidden;
+    pointer-events: none;
+}
+
+.mikus-sakura-canvas {
+    display: block;
+    width: 100vw;
+    height: 100vh;
+}
+
+.mikus-global-sakura {
+    z-index: 2147483647;
+    pointer-events: none;
+}
+
+.mikus-background-petal {
+    --x: 50vw;
+    --size: 18px;
+    --duration: 18s;
+    --delay: 0s;
+    --drift: 12vw;
+    --spin: 420deg;
+    --petal-opacity: 0.28;
+    position: absolute;
+    top: -12vh;
+    left: var(--x);
+    width: var(--size);
+    height: var(--size);
+    background: url('/mikus/sakura.png') center / contain no-repeat;
+    opacity: 0;
+    will-change: transform, opacity;
+    animation: mikus-background-sakura-fall var(--duration) linear infinite;
+    animation-delay: var(--delay);
+}
+
+.mikus-background-petal:nth-child(1) { --x: 3vw; --size: 16px; --duration: 18s; --delay: -3s; --drift: 16vw; --spin: 380deg; --petal-opacity: 0.22; }
+.mikus-background-petal:nth-child(2) { --x: 9vw; --size: 22px; --duration: 24s; --delay: -12s; --drift: 20vw; --spin: -500deg; --petal-opacity: 0.26; }
+.mikus-background-petal:nth-child(3) { --x: 16vw; --size: 14px; --duration: 19s; --delay: -8s; --drift: 11vw; --spin: 460deg; --petal-opacity: 0.24; }
+.mikus-background-petal:nth-child(4) { --x: 23vw; --size: 28px; --duration: 27s; --delay: -17s; --drift: -12vw; --spin: -420deg; --petal-opacity: 0.2; }
+.mikus-background-petal:nth-child(5) { --x: 31vw; --size: 18px; --duration: 21s; --delay: -4s; --drift: 14vw; --spin: 520deg; --petal-opacity: 0.3; }
+.mikus-background-petal:nth-child(6) { --x: 38vw; --size: 12px; --duration: 16s; --delay: -11s; --drift: 9vw; --spin: -360deg; --petal-opacity: 0.24; }
+.mikus-background-petal:nth-child(7) { --x: 44vw; --size: 24px; --duration: 25s; --delay: -6s; --drift: -16vw; --spin: 540deg; --petal-opacity: 0.22; }
+.mikus-background-petal:nth-child(8) { --x: 52vw; --size: 17px; --duration: 20s; --delay: -14s; --drift: 13vw; --spin: -480deg; --petal-opacity: 0.3; }
+.mikus-background-petal:nth-child(9) { --x: 58vw; --size: 30px; --duration: 30s; --delay: -20s; --drift: -10vw; --spin: 420deg; --petal-opacity: 0.18; }
+.mikus-background-petal:nth-child(10) { --x: 65vw; --size: 15px; --duration: 17s; --delay: -9s; --drift: 16vw; --spin: -560deg; --petal-opacity: 0.26; }
+.mikus-background-petal:nth-child(11) { --x: 71vw; --size: 21px; --duration: 23s; --delay: -2s; --drift: -14vw; --spin: 460deg; --petal-opacity: 0.24; }
+.mikus-background-petal:nth-child(12) { --x: 77vw; --size: 13px; --duration: 15s; --delay: -10s; --drift: 10vw; --spin: -380deg; --petal-opacity: 0.28; }
+.mikus-background-petal:nth-child(13) { --x: 82vw; --size: 26px; --duration: 29s; --delay: -22s; --drift: -18vw; --spin: 620deg; --petal-opacity: 0.18; }
+.mikus-background-petal:nth-child(14) { --x: 88vw; --size: 18px; --duration: 19s; --delay: -5s; --drift: 11vw; --spin: -460deg; --petal-opacity: 0.3; }
+.mikus-background-petal:nth-child(15) { --x: 94vw; --size: 23px; --duration: 26s; --delay: -16s; --drift: -21vw; --spin: 500deg; --petal-opacity: 0.22; }
+.mikus-background-petal:nth-child(16) { --x: 12vw; --size: 10px; --duration: 14s; --delay: -1s; --drift: 7vw; --spin: -300deg; --petal-opacity: 0.2; }
+.mikus-background-petal:nth-child(17) { --x: 49vw; --size: 12px; --duration: 16s; --delay: -7s; --drift: -8vw; --spin: 340deg; --petal-opacity: 0.24; }
+.mikus-background-petal:nth-child(18) { --x: 86vw; --size: 11px; --duration: 15s; --delay: -13s; --drift: 8vw; --spin: -320deg; --petal-opacity: 0.2; }
+
+.mikus-dashboard {
+    isolation: isolate;
+}
+
+body.mikus-theme #app,
+body.mikus-theme .container {
+    position: relative;
+    z-index: 1;
+}
+
+body.mikus-theme .terminal-header,
+body.mikus-theme .nav-area,
+body.mikus-theme .nav-bar,
+body.mikus-theme .main-panel,
+body.mikus-theme .global-stats,
+body.mikus-theme .server-card,
+body.mikus-theme .host-card,
+body.mikus-theme .chart-card,
+body.mikus-theme .map-wrapper,
+body.mikus-theme .finance-modal-dialog,
+body.mikus-theme .quota-section,
+body.mikus-theme .table-container,
+body.mikus-theme .table-wrapper,
+body.mikus-theme .modal-dialog,
+body.mikus-theme .login-container {
+    border-color: var(--mikus-border);
+    background: var(--bg-secondary);
+    box-shadow: var(--mikus-panel-shadow);
+    backdrop-filter: blur(10px);
+}
+
+body.mikus-theme .stat-card,
+body.mikus-theme .sysinfo-item,
+body.mikus-theme .terminal-table th,
+body.mikus-theme .chart-card-header,
+body.mikus-theme .server-card-network-panel,
+body.mikus-theme .tabs,
+body.mikus-theme .view-toggle,
+body.mikus-theme .time-selector,
+body.mikus-theme .lang-toggle,
+body.mikus-theme .theme-toggle,
+body.mikus-theme .user-menu-btn,
+body.mikus-theme .admin-link-header,
+body.mikus-theme .admin-link,
+body.mikus-theme .back-btn,
+body.mikus-theme .filter-tag,
+body.mikus-theme .btn,
+body.mikus-theme .resource-alert-server-menu {
+    border-color: var(--mikus-border);
+    background: var(--bg-card);
+}
+
+body.mikus-theme .chart-card-header,
+body.mikus-theme .host-card-header {
+    background: var(--mikus-header-bg);
+}
+
+body.mikus-theme .server-card.server-card-ring {
+    border-color: var(--mikus-border);
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.01) 35%, rgba(0, 0, 0, 0.025) 100%), var(--bg-secondary);
+}
+
+body.mikus-theme .server-card-ring-divider,
+body.mikus-theme .server-card-network-row + .server-card-network-row,
+body.mikus-theme .modal-header,
+body.mikus-theme .modal-footer {
+    border-color: var(--mikus-border);
+}
+
+body.mikus-theme .server-card-network-panel {
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+body.mikus-theme .btn-primary,
+body.mikus-theme .tab-btn.active,
+body.mikus-theme .toggle-btn.active,
+body.mikus-theme .filter-tag.active,
+body.mikus-theme .time-btn.active,
+body.mikus-theme .theme-btn.active,
+body.mikus-theme .lang-btn.active,
+body.mikus-theme .login-btn {
+    background: var(--mikus-accent);
+    border-color: var(--mikus-accent);
+    color: var(--color-inherit);
+}
+
+body.mikus-theme .btn-primary:hover,
+body.mikus-theme .login-btn:hover {
+    background: var(--accent-green);
+    border-color: var(--accent-green);
+}
+
+body.mikus-theme .admin-loading-overlay,
+body.mikus-theme .modal-overlay {
+    background: rgba(20, 17, 26, 0.58);
+}
+
+body.light.mikus-theme .admin-loading-overlay,
+body.light.mikus-theme .modal-overlay {
+    background: rgba(45, 27, 61, 0.22);
+}
+
+.mikus-startup-loading,
+.mikus-loading-inner {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 18px;
+    color: var(--mikus-text);
+}
+
+.mikus-startup-gif,
+.mikus-loading-gif {
+    width: 180px;
+    height: 180px;
+    object-fit: contain;
+    border-radius: 8px;
+}
+
+.mikus-startup-brand,
+.mikus-loading-brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 22px;
+    font-weight: 700;
+    line-height: 1.2;
+}
+
+.mikus-startup-brand span,
+.mikus-loading-brand span {
+    max-width: min(70vw, 360px);
+    overflow-wrap: anywhere;
+}
+
+.mikus-startup-logo,
+.mikus-loading-logo {
+    width: 40px;
+    height: 40px;
+    border-radius: 8px;
+    object-fit: contain;
+    animation: mikus-logo-breath 2s ease-in-out infinite;
+}
+
+.mikus-startup-progress,
+.mikus-loading-progress {
+    width: min(220px, 70vw);
+    height: 4px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: var(--mikus-border);
+}
+
+.mikus-startup-progress-fill,
+.mikus-loading-progress-fill {
+    width: 42%;
+    height: 100%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, #ffb7c5, #e8668a, #5c9ced);
+    animation: mikus-progress 1.8s ease-in-out infinite;
+}
+
+.mikus-startup-status,
+.mikus-loading-status {
+    min-height: 1.2em;
+    color: var(--mikus-text-muted);
+    font-size: 12px;
+    font-family: var(--terminal-font);
+}
+
+.mikus-dashboard {
+    --mikus-bg-card: var(--bg-card);
+    --mikus-bg-soft: var(--bg-hover);
+    --mikus-text: var(--text-primary);
+    --mikus-text-muted: var(--text-muted);
+    --mikus-border: var(--border-color);
+    --mikus-accent: var(--accent-pink);
+    --mikus-accent-soft: #ffb7c5;
+    --mikus-info: var(--accent-blue);
+}
+
+.mikus-loading-state {
+    margin-top: 18px;
+    padding: 64px 24px;
+    border: 1px solid var(--mikus-border);
+    border-radius: 8px;
+    background: linear-gradient(135deg, var(--mikus-bg-card) 0%, var(--mikus-bg-soft) 52%, var(--mikus-bg-card) 100%);
+    box-shadow: var(--mikus-shadow);
+}
+
+.mikus-loading-state .mikus-loading-inner {
+    color: var(--mikus-text);
+}
+
+.mikus-loading-state .mikus-loading-status {
+    color: var(--mikus-text-muted);
+}
+
+.mikus-welcome-section {
+    position: relative;
+    margin: 0 0 20px;
+    padding: 28px 32px;
+    overflow: visible;
+    border: 1px solid var(--mikus-border);
+    border-radius: 8px;
+    background: linear-gradient(135deg, var(--mikus-bg-card) 0%, var(--mikus-bg-soft) 50%, var(--mikus-bg-card) 100%);
+    background-size: 200% 200%;
+    box-shadow: var(--mikus-shadow);
+    animation: mikus-gradient-shift 8s ease infinite;
+}
+
+.mikus-welcome-decoration {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    pointer-events: none;
+}
+
+.mikus-sakura-petal {
+    position: absolute;
+    top: -18px;
+    width: 18px;
+    height: 18px;
+    background: url('/mikus/sakura.png') center / contain no-repeat;
+    opacity: 0;
+    transform-origin: center;
+    animation: mikus-sakura-fall 10s linear infinite;
+}
+
+.mikus-sakura-petal:nth-child(1) { left: 12%; animation-delay: 0s; animation-duration: 12s; }
+.mikus-sakura-petal:nth-child(2) { left: 30%; animation-delay: 2s; animation-duration: 10s; }
+.mikus-sakura-petal:nth-child(3) { left: 52%; animation-delay: 4s; animation-duration: 14s; }
+.mikus-sakura-petal:nth-child(4) { left: 72%; animation-delay: 1s; animation-duration: 11s; }
+.mikus-sakura-petal:nth-child(5) { left: 90%; animation-delay: 3s; animation-duration: 13s; }
+
+.mikus-welcome-content {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
+}
+
+.mikus-welcome-greeting {
+    position: relative;
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    min-height: 96px;
+    padding-left: 112px;
+}
+
+.mikus-greeting-icon {
+    position: absolute;
+    left: -44px;
+    top: -76px;
+    z-index: 2;
+    width: 174px;
+    height: 174px;
+    object-fit: contain;
+    filter: drop-shadow(0 8px 18px rgba(45, 27, 61, 0.18));
+    transform-origin: bottom center;
+    animation: mikus-bounce 2s ease-in-out infinite;
+}
+
+.mikus-greeting-info {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.mikus-greeting-text {
+    color: var(--mikus-text);
+    font-size: 24px;
+    font-weight: 700;
+    line-height: 1.25;
+    overflow-wrap: anywhere;
+}
+
+.mikus-greeting-subtitle {
+    color: var(--mikus-text-muted);
+    font-size: 12px;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+}
+
+.mikus-welcome-time {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 4px;
+    text-align: right;
+}
+
+.mikus-time-label {
+    color: var(--mikus-text-muted);
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1.4;
+}
+
+.mikus-time-value {
+    color: var(--mikus-accent);
+    font-size: 28px;
+    font-weight: 700;
+    font-family: var(--terminal-font);
+    line-height: 1.2;
+    text-shadow: 0 2px 10px rgba(232, 102, 138, 0.18);
+}
+
+@keyframes mikus-logo-breath {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.08); }
+}
+
+@keyframes mikus-progress {
+    0% { transform: translateX(-110%); }
+    45%, 55% { transform: translateX(60%); }
+    100% { transform: translateX(240%); }
+}
+
+@keyframes mikus-gradient-shift {
+    0%, 100% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+}
+
+@keyframes mikus-background-sakura-fall {
+    0% {
+        opacity: 0;
+        transform: translate3d(0, -12vh, 0) rotate(0deg) scale(0.8);
+    }
+    10% { opacity: var(--petal-opacity); }
+    48% {
+        opacity: var(--petal-opacity);
+        transform: translate3d(calc(var(--drift) * 0.45), 48vh, 0) rotate(calc(var(--spin) * 0.5)) scale(1);
+    }
+    90% { opacity: calc(var(--petal-opacity) * 0.7); }
+    100% {
+        opacity: 0;
+        transform: translate3d(var(--drift), 112vh, 0) rotate(var(--spin)) scale(0.86);
+    }
+}
+
+@keyframes mikus-sakura-fall {
+    0% {
+        opacity: 0;
+        transform: translateY(0) rotate(0deg) scale(0.8);
+    }
+    12% { opacity: 0.45; }
+    88% { opacity: 0.25; }
+    100% {
+        opacity: 0;
+        transform: translateY(140px) rotate(360deg) scale(0.65);
+    }
+}
+
+@keyframes mikus-bounce {
+    0%, 100% { transform: translateY(0) rotate(0deg); }
+    50% { transform: translateY(-8px) rotate(2deg); }
+}
+
+/* --------------------------------------------------------------------------
+   43. Password Input Toggle Styles
    -------------------------------------------------------------------------- */
 .password-input-wrapper {
     position: relative;
@@ -3738,6 +4252,79 @@ body::before {
     .view-panel {
         min-height: 0;
     }
+
+    .mikus-startup-gif,
+    .mikus-loading-gif {
+        width: 120px;
+        height: 120px;
+    }
+
+    .mikus-startup-brand,
+    .mikus-loading-brand {
+        font-size: 18px;
+    }
+
+    .mikus-startup-logo,
+    .mikus-loading-logo {
+        width: 32px;
+        height: 32px;
+    }
+
+    .mikus-loading-state {
+        padding: 42px 16px;
+    }
+
+    .mikus-welcome-section {
+        padding: 18px 16px;
+        margin-bottom: 16px;
+    }
+
+    .mikus-welcome-content {
+        gap: 14px;
+    }
+
+    .mikus-welcome-greeting {
+        min-height: 72px;
+        padding-left: 74px;
+    }
+
+    .mikus-greeting-icon {
+        left: -12px;
+        top: -42px;
+        width: 100px;
+        height: 100px;
+    }
+
+    .mikus-greeting-text {
+        font-size: 18px;
+    }
+
+    .mikus-greeting-subtitle,
+    .mikus-time-label {
+        font-size: 11px;
+    }
+
+    .mikus-time-value {
+        font-size: 20px;
+    }
+
+    .mikus-sakura-petal {
+        display: none;
+    }
+
+    @media (max-width: 560px) {
+        .mikus-welcome-content {
+            align-items: stretch;
+            flex-direction: column;
+        }
+
+        .mikus-welcome-time {
+            align-items: flex-start;
+            padding-left: 74px;
+            text-align: left;
+        }
+    }
+
     .btn-lg {
         font-size: 12px;
         padding: 12px;

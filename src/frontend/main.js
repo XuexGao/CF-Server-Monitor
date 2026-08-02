@@ -8,6 +8,7 @@ import { http } from './utils/http'
 import { initConfig, hasMultipleApiBases } from './utils/config'
 import { LAST_AGENT_VERSION, LAST_WORKERS_VERSION, VERSION } from './utils/api'
 import { resolveDisplayMode } from './utils/displayMode'
+import { getMikusAssetUrl, isMikusThemeEnabled, normalizeThemeOptions, setMikusThemeClass } from './utils/themeOptions'
 import {
   clearTurnstileToken,
   fetchAllTurnstileConfigs,
@@ -25,6 +26,48 @@ const getTranslation = () => {
 
 const trans = () => getTranslation()
 
+const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({
+  '&': '&amp;',
+  '<': '&lt;',
+  '>': '&gt;',
+  '"': '&quot;',
+  "'": '&#39;'
+}[char]))
+
+const renderMikusStartupLoading = (siteTitle) => {
+  const loading = document.getElementById('loading')
+  if (!loading || loading.dataset.mikusRendered === '1') return
+
+  const title = escapeHtml(String(siteTitle || 'Komari').trim() || 'Komari')
+  const loliUrl = getMikusAssetUrl('loli.gif')
+  const logoUrl = getMikusAssetUrl('miku.png')
+  const petals = Array.from({ length: 18 }, () => '<span class="mikus-background-petal"></span>').join('')
+  loading.dataset.mikusRendered = '1'
+  loading.classList.add('mikus-startup')
+  loading.innerHTML = `
+    <div class="mikus-sakura-background mikus-startup-sakura" aria-hidden="true">${petals}</div>
+    <div class="mikus-startup-loading">
+      <img class="mikus-startup-gif" src="${loliUrl}" alt="Loading">
+      <div class="mikus-startup-brand">
+        <img class="mikus-startup-logo" src="${logoUrl}" alt="">
+        <span>${title}</span>
+      </div>
+      <div class="mikus-startup-progress" aria-hidden="true">
+        <div class="mikus-startup-progress-fill"></div>
+      </div>
+      <div class="mikus-startup-status">$ Initializing...</div>
+    </div>
+  `
+}
+
+const applyStartupThemeOptions = (config) => {
+  const enabled = isMikusThemeEnabled(config?.theme_options)
+  setMikusThemeClass(enabled)
+  if (enabled) {
+    renderMikusStartupLoading(config?.site_title)
+  }
+}
+
 async function fetchConfig() {
   try {
     const result = await http.get('/api/config', { includeAuth: true, includeTurnstile: true })
@@ -37,6 +80,7 @@ async function fetchConfig() {
         version: '',
         last_workers_version: '',
         last_agent_version: '',
+        theme_options: {},
         verified: false
       }
     }
@@ -51,6 +95,7 @@ async function fetchConfig() {
         version: '',
         last_workers_version: '',
         last_agent_version: '',
+        theme_options: {},
         verified: false
       }
     }
@@ -66,6 +111,7 @@ async function fetchConfig() {
     const authorization = data.authorization === true
     const siteTitle = data.site_title || ''
     const displayMode = resolveDisplayMode(data)
+    const themeOptions = normalizeThemeOptions(data.theme_options)
 
     if (version) {
       VERSION.value = version
@@ -84,7 +130,8 @@ async function fetchConfig() {
       is_public: isPublic,
       authorization,
       site_title: siteTitle,
-      display_mode: displayMode
+      display_mode: displayMode,
+      theme_options: themeOptions
     }
   } catch (e) {
     console.error('Failed to fetch config:', e)
@@ -97,6 +144,7 @@ async function fetchConfig() {
     version: '',
     last_workers_version: '',
     last_agent_version: '',
+    theme_options: {},
     verified: false
   }
 }
@@ -259,8 +307,9 @@ async function initApp() {
         is_public: !privateAccess.hasPrivateSite,
         authorization: !privateAccess.hasUnauthorizedPrivateSite,
         site_title: first.data.site_title || '',
-        display_mode: resolveDisplayMode(first.data)
-      } : { turnstile_enabled: false, turnstile_login_enabled: false, turnstile_site_key: '', turnstile_api_index: 0, version: '', last_workers_version: '', last_agent_version: '', verified: false, is_public: true, authorization: false, site_title: '', display_mode: 'bar' }
+        display_mode: resolveDisplayMode(first.data),
+        theme_options: normalizeThemeOptions(first.data.theme_options)
+      } : { turnstile_enabled: false, turnstile_login_enabled: false, turnstile_site_key: '', turnstile_api_index: 0, version: '', last_workers_version: '', last_agent_version: '', verified: false, is_public: true, authorization: false, site_title: '', display_mode: 'bar', theme_options: {} }
       if (sharedTurnstileSite) {
         config.turnstile_enabled = true
         config.turnstile_site_key = sharedTurnstileSite.siteKey
@@ -270,11 +319,13 @@ async function initApp() {
       LAST_WORKERS_VERSION.value = config.last_workers_version || ''
       LAST_AGENT_VERSION.value = config.last_agent_version || ''
     } catch (_) {
-      config = { turnstile_enabled: false, turnstile_login_enabled: false, turnstile_site_key: '', turnstile_api_index: 0, version: '', last_workers_version: '', last_agent_version: '', verified: false, is_public: true, authorization: false, site_title: '', display_mode: 'bar' }
+      config = { turnstile_enabled: false, turnstile_login_enabled: false, turnstile_site_key: '', turnstile_api_index: 0, version: '', last_workers_version: '', last_agent_version: '', verified: false, is_public: true, authorization: false, site_title: '', display_mode: 'bar', theme_options: {} }
     }
   } else {
     config = await fetchConfig()
   }
+
+  applyStartupThemeOptions(config)
 
   // 仅全局模式需要在启动时验证 Turnstile；登录模式在 Admin 页面的登录表单中验证
   if (config.turnstile_enabled) {

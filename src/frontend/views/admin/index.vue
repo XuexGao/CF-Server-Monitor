@@ -470,6 +470,7 @@ import { hasMultipleApiBases } from '../../utils/config.js'
 import { t, useTranslation } from '../../utils/i18n'
 import { PING_NODE_FIELDS, validatePingNode } from '../../utils/pingNode.js'
 import { normalizeDisplayMode, resolveDisplayMode } from '../../utils/displayMode.js'
+import { applyMikusThemeOptions } from '../../utils/themeOptions.js'
 import { HISTORY } from '../../utils/constants.js'
 import { usePasswordVisibility } from '../../composables/usePasswordVisibility'
 import { useTurnstile } from './composables/useTurnstile'
@@ -1048,6 +1049,7 @@ const loadSettings = async () => {
         csp_static: settingsData.csp_static || '',
         csp_api: settingsData.csp_api || ''
       }
+      applyMikusThemeOptions(settingsData.theme_options)
       changeAdminPassword.value = !String(settings.value.username || '').trim()
       apiSecret.value = data.api_secret || ''
     }
@@ -1190,6 +1192,7 @@ const saveSettings = async () => {
     const result = await adminApiForSite(data)
     if (!result.error) {
       saveResult.value = { success: true }
+      applyMikusThemeOptions(themeOptionsResult.value)
       clearAdminPasswordInputs()
       changeAdminPassword.value = false
       settings.value.jwt_secret = ''
