@@ -162,7 +162,9 @@
           :active-tab="activeTab"
           :selected-api-index="selectedApiIndex"
           :current-theme-url="settings.theme_url"
+          :settings="settings"
           @theme-applied="settings.theme_url = $event"
+          @theme-options-applied="handleThemeOptionsApplied"
         />
       </div>
 
@@ -1056,6 +1058,11 @@ const loadSettings = async () => {
   } catch (e) {
     console.error('[ERROR] Load settings failed:', e)
   }
+}
+
+const handleThemeOptionsApplied = (themeOptions) => {
+  settings.value.theme_options = formatThemeOptions(themeOptions)
+  applyMikusThemeOptions(themeOptions)
 }
 
 watch(

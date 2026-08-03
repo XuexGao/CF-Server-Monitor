@@ -14,7 +14,7 @@
       <div class="theme-store-toolbar mb-4">
         <div class="theme-current">
           <span class="theme-current-label">{{ trans.currentTheme }}</span>
-          <span class="theme-current-value">{{ currentThemeUrl || trans.builtinTheme }}</span>
+          <span class="theme-current-value">{{ currentThemeLabel }}</span>
         </div>
         <button
           v-if="currentThemeUrl"
@@ -69,11 +69,36 @@
         <button @click="loadThemes" class="btn btn-lg mt-2">↻ {{ trans.refresh }}</button>
       </div>
 
-      <div v-else-if="themes.length === 0" class="warning-box mb-4">
-        {{ trans.themeStoreEmpty }}
-      </div>
+      <div class="theme-grid">
+        <div class="theme-card" :class="{ active: isMikusThemeActive }">
+          <div class="theme-cover-wrap theme-cover-wrap-mikus">
+            <img src="/mikus/loli.gif" alt="Mikus" class="theme-cover theme-cover-mikus" />
+          </div>
+          <div class="theme-info">
+            <div class="theme-header">
+              <h3 class="theme-title">Mikus</h3>
+            </div>
+            <div class="theme-tags">
+              <span v-for="tag in mikusThemeTags" :key="tag" class="theme-tag">{{ tag }}</span>
+            </div>
+            <p class="theme-desc">{{ mikusThemeDescription }}</p>
+            <div class="theme-author">by mikus-loli</div>
+            <div class="theme-actions">
+              <button
+                @click="enableMikusTheme"
+                class="btn btn-sm"
+                :disabled="applyingThemeId === '__mikus_enable__' || isMikusThemeActive"
+              >✓ {{ applyingThemeId === '__mikus_enable__' ? trans.saving : trans.enable }}</button>
+              <button
+                @click="disableMikusTheme"
+                class="btn btn-sm btn-primary"
+                :disabled="applyingThemeId === '__mikus_disable__' || !isMikusThemeActive"
+              >✕ {{ applyingThemeId === '__mikus_disable__' ? trans.saving : trans.close }}</button>
+              <a href="https://github.com/mikus-loli/komari-mikus" target="_blank" rel="noopener noreferrer" class="btn btn-sm">↗ {{ trans.view }}</a>
+            </div>
+          </div>
+        </div>
 
-      <div v-else class="theme-grid">
         <div v-for="theme in themes" :key="theme.id" class="theme-card" :class="{ active: isCurrentTheme(theme) }">
           <div class="theme-cover-wrap">
             <img :src="theme.cover" :alt="theme.title" class="theme-cover" @error="handleCoverError" />
@@ -137,19 +162,22 @@
 </template>
 
 <script setup>
-import { ref, watch, reactive } from 'vue'
+import { computed, ref, watch, reactive } from 'vue'
 import http from '../../../utils/http'
 import { currentLang } from '../../../utils/i18n'
 import { adminApi } from '../../../utils/api'
+import { normalizeDisplayMode } from '../../../utils/displayMode'
+import { isMikusThemeEnabled } from '../../../utils/themeOptions'
 
 const props = defineProps({
   trans: { type: Object, required: true },
   activeTab: { type: String, default: '' },
   selectedApiIndex: { type: Number, default: 0 },
-  currentThemeUrl: { type: String, default: '' }
+  currentThemeUrl: { type: String, default: '' },
+  settings: { type: Object, default: () => ({}) }
 })
 
-const emit = defineEmits(['theme-applied'])
+const emit = defineEmits(['theme-applied', 'theme-options-applied'])
 
 const COMMIT_LIMIT = 10
 const GITHUB_FETCH_TIMEOUT_MS = 8000
@@ -164,6 +192,44 @@ const applyingThemeId = ref('')
 const previewingThemeId = ref('')
 const customThemeUrl = ref('')
 const selectedVersions = reactive({})
+
+const parseThemeOptionsJson = () => {
+  const raw = String(props.settings?.theme_options || '').trim()
+  if (!raw) return {}
+  try {
+    const parsed = JSON.parse(raw)
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed
+      : {}
+  } catch (_) {
+    return {}
+  }
+}
+
+const isMikusThemeActive = computed(() => isMikusThemeEnabled(parseThemeOptionsJson()))
+const currentThemeLabel = computed(() => isMikusThemeActive.value ? 'Mikus' : (props.currentThemeUrl || props.trans.builtinTheme))
+const mikusThemeTags = computed(() => currentLang.value === 'zh'
+  ? ['内置', 'Mikus', '樱花']
+  : ['Built-in', 'Mikus', 'Sakura']
+)
+const mikusThemeDescription = computed(() => currentLang.value === 'zh'
+  ? '内置 Mikus 模式，启用后切回默认主题，并开启 Mikus 配色、加载页与樱花动效。'
+  : 'Built-in Mikus mode. Switches back to the default theme and enables Mikus colors, loading screens, and sakura effects.'
+)
+
+const buildAppearanceSettings = (themeOptions) => ({
+  site_title: props.settings?.site_title || '',
+  custom_bg: props.settings?.custom_bg || '',
+  favicon: props.settings?.favicon || '',
+  custom_head: props.settings?.custom_head || '',
+  custom_script: props.settings?.custom_script || '',
+  csp_static: props.settings?.csp_static || '',
+  csp_api: props.settings?.csp_api || '',
+  display_mode: normalizeDisplayMode(props.settings?.display_mode),
+  appearance_options: {
+    theme_options: themeOptions
+  }
+})
 
 const initSelectedVersions = (reset = false) => {
   themes.value.forEach(theme => {
@@ -473,9 +539,15 @@ const saveThemeUrl = async (themeUrl, applyingId) => {
   applyingThemeId.value = applyingId
   notice.value = null
   try {
+    const themeOptions = parseThemeOptionsJson()
+    delete themeOptions.mikus
+
     const result = await adminApi({
       action: 'save_settings',
-      settings: { theme_url: themeUrl }
+      settings: {
+        ...buildAppearanceSettings(themeOptions),
+        theme_url: themeUrl
+      }
     }, props.selectedApiIndex)
 
     if (result.error) {
@@ -484,12 +556,59 @@ const saveThemeUrl = async (themeUrl, applyingId) => {
     }
 
     emit('theme-applied', themeUrl)
+    emit('theme-options-applied', themeOptions)
     notice.value = { type: 'success', message: props.trans.themeApplied }
   } catch (e) {
     notice.value = { type: 'error', message: e.message || props.trans.themeApplyFailed }
   } finally {
     applyingThemeId.value = ''
   }
+}
+
+const saveMikusTheme = async (enabled, applyingId) => {
+  if (applyingThemeId.value) return
+
+  applyingThemeId.value = applyingId
+  notice.value = null
+  try {
+    const themeOptions = parseThemeOptionsJson()
+    if (enabled) {
+      themeOptions.mikus = 1
+    } else {
+      delete themeOptions.mikus
+    }
+
+    const result = await adminApi({
+      action: 'save_settings',
+      settings: {
+        ...buildAppearanceSettings(themeOptions),
+        theme_url: ''
+      }
+    }, props.selectedApiIndex)
+
+    if (result.error) {
+      notice.value = { type: 'error', message: props.trans[result.error] || result.error || props.trans.themeApplyFailed }
+      return
+    }
+
+    emit('theme-applied', '')
+    emit('theme-options-applied', themeOptions)
+    notice.value = { type: 'success', message: props.trans.themeApplied }
+  } catch (e) {
+    notice.value = { type: 'error', message: e.message || props.trans.themeApplyFailed }
+  } finally {
+    applyingThemeId.value = ''
+  }
+}
+
+const enableMikusTheme = async () => {
+  if (isMikusThemeActive.value) return
+  await saveMikusTheme(true, '__mikus_enable__')
+}
+
+const disableMikusTheme = async () => {
+  if (!isMikusThemeActive.value) return
+  await saveMikusTheme(false, '__mikus_disable__')
 }
 
 const applyTheme = async (theme) => {
@@ -689,11 +808,20 @@ watch(
   background: var(--bg-secondary, #1a1a2e);
 }
 
+.theme-cover-wrap-mikus {
+  background: linear-gradient(135deg, rgba(255, 183, 197, 0.18), rgba(77, 166, 255, 0.12));
+}
+
 .theme-cover {
   width: 100%;
   height: 100%;
   object-fit: cover;
   display: block;
+}
+
+.theme-cover-mikus {
+  object-fit: contain;
+  padding: 14px;
 }
 
 .theme-info {

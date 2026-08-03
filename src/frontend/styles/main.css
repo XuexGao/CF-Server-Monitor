@@ -2183,16 +2183,6 @@ body::before {
     font-weight: 600;
 }
 
-.theme-option-toggle {
-    margin-top: 8px;
-}
-
-.theme-option-toggle span {
-    flex: 1;
-    font-size: 12px;
-    cursor: pointer;
-}
-
 .highlight-box {
     background: rgba(255, 184, 112, 0.05);
     border-color: rgba(255, 184, 112, 0.3) !important;

@@ -49,10 +49,6 @@
         <div class="form-row">
           <div class="form-group flex-1">
             <label class="form-label">{{ trans.themeOptions }}</label>
-            <label class="checkbox-item theme-option-toggle">
-              <input type="checkbox" v-model="mikusThemeEnabled">
-              <span>{{ trans.mikusThemeToggle }}</span>
-            </label>
             <textarea v-model="settings.theme_options" class="form-textarea" rows="5" placeholder='{"mikus":1}'></textarea>
             <p class="text-muted text-sm mt-1">{{ trans.themeOptionsTip }}</p>
           </div>
@@ -489,7 +485,6 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'v
 import { HISTORY } from '../../../utils/constants.js'
 import { currentLang } from '../../../utils/i18n.js'
 import { PING_NODE_FIELDS, validatePingNode } from '../../../utils/pingNode.js'
-import { isMikusThemeEnabled } from '../../../utils/themeOptions.js'
 
 const props = defineProps({
   trans: { type: Object, required: true },
@@ -514,34 +509,6 @@ defineEmits([
 const cspErrors = reactive({
   csp_static: '',
   csp_api: ''
-})
-
-const parseThemeOptionsJson = () => {
-  const raw = String(props.settings.theme_options || '').trim()
-  if (!raw) return {}
-  try {
-    const parsed = JSON.parse(raw)
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-      ? parsed
-      : {}
-  } catch (_) {
-    return {}
-  }
-}
-
-const formatThemeOptionsJson = (options) => JSON.stringify(options, null, 2)
-
-const mikusThemeEnabled = computed({
-  get: () => isMikusThemeEnabled(parseThemeOptionsJson()),
-  set: (enabled) => {
-    const options = parseThemeOptionsJson()
-    if (enabled) {
-      options.mikus = 1
-    } else {
-      delete options.mikus
-    }
-    props.settings.theme_options = formatThemeOptionsJson(options)
-  }
 })
 
 const offlineNotifyOptions = computed(() => [
