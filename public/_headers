@@ -10,5 +10,8 @@
 /static/*
   Cache-Control: public, max-age=31536000, immutable
 
+/files/*
+  Cache-Control: public, max-age=86400
+
 /mikus/*
   Cache-Control: public, max-age=31536000, immutable

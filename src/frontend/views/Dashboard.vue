@@ -895,7 +895,7 @@ const startLiveSocket = () => {
 const initMap = () => {
   if (!window.L) {
     const script = document.createElement('script')
-    script.src = getPublicAssetUrl('leaflet.js')
+    script.src = getPublicAssetUrl('files/leaflet.js')
     script.onload = () => {
       loadLeafletCSS()
     }
@@ -908,7 +908,7 @@ const initMap = () => {
 const loadLeafletCSS = () => {
   const link = document.createElement('link')
   link.rel = 'stylesheet'
-  link.href = getPublicAssetUrl('leaflet.css')
+  link.href = getPublicAssetUrl('files/leaflet.css')
   document.head.appendChild(link)
   link.onload = () => {
     createMap()
@@ -927,7 +927,7 @@ const createMap = () => {
 
   window.L.control.zoom({ position: 'bottomright' }).addTo(window.myMap)
 
-  fetch(getPublicAssetUrl('world.zh.json'))
+  fetch(getPublicAssetUrl('files/world.zh.json'))
     .then(res => res.json())
     .then(worldGeoJson => {
       window.worldGeoJson = worldGeoJson

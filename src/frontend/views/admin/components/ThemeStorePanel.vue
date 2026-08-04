@@ -83,15 +83,18 @@
             </div>
             <p class="theme-desc">{{ mikusThemeDescription }}</p>
             <div class="theme-author">by mikus-loli</div>
+            <div class="theme-space"></div>
             <div class="theme-actions">
               <button
                 @click="enableMikusTheme"
                 class="btn btn-sm"
+                :class="{ 'btn-primary': applyingThemeId !== '__mikus_enable__' && !isMikusThemeActive }"
                 :disabled="applyingThemeId === '__mikus_enable__' || isMikusThemeActive"
               >✓ {{ applyingThemeId === '__mikus_enable__' ? trans.saving : trans.enable }}</button>
               <button
                 @click="disableMikusTheme"
-                class="btn btn-sm btn-primary"
+                class="btn btn-sm"
+                :class="{ 'btn-primary': applyingThemeId !== '__mikus_disable__' && isMikusThemeActive }"
                 :disabled="applyingThemeId === '__mikus_disable__' || !isMikusThemeActive"
               >✕ {{ applyingThemeId === '__mikus_disable__' ? trans.saving : trans.close }}</button>
               <a href="https://github.com/mikus-loli/komari-mikus" target="_blank" rel="noopener noreferrer" class="btn btn-sm">↗ {{ trans.view }}</a>
@@ -785,6 +788,8 @@ watch(
 }
 
 .theme-card {
+  display: flex;
+  flex-direction: column;
   background: var(--bg-card);
   border: 1px solid var(--border-color);
   border-radius: 6px;
@@ -799,6 +804,10 @@ watch(
 
 .theme-card.active {
   border-color: var(--accent-green);
+}
+
+.theme-space {
+  flex: 1;
 }
 
 .theme-cover-wrap {
@@ -825,7 +834,10 @@ watch(
 }
 
 .theme-info {
+  display: flex;
+  flex-direction: column;
   padding: 12px 14px;
+  flex: 1;
 }
 
 .theme-header {
@@ -901,6 +913,7 @@ watch(
 
 .version-select {
   flex: 1;
+  min-width: 0;
   font-size: 11px;
   padding: 4px 8px;
   background: var(--bg-secondary, #1a1a2e);
