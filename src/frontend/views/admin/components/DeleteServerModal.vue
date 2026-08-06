@@ -18,17 +18,39 @@
           <strong class="text-primary">{{ trans.recommendUninstall }}：</strong>
         </p>
       </div>
+  
+      <div class="form-row">
+        <div class="form-group flex-1 mb-3">
+          <label class="form-label">{{ trans.targetOs }}</label>
+          <select :value="deleteTargetOs" class="form-select" @change="$emit('update:delete-target-os', $event.target.value)">
+            <option value="linux">Linux (Ubuntu/Debian/CentOS)</option>
+            <option value="alpine">Alpine Linux</option>
+            <option value="openwrt">OpenWrt / LEDE / ImmortalWrt</option>
+            <option value="mac">macOS (Intel / Apple Silicon)</option>
+            <option value="synology">Synology DSM (群晖)</option>
+            <option value="windows">Windows</option>
+          </select>
+        </div>
 
-      <div class="form-group mb-3">
-        <label class="form-label">{{ trans.targetOs }}</label>
-        <select :value="deleteTargetOs" class="form-select" @change="$emit('update:delete-target-os', $event.target.value)">
-          <option value="linux">Linux (Ubuntu/Debian/CentOS)</option>
-          <option value="alpine">Alpine Linux</option>
-          <option value="openwrt">OpenWrt / LEDE / ImmortalWrt</option>
-          <option value="mac">macOS (Intel / Apple Silicon)</option>
-          <option value="synology">Synology DSM (群晖)</option>
-          <option value="windows">Windows</option>
-        </select>
+        <div class="form-group flex-1 mb-3">
+          <label class="form-label">{{ trans.agentVersionSelect }}</label>
+          <select :value="deleteVersion" class="form-select" @change="$emit('update:delete-version', $event.target.value)">
+            <option value="shell">{{ trans.agentVersionShell }}</option>
+            <option value="go">{{ trans.agentVersionGo }}</option>
+          </select>
+        </div>
+
+        <div v-if="deleteVersion === 'go'" class="form-group flex-1 mb-3">
+          <label class="form-label">{{ trans.ghProxy }}</label>
+          <input
+            type="text"
+            :value="deleteGhProxy"
+            class="form-input"
+            :placeholder="trans.ghProxyPlaceholder"
+            @input="$emit('update:delete-gh-proxy', $event.target.value)"
+          >
+          <p class="text-muted text-sm mt-1">{{ trans.ghProxyTip }}</p>
+        </div>
       </div>
 
       <div class="cmd-input-wrapper mb-3" :class="{ copied: uninstallCopied }">
@@ -56,9 +78,18 @@ defineProps({
   deleteServerId: { type: [String, Number], default: '' },
   currentServerName: { type: String, default: '' },
   deleteTargetOs: { type: String, default: 'linux' },
+  deleteVersion: { type: String, default: 'shell' },
+  deleteGhProxy: { type: String, default: '' },
   uninstallCommand: { type: String, default: '' },
   uninstallCopied: { type: Boolean, default: false }
 })
 
-defineEmits(['close', 'confirm-delete', 'copy-uninstall', 'update:delete-target-os'])
+defineEmits([
+  'close',
+  'confirm-delete',
+  'copy-uninstall',
+  'update:delete-target-os',
+  'update:delete-version',
+  'update:delete-gh-proxy'
+])
 </script>

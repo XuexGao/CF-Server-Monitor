@@ -4,7 +4,7 @@
 
 **演示地址**：<https://demo.huilang.me/>
 
-**当前Workers版本：V2.8.1 Beta4; Agent版本：1.3.8**
+**当前Workers版本：V2.8.2 Beta1; Agent版本：1.3.8**
 
 > [!IMPORTANT]
 > V2.7.10 加入了 CSP 内容安全策略。Workers 环境通过 HTTP Response Header 下发 CSP，默认只允许同源资源和必要的 Cloudflare/Google Fonts 资源；
@@ -26,6 +26,7 @@
 
 ## Workers 版本更新
 
+- V2.8.2 新增 GO 版本支持。
 - V2.8.1 优化长时间历史查询的 D1 读行，增加服务器负载通知，优化主题商店接口。主题新增服务器价值统计面板。主题新增Mikus模式。
 - V2.8.0 新增主题商店功能，支持一键切换主题。
 - V2.7 版本进行了全面重构与功能增强：数据库层面将每日清理改为每月表轮换，减少 D1 消耗，同时优化数据结构使写入减半并支持 60+ 服务器监控；新增国内四线路丢包率监控及历史图表、GPU 字段展示、服务器到期提醒、多分区磁盘统计、计费与自动续费、tags/note 字段、iOS Scriptable 小组件等功能；通知层面新增钉钉、OneBot(QQ)、飞书、Bark 支持，并重构告警模块；交互层面新增环形图显示模式、服务器导入导出、批量推送（5秒/批）、服务器参数下发，优化 Ping 统计改为中位数；安全与兼容方面加入 CSP、JWT 自动生成、跨域配置、多站点验证码登录、macOS 修复，并简化安装流程；探针与运维方面优化客户端脚本减少流量消耗，新增 Agent 自动更新（默认关闭）、GitHub 自动同步及 Workers/Agent 版本升级提示，增加 OS 图标显示，压缩定时任务从 4 个减为 2 个以规避免费额度限制，并修复月度任务导致索引丢失等严重 Bug。
@@ -237,6 +238,32 @@ https://你的项目名.你的子域.workers.dev/admin
 
 > **注意**：`-collect_interval` 控制本机额外采集频率，`-interval` 控制向 Worker 上报频率。默认 `0` 为兼容模式：不额外采集，只按上报间隔发送单条数据；设置为 `1` 时才会 1 秒采集、按上报间隔批量发送。上报间隔越短，API 调用和数据库写入越多。
 
+### Go 版本探针（可选）
+
+除默认的 Shell 脚本探针外，V2.8.2 起提供 Go 版本探针 `cfsm-agent`，安装后以 `cf-probe` 服务运行，参数与 Shell 版本一致。从后台复制安装命令时可在「探针版本」下拉切换 Shell / Go 版本，Go 版本额外支持 GitHub 代理加速（如 `https://ghfast.top/`）。
+
+Linux / OpenWrt / Synology DSM / FreeBSD / macOS：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/huilang-me/cfsm-agent/main/install.sh | sudo sh -s -- install -id=SERVER_ID -secret=SECRET -url=WORKER_URL
+```
+
+Windows（管理员 PowerShell）：
+
+```powershell
+$script = "$env:TEMP\install-cf-probe.ps1"
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/huilang-me/cfsm-agent/main/install.ps1" -OutFile $script -UseBasicParsing
+PowerShell -ExecutionPolicy Bypass -File $script install -id=SERVER_ID -secret=SECRET -url=WORKER_URL
+```
+
+GitHub 下载较慢时，可加上代理前缀（同时作用于脚本下载和 release 下载）：
+
+```bash
+curl -fsSL https://ghfast.top/raw.githubusercontent.com/huilang-me/cfsm-agent/main/install.sh | sudo sh -s -- install --install-ghproxy=https://ghfast.top/ -id=SERVER_ID -secret=SECRET -url=WORKER_URL
+```
+
+> **说明**：Go 版本与 Shell 版本参数完全兼容，已安装 Shell 版本的服务器可按上述命令直接覆盖安装切换为 Go 版本。完整参数、安装位置、状态查看与日志说明详见 [agent-go.md](agent-go.md)。
+
 </details>
 
 <details>
@@ -316,6 +343,8 @@ irm https://你的项目.你的子域.workers.dev/cf-server-monitor.ps1 -OutFile
 <details>
 <summary>卸载探针</summary>
 
+Shell 版本：
+
 ```bash
 # Linux
 curl -sL https://你的项目.你的子域.workers.dev/install.sh | bash -s uninstall
@@ -328,6 +357,22 @@ curl -sL https://你的项目.你的子域.workers.dev/install-mac.sh | sudo bas
 # Windows
 irm https://你的项目.你的子域.workers.dev/cf-server-monitor.ps1 -OutFile cf-server-monitor.ps1; powershell -ExecutionPolicy Bypass -File .\cf-server-monitor.ps1 uninstall
 ```
+
+Go 版本（Linux / OpenWrt / Synology DSM / FreeBSD / macOS）：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/huilang-me/cfsm-agent/main/install.sh | sudo sh -s -- uninstall
+```
+
+Go 版本（Windows 管理员 PowerShell）：
+
+```powershell
+$script = "$env:TEMP\install-cf-probe.ps1"
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/huilang-me/cfsm-agent/main/install.ps1" -OutFile $script -UseBasicParsing
+PowerShell -ExecutionPolicy Bypass -File $script uninstall
+```
+
+> **说明**：Go 版本卸载仅清理当前 Go 版默认安装创建的固定位置和自启动项，不处理旧 Shell 脚本或手动放置到其他路径的文件。如使用了 GitHub 代理，可在命令后追加 ` --install-ghproxy=https://ghfast.top/`。
 </details>
 
 <details>

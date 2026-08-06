@@ -975,7 +975,7 @@ const loadAllHistory = async (hours) => {
     ]))
 
     if (allData.length > 0) {
-      updateChartDataset(charts.cpu, 0, allData, fieldAccessor('cpu'))
+      updateChartDataset(charts.cpu, 0, allData, fieldAccessor('cpu', true))
       rebuildGpuChartDatasets()
       for (let i = 0; i < charts.gpu.data.datasets.length; i++) {
         const dataset = charts.gpu.data.datasets[i]
