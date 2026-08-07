@@ -321,6 +321,8 @@ curl -fsSL https://ghfast.top/raw.githubusercontent.com/huilang-me/cfsm-agent/ma
 
 当有新版本部署成功后，可以通过以下命令升级探针，升级过程会自动保留原有配置：
 
+Shell版本
+
 ```bash
 # Linux
 curl -sL https://你的项目.你的子域.workers.dev/install.sh | bash -s install
@@ -334,7 +336,23 @@ curl -sL https://你的项目.你的子域.workers.dev/install-mac.sh | sudo bas
 irm https://你的项目.你的子域.workers.dev/cf-server-monitor.ps1 -OutFile cf-server-monitor.ps1; powershell -ExecutionPolicy Bypass -File .\cf-server-monitor.ps1 install
 ```
 
-> **V2.7.9 及以上说明**：从 V2.7.8 或更早版本升级后，请重新安装一次探针以启用参数下发能力。之后在后台修改服务器参数会自动下发到探针，无需每次重新安装；受上报间隔和缓存影响，最长约 240 秒才能看到效果。
+Go版本
+
+Linux / OpenWrt / Synology DSM / FreeBSD / macOS：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/huilang-me/cfsm-agent/main/install.sh | sudo sh -s -- install
+```
+
+Windows（管理员 PowerShell）：
+
+```powershell
+$script = "$env:TEMP\install-cf-probe.ps1"
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/huilang-me/cfsm-agent/main/install.ps1" -OutFile $script -UseBasicParsing
+PowerShell -ExecutionPolicy Bypass -File $script install
+```
+
+> Agent带参数下发能力，在后台修改服务器参数（除自动升级外）会自动下发到探针，无需每次重新安装；受上报间隔和缓存影响，最长约 240 秒才能看到效果。
 
 可以在服务器编辑配置中启用自动更新。首次启用，或修改探针上报地址/API_SECRET/开启自动更新，需要重新复制并执行该服务器的安装命令；后续自动更新会沿用本地保存的配置。
 

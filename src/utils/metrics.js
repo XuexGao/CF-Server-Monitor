@@ -3,8 +3,46 @@ const PROBE_METRIC_FIELDS = [
   'loss_ct', 'loss_cu', 'loss_cm', 'loss_bd'
 ];
 
+const NUMERIC_METRIC_FIELDS = [
+  'cpu', 'net_in_speed', 'net_out_speed', 'net_rx', 'net_tx',
+  'net_rx_monthly', 'net_tx_monthly', 'processes', 'tcp_conn', 'udp_conn',
+  'ram_total', 'ram_used', 'swap_total', 'swap_used',
+  'disk_total', 'disk_used', 'cpu_cores'
+];
+
 export function isDisabledProbeMetric(value) {
   return value === false || value === 'false';
+}
+
+// 将探针上报的指标字段统一转换为数字类型，与 /api/servers 的 servers[] 字段类型保持一致。
+// 数据库 D1 对 REAL/INTEGER 列返回 JS number，而探针 POST 的原始字段可能是字符串，
+// latestReportUpdates 和 WebSocket 推送直接透传探针数据，需要在此统一类型。
+export function coerceNumericMetricFields(payload) {
+  if (!payload || typeof payload !== 'object') return payload;
+  const result = { ...payload };
+
+  for (const field of NUMERIC_METRIC_FIELDS) {
+    if (!Object.prototype.hasOwnProperty.call(result, field)) continue;
+    const value = result[field];
+    if (value === null || value === undefined) continue;
+    const num = Number(value);
+    result[field] = Number.isFinite(num) ? num : 0;
+  }
+
+  for (const field of PROBE_METRIC_FIELDS) {
+    if (!Object.prototype.hasOwnProperty.call(result, field)) continue;
+    const value = result[field];
+    if (value === false || value === 'false') {
+      result[field] = false;
+    } else if (value === null || value === undefined) {
+      continue;
+    } else {
+      const num = Number(value);
+      result[field] = Number.isFinite(num) ? num : null;
+    }
+  }
+
+  return result;
 }
 
 function normalizeProbeMetric(value) {

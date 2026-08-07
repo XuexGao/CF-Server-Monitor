@@ -1,6 +1,6 @@
 import { saveMetricsHistory } from '../database/schema.js';
 import { getServerDetail, clearServerDetailCache } from '../utils/cache.js';
-import { mergeMetricsIntoServer } from '../utils/metrics.js';
+import { mergeMetricsIntoServer, coerceNumericMetricFields } from '../utils/metrics.js';
 import { createErrorResponse, createUnauthorizedResponse, createNotFoundResponse, createBadRequestResponse } from '../utils/errors.js';
 import { ensureServerOptimization } from '../database/indexOptimization.js';
 import { AGENT_VERSION, loadSiteSettings } from '../utils/settings.js';
@@ -27,7 +27,7 @@ function buildPayloadForBroadcast(id, metrics = {}, extra = {}) {
   payload.agent_version = extra.agentVersion || metrics.agent_version || '';
   payload.last_updated = extra.timestamp || metrics.timestamp || Date.now();
   payload.timestamp = payload.last_updated;
-  return payload;
+  return coerceNumericMetricFields(payload);
 }
 
 // 批量推送：5秒窗口内合并向 DO 推送一次，减少请求次数
@@ -111,7 +111,7 @@ function buildSamplePayloadForBroadcast(metrics = {}, timestamp = Date.now()) {
   BROADCAST_DELETE_FIELDS.forEach(field => delete payload[field]);
   payload.last_updated = timestamp;
   payload.sample_timestamp = timestamp;
-  return payload;
+  return coerceNumericMetricFields(payload);
 }
 
 function toBroadcastSamples(id, samples, regionCode, agentVersion = '', reportMetrics = null) {

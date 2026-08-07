@@ -1,7 +1,7 @@
 import { checkAuth, simpleAuthResponse } from '../middleware/auth.js';
 import { getLatestMetrics, getLatestMetricsForAllServers } from '../database/schema.js';
 import { getAllServers, getServerDetail } from '../utils/cache.js';
-import { mergeMetricsIntoServer } from '../utils/metrics.js';
+import { mergeMetricsIntoServer, coerceNumericMetricFields } from '../utils/metrics.js';
 import { normalizeLongHistoryPoints } from '../utils/settings.js';
 import { createSuccessResponse, createBadRequestResponse, createNotFoundResponse } from '../utils/errors.js';
 import {
@@ -45,7 +45,7 @@ function normalizeLatestReportSample(sample) {
   const data = sample?.data || sample?.payload || sample?.metrics;
   if (!data || typeof data !== 'object') return null;
 
-  const publicData = normalizePublicIpFields({ ...data }, false);
+  const publicData = coerceNumericMetricFields(normalizePublicIpFields({ ...data }, false));
   const ts = sample.ts ?? sample.timestamp;
   return ts === undefined ? { data: publicData } : { ts, data: publicData };
 }
