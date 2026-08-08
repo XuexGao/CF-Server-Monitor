@@ -174,6 +174,25 @@
         </div>
       </div>
 
+      <div class="chart-card" v-show="hasDiskIoData">
+        <div class="chart-card-header disk-io-header">
+          <span class="chart-title">
+            <span class="chart-title-icon">▸</span>
+            {{ trans.diskIo || 'Disk IO' }}
+          </span>
+          <div class="ping-indicator">
+            <span class="net-down">R <b>{{ formatBytes(diskIo.read_bps) }}/s</b></span>
+            <span class="net-up">W <b>{{ formatBytes(diskIo.write_bps) }}/s</b></span>
+            <span class="conn-tcp">IOPS <b>{{ formatDiskIoNumber(diskIo.read_iops) }}/{{ formatDiskIoNumber(diskIo.write_iops) }}</b></span>
+            <span class="conn-udp">await <b>{{ formatDiskIoNumber(diskIo.await_ms) }}ms</b></span>
+            <span>util <b>{{ formatDiskIoNumber(diskIo.util) }}%</b></span>
+          </div>
+        </div>
+        <div class="chart-body">
+          <canvas ref="diskIoChartRef"></canvas>
+        </div>
+      </div>
+
       <div class="chart-card" v-show="hasGpuData">
         <div class="chart-card-header">
           <span class="chart-title">
@@ -345,6 +364,44 @@ const PING_FIELD_DEFS = [
   { field: 'ping_bd', lossField: 'loss_bd', labelKey: 'pingBd', className: 'ping-bd', datasetIndex: 3 }
 ]
 
+const DISK_IO_FIELDS = ['read_bps', 'write_bps', 'read_iops', 'write_iops', 'await_ms', 'util']
+const EMPTY_DISK_IO = Object.freeze(Object.fromEntries(DISK_IO_FIELDS.map(field => [field, 0])))
+const hasOwn = (source, key) => Object.prototype.hasOwnProperty.call(source, key)
+const isPlainObject = (value) => value && typeof value === 'object' && !Array.isArray(value)
+const parseDiskIoValue = (value) => {
+  if (value === null || value === undefined || value === '') return null
+  const number = Number.parseFloat(value)
+  return Number.isFinite(number) ? number : null
+}
+
+const isValidDiskIoObject = (disk) => {
+  if (!isPlainObject(disk)) return false
+  return DISK_IO_FIELDS.some(field => hasOwn(disk, field) && parseDiskIoValue(disk[field]) !== null)
+}
+
+const hasValidDiskIoPayload = (source) => {
+  if (!isPlainObject(source)) return false
+  return isValidDiskIoObject(source.disk)
+}
+
+const isDiskIoField = (key) => key === 'disk'
+
+const getDiskIoNumber = (source, field) => {
+  if (!source || typeof source !== 'object' || !isValidDiskIoObject(source.disk)) return 0
+  const raw = hasOwn(source.disk, field) ? source.disk[field] : null
+  return parseDiskIoValue(raw) ?? 0
+}
+
+const normalizeDiskIo = (source) => Object.fromEntries(
+  DISK_IO_FIELDS.map(field => [field, getDiskIoNumber(source, field)])
+)
+
+const diskIoAccessor = (field) => (row) => getDiskIoNumber(row, field)
+const formatDiskIoNumber = (value) => {
+  const number = Number.parseFloat(value)
+  return Number.isFinite(number) ? number.toFixed(1) : '0.0'
+}
+
 const timeOptions = computed(() => {
   return [
     { hours: REALTIME_HISTORY_HOURS, label: '10m' },
@@ -407,6 +464,7 @@ const diskPercent = computed(() => {
   }
   return '0.00'
 })
+const diskIo = computed(() => hasValidDiskIoPayload(server.value) ? normalizeDiskIo(server.value) : EMPTY_DISK_IO)
 const hasGpuData = computed(() => gpuInfoList.value.length > 0)
 
 const isExpired = computed(() => {
@@ -428,6 +486,7 @@ const cpuChartRef = ref(null)
 const gpuChartRef = ref(null)
 const ramChartRef = ref(null)
 const diskChartRef = ref(null)
+const diskIoChartRef = ref(null)
 const netChartRef = ref(null)
 const procChartRef = ref(null)
 const connChartRef = ref(null)
@@ -435,6 +494,7 @@ const pingChartRef = ref(null)
 const lossChartRef = ref(null)
 const loadChartRef = ref(null)
 const historyLoaded = ref(false)
+const hasDiskIoData = ref(false)
 
 const charts = {}
 const chartsReady = ref(false)
@@ -449,6 +509,22 @@ const avgLossCm = ref(null)
 const avgLossBd = ref(null)
 let isInitializingCharts = false
 let databaseUpgradeAlertShown = false
+
+const showDiskIoChart = () => {
+  if (hasDiskIoData.value) return
+  hasDiskIoData.value = true
+  nextTick(() => {
+    if (!charts.diskIo) return
+    if (typeof charts.diskIo.resize === 'function') charts.diskIo.resize()
+    charts.diskIo.update('none')
+  })
+}
+
+const markDiskIoDataAvailable = (source) => {
+  const hasReadableData = hasValidDiskIoPayload(source)
+  if (hasReadableData) showDiskIoChart()
+  return hasReadableData
+}
 
 const avgPingRefs = {
   ping_ct: avgPingCt,
@@ -596,6 +672,7 @@ const CHART_DEFS = [
   { key: 'gpu', ref: () => gpuChartRef.value, datasets: [], unit: '%', legend: true },
   { key: 'ram', ref: () => ramChartRef.value, datasets: [ds('Memory', '#b392f0', { fill: true }), ds('Swap', '#ffb870', { fill: true })], unit: '%', legend: true },
   { key: 'disk', ref: () => diskChartRef.value, datasets: [ds('Disk', '#39d2c0', { fill: true })], unit: '%' },
+  { key: 'diskIo', ref: () => diskIoChartRef.value, datasets: [ds('Read', '#00d4aa', { fill: true }), ds('Write', '#ffb870', { fill: true })], legend: true, formatValue: (v) => formatBytes(v) + '/s', tickFormat: (v) => formatBytes(v) },
   { key: 'proc', ref: () => procChartRef.value, datasets: [ds('Processes', '#f778ba', { fill: true })] },
   { key: 'net', ref: () => netChartRef.value, datasets: [ds('Download', '#00d4aa', { fill: true }), ds('Upload', '#4da6ff', { fill: true })], legend: true, formatValue: (v) => formatBytes(v) + '/s', tickFormat: (v) => formatBytes(v) },
   { key: 'conn', ref: () => connChartRef.value, datasets: [ds('TCP', '#b392f0'), ds('UDP', '#f778ba')], legend: true },
@@ -966,6 +1043,16 @@ const updateLoadChart = (chart, dataPoints) => {
   chart.update('none')
 }
 
+const clearDiskIoChart = () => {
+  const chart = charts.diskIo
+  if (!chart) return
+  for (const dataset of chart.data.datasets || []) {
+    dataset.data = []
+  }
+  chart.data.labels = []
+  chart.update('none')
+}
+
 const loadAllHistory = async (hours) => {
   try {
     const allData = await fetchAllHistory(serverId, hours, apiIndex.value)
@@ -994,6 +1081,18 @@ const loadAllHistory = async (hours) => {
       updateChartDataset(charts.ram, 0, allData, percentAccessor('ram_used', 'ram_total'))
       updateChartDataset(charts.ram, 1, allData, percentAccessor('swap_used', 'swap_total'))
       updateChartDataset(charts.disk, 0, allData, percentAccessor('disk_used', 'disk_total'))
+      const diskIoRows = allData.filter(hasValidDiskIoPayload)
+      if (diskIoRows.length > 0) {
+        markDiskIoDataAvailable(diskIoRows[0])
+        updateChartDataset(charts.diskIo, 0, diskIoRows, diskIoAccessor('read_bps'))
+        updateChartDataset(charts.diskIo, 1, diskIoRows, diskIoAccessor('write_bps'))
+      } else {
+        clearDiskIoChart()
+        hasDiskIoData.value = false
+        if (hasValidDiskIoPayload(server.value) && server.value.last_updated) {
+          appendDiskIoChart(server.value, new Date(server.value.last_updated).getTime())
+        }
+      }
       updateChartDataset(charts.proc, 0, allData, fieldAccessor('processes'))
       updateChartDataset(charts.net, 0, allData, fieldAccessor('net_in_speed', true))
       updateChartDataset(charts.net, 1, allData, fieldAccessor('net_out_speed', true))
@@ -1106,7 +1205,10 @@ const appendDataToChart = (chart, datasetIndex, timestamp, value, isPing = false
 }
 
 const STATIC_FIELDS = ['id', 'name', 'region', 'arch', 'os', 'kernel_version', 'cpu_info', 'cpu_cores', 'gpu_info', 'expire_date', 'server_group', 'traffic_limit', 'net_rx_monthly', 'net_tx_monthly', 'boot_time', 'timestamp', 'ip_v4', 'ip_v6']
-const REALTIME_SAMPLE_FIELDS = new Set(['cpu', 'ram_total', 'ram_used', 'swap_total', 'swap_used', 'net_in_speed', 'net_out_speed'])
+const REALTIME_SAMPLE_FIELDS = new Set([
+  'cpu', 'ram_total', 'ram_used', 'swap_total', 'swap_used',
+  'net_in_speed', 'net_out_speed', 'disk'
+])
 const TIMING_FIELDS = new Set(['last_updated', 'sample_timestamp'])
 
 const appendLoadChartData = (timestamp, loadAvg) => {
@@ -1248,6 +1350,14 @@ const appendRealtimeSampleCharts = (data, dataTimestamp) => {
   appendDataToChart(charts.ram, 1, dataTimestamp, swapPercent)
   appendDataToChart(charts.net, 0, dataTimestamp, data.net_in_speed)
   appendDataToChart(charts.net, 1, dataTimestamp, data.net_out_speed)
+  appendDiskIoChart(data, dataTimestamp)
+}
+
+const appendDiskIoChart = (data, dataTimestamp) => {
+  if (!markDiskIoDataAvailable(data)) return
+  const io = normalizeDiskIo(data)
+  appendDataToChart(charts.diskIo, 0, dataTimestamp, io.read_bps)
+  appendDataToChart(charts.diskIo, 1, dataTimestamp, io.write_bps)
 }
 
 const appendReportCharts = (data, dataTimestamp) => {
@@ -1266,6 +1376,7 @@ const appendReportCharts = (data, dataTimestamp) => {
   }
   const diskPercent = (parseFloat(data.disk_total) > 0) ? (parseFloat(data.disk_used) / parseFloat(data.disk_total)) * 100 : 0
   appendDataToChart(charts.disk, 0, dataTimestamp, diskPercent)
+  appendDiskIoChart(data, dataTimestamp)
   appendDataToChart(charts.proc, 0, dataTimestamp, data.processes)
   appendDataToChart(charts.conn, 0, dataTimestamp, data.tcp_conn)
   appendDataToChart(charts.conn, 1, dataTimestamp, data.udp_conn)
@@ -1283,7 +1394,7 @@ const appendReportCharts = (data, dataTimestamp) => {
 const shouldMergeIncomingField = (key, mergeMode) => {
   if (STATIC_FIELDS.includes(key)) return false
   if (mergeMode === 'sample') return REALTIME_SAMPLE_FIELDS.has(key) || TIMING_FIELDS.has(key)
-  if (mergeMode === 'report') return !REALTIME_SAMPLE_FIELDS.has(key)
+  if (mergeMode === 'report') return isDiskIoField(key) || !REALTIME_SAMPLE_FIELDS.has(key)
   return true
 }
 
@@ -1302,8 +1413,12 @@ const fetchCurrentStatus = async (incomingData, options = {}) => {
 
     if (incomingData) {
       const newServer = { ...server.value }
+      const hasValidIncomingDiskIo = markDiskIoDataAvailable(data)
       for (const key of Object.keys(data)) {
         if (!shouldMergeIncomingField(key, mergeMode)) {
+          continue
+        }
+        if (isDiskIoField(key) && !hasValidIncomingDiskIo) {
           continue
         }
         newServer[key] = data[key]
@@ -1312,6 +1427,7 @@ const fetchCurrentStatus = async (incomingData, options = {}) => {
     } else {
       config.value = data.sysConfig || null
       server.value = data
+      markDiskIoDataAvailable(data)
       loading.value = false
     }
     syncProbeChartVisibility()
@@ -1358,7 +1474,7 @@ const initChartsOnMount = async () => {
 
   await nextTick()
   
-  const allRefsReady = cpuChartRef.value && gpuChartRef.value && ramChartRef.value && diskChartRef.value &&
+  const allRefsReady = cpuChartRef.value && gpuChartRef.value && ramChartRef.value && diskChartRef.value && diskIoChartRef.value &&
     netChartRef.value && procChartRef.value && connChartRef.value && pingChartRef.value && lossChartRef.value && loadChartRef.value
   
   if (allRefsReady) {
@@ -1427,7 +1543,7 @@ const init = async () => {
   document.addEventListener('visibilitychange', handleVisibility)
 }
 
-watch([cpuChartRef, gpuChartRef, ramChartRef, diskChartRef, netChartRef, procChartRef, connChartRef, pingChartRef, lossChartRef, loadChartRef], () => {
+watch([cpuChartRef, gpuChartRef, ramChartRef, diskChartRef, diskIoChartRef, netChartRef, procChartRef, connChartRef, pingChartRef, lossChartRef, loadChartRef], () => {
   if (!chartsReady.value) {
     initChartsOnMount()
   }

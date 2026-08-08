@@ -317,6 +317,14 @@ Headers: (按需) Authorization, X-Turnstile-Token/Verified
   "ram_total": 8192, "ram_used": 3700,
   "swap_total": 2048, "swap_used": 100,
   "disk_total": 102400, "disk_used": 32000,
+  "disk": {
+    "read_bps": 4096,
+    "write_bps": 2048,
+    "read_iops": 12,
+    "write_iops": 8,
+    "await_ms": 1.5,
+    "util": 3.2
+  },
   "cpu_cores": 4, "cpu_info": "Intel Xeon",
   "gpu_info": "[{\"id\":\"0\",\"name\":\"NVIDIA RTX 3060\",\"info\":12.5}]",
   "arch": "x86_64", "os": "Ubuntu 22.04",
@@ -351,7 +359,7 @@ Headers: (按需) Authorization, X-Turnstile-Token/Verified
 }
 ```
 
-`tags` 为英文逗号分隔字符串。`note` 属于管理端内部字段，不从 dashboard 公共接口返回。`latestReportUpdates` 与 `/api/servers` 同名字段形状一致，REST 样本统一为 `{ ts, data }` 并按探针采样包透传；内置探针默认只在普通采样点上报 `cpu`、`ram_total`、`ram_used`、`swap_total`、`swap_used`、`net_in_speed`、`net_out_speed`；缓存约 5 分钟，允许为空数组。`gpu` 已废弃，主题应使用 `gpu_info`；新版上报和 WebSocket 实时数据为 `[{ id, name, info }]` 数组，历史/详情 REST 响应中可能是同结构的 JSON 字符串。
+`tags` 为英文逗号分隔字符串。`note` 属于管理端内部字段，不从 dashboard 公共接口返回。`disk` 为可选磁盘 IO 指标对象：`read_bps` / `write_bps` 单位为 B/s，`read_iops` / `write_iops` 为 IOPS，`await_ms` 为毫秒，`util` 为百分比；旧探针、旧数据缺失，或者 6 个子字段全为 0 时，API / WebSocket 不返回该对象，主题不应展示依赖磁盘 IO 的图表。`latestReportUpdates` 与 `/api/servers` 同名字段形状一致，REST 样本统一为 `{ ts, data }` 并按探针采样包透传；内置探针默认只在普通采样点上报 `cpu`、`ram_total`、`ram_used`、`swap_total`、`swap_used`、`net_in_speed`、`net_out_speed`，每次报告最后一个样本可能额外携带 `disk` 等报告级字段；缓存约 5 分钟，允许为空数组。`gpu` 已废弃，主题应使用 `gpu_info`；新版上报和 WebSocket 实时数据为 `[{ id, name, info }]` 数组，历史/详情 REST 响应中可能是同结构的 JSON 字符串。
 
 **失败返回**：
 
@@ -385,8 +393,42 @@ Headers: (按需) Authorization, X-Turnstile-Token/Verified
 
 ```json
 [
-  { "timestamp": 1737600000000, "cpu": 12.3, "gpu_info": "[{\"id\":\"0\",\"name\":\"NVIDIA RTX 3060\",\"info\":12.5}]", "ram_used": 3700, "kernel_version": "6.8.0-36-generic" },
-  { "timestamp": 1737600600000, "cpu": 13.1, "gpu_info": "[{\"id\":\"0\",\"name\":\"NVIDIA RTX 3060\",\"info\":13.0}]", "ram_used": 3712, "kernel_version": "6.8.0-36-generic" }
+  {
+    "timestamp": 1737600000000,
+    "cpu": 12.3,
+    "gpu_info": "[{\"id\":\"0\",\"name\":\"NVIDIA RTX 3060\",\"info\":12.5}]",
+    "ram_used": 3700,
+    "disk_read_bps": 4096,
+    "disk_write_bps": 2048,
+    "disk_read_iops": 12,
+    "disk_write_iops": 8,
+    "disk_await_ms": 1.5,
+    "disk_util": 3.2,
+    "disk": {
+      "read_bps": 4096,
+      "write_bps": 2048,
+      "read_iops": 12,
+      "write_iops": 8,
+      "await_ms": 1.5,
+      "util": 3.2
+    },
+    "kernel_version": "6.8.0-36-generic"
+  },
+  {
+    "timestamp": 1737600600000,
+    "cpu": 13.1,
+    "gpu_info": "[{\"id\":\"0\",\"name\":\"NVIDIA RTX 3060\",\"info\":13.0}]",
+    "ram_used": 3712,
+    "disk": {
+      "read_bps": 5120,
+      "write_bps": 1024,
+      "read_iops": 15,
+      "write_iops": 4,
+      "await_ms": 1.2,
+      "util": 2.8
+    },
+    "kernel_version": "6.8.0-36-generic"
+  }
 ]
 ```
 
@@ -394,6 +436,7 @@ Headers: (按需) Authorization, X-Turnstile-Token/Verified
 
 - 未登录用户 `hours > 24` 时返回 `401`
 - 服务端按后台 `long_history_points` 配置返回采样点，默认 120 个点
+- 历史行有磁盘 IO 数据时会返回 `disk` 对象；为兼容历史存储，也可能同时包含 `disk_read_bps`、`disk_write_bps`、`disk_read_iops`、`disk_write_iops`、`disk_await_ms`、`disk_util` 平铺字段。主题只需要读取 `disk`；缺失时不应展示磁盘 IO 图表
 - 数据库字段缺失且需要升级时可能返回 `409 { "message": "databaseUpgradeRequired" }`
 
 **示例**：
@@ -456,9 +499,9 @@ Headers: Upgrade: websocket, Connection: Upgrade
 | `subscribed` | S → C | `{ type: "subscribed", ts: number, subscribed: string, count: number }` |
 | `ping` | C → S | `{ type: "ping", ts: number }` |
 | `pong` | 双向 | `{ type: "pong", ts: number }` |
-| `batchUpdate` | S → C | `{ type: "batchUpdate", ts: number, updates: Array<{serverId, samples: Array<{ts, data: Partial<Server>}>}> }` |
+| `batchUpdate` | S → C | `{ type: "batchUpdate", ts: number, updates: Array<{serverId, samples: Array<{ts, data?: Partial<Server>, payload?: Partial<Server>, metrics?: Partial<Server>}>}> }` |
 
-`batchUpdate.samples[].data` 是增量字段：批次内的高频采样点主要包含 CPU、内存、Swap、网速和时间字段；每次上报的最后一个样本会额外携带本次完整报告状态，用于同步磁盘、GPU、进程、连接数、探针、Ping/丢包等报告级数据。
+`batchUpdate.samples[]` 的指标对象可能出现在 `data`、`payload` 或 `metrics` 中，主题应按 `sample.data || sample.payload || sample.metrics` 读取。该对象是增量字段：批次内的高频采样点主要包含 CPU、内存、Swap、网速和时间字段；每次上报的最后一个样本会额外携带本次完整报告状态，用于同步磁盘容量、磁盘 IO、GPU、进程、连接数、探针、Ping/丢包等报告级数据。`disk` 缺失、格式无效或所有子字段全为 0 时，WebSocket 样本不会携带 `disk`。
 
 **示例（subscribe=all，带 ID 过滤）**：
 
@@ -477,7 +520,7 @@ ws.onmessage = (ev) => {
   if (msg.type === 'batchUpdate') {
     for (const u of msg.updates) {
       for (const s of u.samples || []) {
-        updateServer(u.serverId, s.data);
+        updateServer(u.serverId, s.data || s.payload || s.metrics || {});
       }
     }
   }
@@ -493,7 +536,7 @@ ws.onmessage = (ev) => {
   if (msg.type === 'batchUpdate') {
     for (const u of msg.updates) {
       for (const s of u.samples) {
-        updateServer(u.serverId, s.data);
+        updateServer(u.serverId, s.data || s.payload || s.metrics || {});
       }
     }
   }
@@ -533,6 +576,15 @@ ws.onmessage = (ev) => {
 ## 5. 类型定义
 
 ```typescript
+interface DiskIoMetrics {
+  read_bps: number;   // B/s
+  write_bps: number;  // B/s
+  read_iops: number;
+  write_iops: number;
+  await_ms: number;
+  util: number;       // %
+}
+
 interface Server {
   id: string;
   name: string;
@@ -574,6 +626,7 @@ interface Server {
   swap_used: number;
   disk_total: number;
   disk_used: number;
+  disk?: DiskIoMetrics; // 磁盘 IO；旧数据可能缺失
   cpu_cores: number;
   cpu_info: string;
   gpu_info: Array<{ id: string; name: string; info: number | null }> | string;
@@ -589,6 +642,17 @@ interface Server {
   timestamp: number;
   is_online?: boolean;
   sysConfig?: SysConfig;
+}
+
+interface HistoryMetricRow extends Partial<Server> {
+  timestamp: number;
+  disk_read_bps?: number;
+  disk_write_bps?: number;
+  disk_read_iops?: number;
+  disk_write_iops?: number;
+  disk_await_ms?: number;
+  disk_util?: number;
+  disk?: DiskIoMetrics;
 }
 
 interface SysConfig {
@@ -625,7 +689,12 @@ interface WsMessage {
   serverId?: string;
   updates?: Array<{
     serverId: string;
-    samples: Array<{ ts: number; data: Partial<Server> }>;
+    samples: Array<{
+      ts: number;
+      data?: Partial<Server>;
+      payload?: Partial<Server>;
+      metrics?: Partial<Server>;
+    }>;
   }>;
 }
 ```

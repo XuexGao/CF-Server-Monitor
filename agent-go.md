@@ -140,6 +140,176 @@ PowerShell -ExecutionPolicy Bypass -File $script uninstall
 
 卸载会清理当前 Go 版默认安装创建的固定位置和自启动项，不处理旧脚本或手动放置到其他路径的文件。
 
+## 上报数据说明
+
+Agent 会按 `REPORT_INTERVAL` 向 `WORKER_URL` 发起 `POST` 请求，`Content-Type` 为 `application/json`。为了兼容旧版接收端，`metrics` 内大多数基础指标仍以字符串上报；新增的 `disk` 磁盘 IO 对象使用数值类型。
+
+完整上报结构如下：
+
+```json
+{
+  "id": "SERVER_ID",
+  "secret": "SECRET",
+  "metrics": {
+    "cpu": "0.00",
+    "ram_total": "0",
+    "ram_used": "0",
+    "swap_total": "0",
+    "swap_used": "0",
+    "disk_total": "0",
+    "disk_used": "0",
+    "disk": {
+      "read_bps": 0,
+      "write_bps": 0,
+      "read_iops": 0,
+      "write_iops": 0,
+      "await_ms": 0,
+      "util": 0
+    },
+    "load_avg": "0 0 0",
+    "boot_time": "0",
+    "net_rx": "0",
+    "net_tx": "0",
+    "net_rx_monthly": "0",
+    "net_tx_monthly": "0",
+    "net_in_speed": "0",
+    "net_out_speed": "0",
+    "os": "Linux",
+    "arch": "amd64",
+    "kernel_version": "",
+    "cpu_info": "",
+    "cpu_cores": "0",
+    "gpu_info": null,
+    "processes": "0",
+    "tcp_conn": "0",
+    "udp_conn": "0",
+    "ip_v4": "0",
+    "ip_v6": "0",
+    "ping_ct": false,
+    "ping_cu": false,
+    "ping_cm": false,
+    "ping_bd": false,
+    "loss_ct": false,
+    "loss_cu": false,
+    "loss_cm": false,
+    "loss_bd": false
+  },
+  "collect_interval": 0,
+  "report_interval": 60
+}
+```
+
+当 `COLLECT_INTERVAL > 0` 时，上报体会额外包含 `samples`。`samples` 中只包含高频采样需要的轻量字段，不包含磁盘 IO：
+
+```json
+{
+  "samples": [
+    {
+      "ts": 1720000000000,
+      "metrics": {
+        "cpu": "0.00",
+        "ram_total": "0",
+        "ram_used": "0",
+        "swap_total": "0",
+        "swap_used": "0",
+        "net_in_speed": "0",
+        "net_out_speed": "0"
+      }
+    }
+  ]
+}
+```
+
+顶层字段：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `id` | string | 服务器 ID，对应本地 `SERVER_ID` |
+| `secret` | string | 服务器密钥，对应本地 `SECRET` |
+| `metrics` | object | 当前上报周期的完整监控指标 |
+| `samples` | array | 可选，仅 `COLLECT_INTERVAL > 0` 时存在 |
+| `collect_interval` | number | 高频采样间隔，单位秒；`0` 表示不启用高频采样 |
+| `report_interval` | number | 上报间隔，单位秒 |
+
+`metrics` 字段：
+
+| 字段 | 类型 | 单位/取值 | 说明 |
+| --- | --- | --- | --- |
+| `cpu` | string | `%` | CPU 使用率，保留 2 位小数 |
+| `ram_total` | string | MiB | 物理内存总量 |
+| `ram_used` | string | MiB | 物理内存已用量 |
+| `swap_total` | string | MiB | Swap 总量；不支持的平台为 `0` |
+| `swap_used` | string | MiB | Swap 已用量；不支持的平台为 `0` |
+| `disk_total` | string | MiB | 过滤并去重后的本地磁盘总容量 |
+| `disk_used` | string | MiB | 过滤并去重后的本地磁盘已用容量 |
+| `disk` | object | 见下表 | 磁盘总 IO 信息，采样频率跟随 `REPORT_INTERVAL` |
+| `load_avg` | string | `1m 5m 15m` | 系统负载；Windows 为 `0 0 0` |
+| `boot_time` | string | ms | 系统启动时间，Unix 毫秒时间戳 |
+| `net_rx` | string | bytes | 当前网卡累计接收字节数 |
+| `net_tx` | string | bytes | 当前网卡累计发送字节数 |
+| `net_rx_monthly` | string | bytes | 当前统计周期内累计下行流量 |
+| `net_tx_monthly` | string | bytes | 当前统计周期内累计上行流量 |
+| `net_in_speed` | string | bytes/s | 上报周期内平均下行速度 |
+| `net_out_speed` | string | bytes/s | 上报周期内平均上行速度 |
+| `os` | string | - | 操作系统名称 |
+| `arch` | string | - | CPU 架构 |
+| `kernel_version` | string | - | 内核或系统版本 |
+| `cpu_info` | string | - | CPU 型号或架构兜底值 |
+| `cpu_cores` | string | count | CPU 逻辑核心数 |
+| `gpu_info` | array/null | - | GPU 信息数组；不可获取时为 `null` |
+| `processes` | string | count | 进程数量 |
+| `tcp_conn` | string | count | TCP 已建立连接数 |
+| `udp_conn` | string | count | UDP 连接或端点数量 |
+| `ip_v4` | string | IP/`0` | Cloudflare trace 获取到的 IPv4 |
+| `ip_v6` | string | IP/`0` | Cloudflare trace 获取到的 IPv6 |
+| `ping_ct` / `ping_cu` / `ping_cm` / `ping_bd` | string/boolean | ms/`false`/`"null"` | 电信、联通、移动、百度探测 RTT；节点未配置为 `false`，探测失败为字符串 `"null"` |
+| `loss_ct` / `loss_cu` / `loss_cm` / `loss_bd` | string/boolean | `%`/`false` | 对应探测丢包率；节点未配置为 `false` |
+
+`disk` 字段：
+
+| 字段 | 类型 | 单位 | 说明 |
+| --- | --- | --- | --- |
+| `read_bps` | number | bytes/s | 上报周期内平均读取速率 |
+| `write_bps` | number | bytes/s | 上报周期内平均写入速率 |
+| `read_iops` | number | ops/s | 上报周期内平均读 IOPS |
+| `write_iops` | number | ops/s | 上报周期内平均写 IOPS |
+| `await_ms` | number | ms | 读写请求平均等待时间 |
+| `util` | number | `%` | 过滤后磁盘集合的平均繁忙度，范围 `0-100` |
+
+Linux 下磁盘 IO 使用 `/proc/diskstats` 计算，并复用磁盘容量统计的过滤和去重规则；Windows、macOS、FreeBSD 以及其他平台暂不上报复杂磁盘 IO，字段保留为 `0`。
+
+`gpu_info` 数组元素结构如下：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `name` | string | GPU 名称 |
+| `info` | number/null | GPU 使用率或平台兜底值 |
+| `id` | string | GPU 序号或平台标识 |
+
+常规指标上报会携带以下 HTTP 头：
+
+| Header | 说明 |
+| --- | --- |
+| `Content-Type: application/json` | 请求体格式 |
+| `Accept: */*` | 接收任意响应格式 |
+| `User-Agent: cfsm` | Agent 标识 |
+| `X-Agent-Config-Schema` | 当前配置协议版本 |
+| `X-Agent-Version` | 当前 Agent 版本 |
+| `X-Agent-Config-Md5` | 本地保存的远端配置 MD5；为空时为 `none` |
+
+当 Worker 下发 `rx_correction` 或 `tx_correction` 后，Agent 会额外发送一次流量校正确认：
+
+```json
+{
+  "id": "SERVER_ID",
+  "secret": "SECRET",
+  "rx_correction": 0,
+  "tx_correction": 0
+}
+```
+
+其中 `rx_correction` 和 `tx_correction` 为 number，单位 GB。该确认请求只携带 `Content-Type`、`Accept` 和 `User-Agent` 头。
+
 ## 从源码构建
 
 需要 Go `1.24` 或更新版本。

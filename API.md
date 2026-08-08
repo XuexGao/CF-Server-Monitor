@@ -239,6 +239,14 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
       "swap_used": "100",
       "disk_total": "102400",
       "disk_used": "32000",
+      "disk": {
+        "read_bps": 4096,
+        "write_bps": 2048,
+        "read_iops": 12,
+        "write_iops": 8,
+        "await_ms": 1.5,
+        "util": 3.2
+      },
       "load_avg": "0.10 0.20 0.30",
       "boot_time": "1700000000000",
       "net_rx": "12345678",
@@ -301,6 +309,7 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
 | `swap_used`      | string\|number | MB  | 是  | Swap 已用                                     |
 | `disk_total`     | string\|number | MB  | 是  | 磁盘总容量                                       |
 | `disk_used`      | string\|number | MB  | 是  | 磁盘已用                                        |
+| `disk`           | object       | -   | 否  | 磁盘 IO 指标。缺失、不是 object，或 6 个子字段全为 0 时，API / WebSocket 不返回 `disk` 字段；存在至少一个非 0 子字段时，缺失或无法解析的子字段按 0 处理。子字段：`read_bps`、`write_bps`、`read_iops`、`write_iops`、`await_ms`、`util` |
 | `load_avg`       | string       | -   | 是  | 三个浮点，空格分隔                                   |
 | `boot_time`      | string\|number | 毫秒  | 是  | 系统启动时间（Unix ms）                             |
 | `net_rx`         | string\|number | 字节  | 是  | 累计接收字节                                      |
@@ -539,6 +548,14 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
   "swap_used": 100,
   "disk_total": 102400,
   "disk_used": 32000,
+  "disk": {
+    "read_bps": 4096,
+    "write_bps": 2048,
+    "read_iops": 12,
+    "write_iops": 8,
+    "await_ms": 1.5,
+    "util": 3.2
+  },
   "cpu_cores": 4,
   "cpu_info": "Intel(R) Xeon(R) CPU",
   "gpu_info": "[{\"id\":\"0\",\"name\":\"NVIDIA GeForce RTX 3060\",\"info\":12.5}]",
@@ -611,6 +628,20 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
     "ram_used": 3700,
     "disk_total": 102400,
     "disk_used": 32000,
+    "disk_read_bps": 4096,
+    "disk_write_bps": 2048,
+    "disk_read_iops": 12,
+    "disk_write_iops": 8,
+    "disk_await_ms": 1.5,
+    "disk_util": 3.2,
+    "disk": {
+      "read_bps": 4096,
+      "write_bps": 2048,
+      "read_iops": 12,
+      "write_iops": 8,
+      "await_ms": 1.5,
+      "util": 3.2
+    },
     "region": "HK"
   }
 ]
@@ -1538,6 +1569,7 @@ UUID 缺失或格式非法时返回 `400 { "error": "invalidServerId", "code": 4
 | `ram_total` / `ram_used`                      | number             | MB                        |
 | `swap_total` / `swap_used`                    | number             | MB                        |
 | `disk_total` / `disk_used`                    | number             | MB                        |
+| `disk`                                        | object             | 磁盘 IO 当前值：`read_bps` / `write_bps` 为 B/s，`read_iops` / `write_iops` 为 ops/s，`await_ms` 为 ms，`util` 为 %；旧探针、旧历史缺失，或 6 个子字段全为 0 时不返回该对象 |
 | `cpu_cores`                                   | number             | 逻辑核心数                     |
 | `cpu_info`                                    | string             | CPU 型号                    |
 | `gpu_info`                                    | array\|string\|null | GPU 列表。实时上报 / WebSocket 可能是 `[{id,name,info}]` 数组；REST 详情和历史接口通常是同结构的 JSON 字符串，其中 `info` 为占用率 |
@@ -1562,7 +1594,7 @@ UUID 缺失或格式非法时返回 `400 { "error": "invalidServerId", "code": 4
 | 字段          | 类型             | 说明 |
 | ----------- | -------------- | ---- |
 | `timestamp` | number (ms)    | 采样时间 |
-| 其余字段        | number\|string\|null | 当前 `/api/history/all` 固定返回：`cpu, gpu_info, ram_total, ram_used, disk_total, disk_used, processes, net_in_speed, net_out_speed, tcp_conn, udp_conn, ping_ct, ping_cu, ping_cm, ping_bd, loss_ct, loss_cu, loss_cm, loss_bd, swap_total, swap_used, load_avg, region, kernel_version`；其中 `gpu_info` 通常是 JSON 数组字符串 |
+| 其余字段        | number\|string\|null | 当前 `/api/history/all` 固定返回：`cpu, gpu_info, ram_total, ram_used, disk_total, disk_used, disk_read_bps, disk_write_bps, disk_read_iops, disk_write_iops, disk_await_ms, disk_util, processes, net_in_speed, net_out_speed, tcp_conn, udp_conn, ping_ct, ping_cu, ping_cm, ping_bd, loss_ct, loss_cu, loss_cm, loss_bd, swap_total, swap_used, load_avg, region, kernel_version`；其中 `gpu_info` 通常是 JSON 数组字符串，`disk` 仅在 `disk_*` 历史列存在有效数据时由服务端还原 |
 
 历史行不包含单独的 `gpu` 字段，只包含 `gpu_info`。
 
@@ -1675,6 +1707,7 @@ curl -X POST https://status.example.com/update \
       "cpu":"12.34","ram_total":"8192","ram_used":"3700",
       "swap_total":"2048","swap_used":"100",
       "disk_total":"102400","disk_used":"32000",
+      "disk":{"read_bps":4096,"write_bps":2048,"read_iops":12,"write_iops":8,"await_ms":1.5,"util":3.2},
       "load_avg":"0.10 0.20 0.30","boot_time":"1700000000000",
       "net_rx":"12345678","net_tx":"87654321",
       "net_rx_monthly":"1073741824","net_tx_monthly":"536870912",

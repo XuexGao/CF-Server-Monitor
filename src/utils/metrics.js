@@ -7,8 +7,112 @@ const NUMERIC_METRIC_FIELDS = [
   'cpu', 'net_in_speed', 'net_out_speed', 'net_rx', 'net_tx',
   'net_rx_monthly', 'net_tx_monthly', 'processes', 'tcp_conn', 'udp_conn',
   'ram_total', 'ram_used', 'swap_total', 'swap_used',
-  'disk_total', 'disk_used', 'cpu_cores'
+  'disk_total', 'disk_used', 'cpu_cores',
+  'disk_read_bps', 'disk_write_bps', 'disk_read_iops',
+  'disk_write_iops', 'disk_await_ms', 'disk_util'
 ];
+
+export const DISK_IO_METRIC_FIELDS = [
+  'read_bps',
+  'write_bps',
+  'read_iops',
+  'write_iops',
+  'await_ms',
+  'util'
+];
+
+export const DISK_IO_FIELD_TO_COLUMN = {
+  read_bps: 'disk_read_bps',
+  write_bps: 'disk_write_bps',
+  read_iops: 'disk_read_iops',
+  write_iops: 'disk_write_iops',
+  await_ms: 'disk_await_ms',
+  util: 'disk_util'
+};
+
+function toFiniteMetricNumber(value, fallback = 0) {
+  if (value === null || value === undefined || value === '') return fallback;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+
+function hasOwnMetric(source, field) {
+  return Object.prototype.hasOwnProperty.call(source, field);
+}
+
+function isPlainMetricObject(value) {
+  return value && typeof value === 'object' && !Array.isArray(value);
+}
+
+export function hasDiskMetricsPayload(metrics) {
+  const source = isPlainMetricObject(metrics) ? metrics : {};
+
+  if (hasOwnMetric(source, 'disk')) {
+    const disk = isPlainMetricObject(source.disk) ? source.disk : {};
+    return DISK_IO_METRIC_FIELDS.some(field => {
+      const value = hasOwnMetric(disk, field)
+        ? toFiniteMetricNumber(disk[field], null)
+        : null;
+      return value !== null && value !== 0;
+    });
+  }
+
+  return DISK_IO_METRIC_FIELDS.some(field => {
+    const column = DISK_IO_FIELD_TO_COLUMN[field];
+    const value = hasOwnMetric(source, column)
+      ? toFiniteMetricNumber(source[column], null)
+      : null;
+    return value !== null && value !== 0;
+  });
+}
+
+export function normalizeDiskMetrics(metrics) {
+  const source = isPlainMetricObject(metrics) ? metrics : {};
+  const hasDiskObject = hasOwnMetric(source, 'disk');
+  const disk = isPlainMetricObject(source.disk)
+    ? source.disk
+    : {};
+
+  return Object.fromEntries(DISK_IO_METRIC_FIELDS.map(field => {
+    const column = DISK_IO_FIELD_TO_COLUMN[field];
+    const value = hasDiskObject
+      ? disk[field]
+      : source[column];
+    return [field, toFiniteMetricNumber(value)];
+  }));
+}
+
+function createEmptyDiskMetricColumns(value = null) {
+  return Object.fromEntries(DISK_IO_METRIC_FIELDS.map(field => [
+    DISK_IO_FIELD_TO_COLUMN[field],
+    value
+  ]));
+}
+
+export function flattenDiskMetrics(metrics) {
+  if (!hasDiskMetricsPayload(metrics)) {
+    return createEmptyDiskMetricColumns(null);
+  }
+
+  const disk = normalizeDiskMetrics(metrics);
+  return Object.fromEntries(DISK_IO_METRIC_FIELDS.map(field => [
+    DISK_IO_FIELD_TO_COLUMN[field],
+    disk[field]
+  ]));
+}
+
+export function attachDiskMetricsObject(metrics) {
+  if (!metrics || typeof metrics !== 'object') return metrics;
+  const result = { ...metrics };
+  delete result.disk;
+  if (!hasDiskMetricsPayload(metrics)) {
+    return result;
+  }
+  return {
+    ...result,
+    disk: normalizeDiskMetrics(metrics)
+  };
+}
 
 export function isDisabledProbeMetric(value) {
   return value === false || value === 'false';
@@ -40,6 +144,14 @@ export function coerceNumericMetricFields(payload) {
       const num = Number(value);
       result[field] = Number.isFinite(num) ? num : null;
     }
+  }
+
+  if (Object.prototype.hasOwnProperty.call(result, 'disk')) {
+    if (!hasDiskMetricsPayload(result)) {
+      delete result.disk;
+      return result;
+    }
+    result.disk = normalizeDiskMetrics(result);
   }
 
   return result;
@@ -89,6 +201,11 @@ export function mergeMetricsIntoServer(server, metrics) {
   server.swap_used = metrics.swap_used || 0;
   server.disk_total = metrics.disk_total || 0;
   server.disk_used = metrics.disk_used || 0;
+  if (hasDiskMetricsPayload(metrics)) {
+    server.disk = normalizeDiskMetrics(metrics);
+  } else {
+    delete server.disk;
+  }
   server.cpu_cores = metrics.cpu_cores || 0;
   server.cpu_info = metrics.cpu_info || '';
   server.gpu_info = metrics.gpu_info || '';

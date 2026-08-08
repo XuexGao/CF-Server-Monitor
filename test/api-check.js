@@ -297,7 +297,14 @@ function buildMockMetrics() {
   return {
     cpu: 12.3,
     ram: 45.6,
-    disk: 37.8,
+    disk: {
+      read_bps: 4096,
+      write_bps: 2048,
+      read_iops: 12,
+      write_iops: 8,
+      await_ms: 1.5,
+      util: 3.2
+    },
     load_avg: '0.12 0.20 0.18',
     net_in_speed: 1024,
     net_out_speed: 2048,

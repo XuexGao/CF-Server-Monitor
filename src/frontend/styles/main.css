@@ -3228,6 +3228,21 @@ body::before {
     font-weight: 500;
 }
 
+.disk-io-header {
+    flex-wrap: wrap;
+    gap: 8px 14px;
+}
+
+.disk-io-header .ping-indicator {
+    justify-content: flex-end;
+    gap: 10px 14px;
+    min-width: 0;
+}
+
+.disk-io-header .chart-title {
+    flex-shrink: 0;
+}
+
 .load-1m {
     color: var(--accent-green);
 }

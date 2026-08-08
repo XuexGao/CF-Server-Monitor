@@ -1,6 +1,6 @@
 import { getAllServers, getLatestMetricsCache, setLatestMetricsCache, getMetricsHistoryCache, setMetricsHistoryCache, getCacheDuration, clearAllCaches } from '../utils/cache.js';
 import { saveSiteOptions, debug, getSettingByKey, normalizeLongHistoryPoints, DEFAULT_LONG_HISTORY_POINTS } from '../utils/settings.js';
-import { isDisabledProbeMetric, normalizeProbeMetricRow } from '../utils/metrics.js';
+import { attachDiskMetricsObject, flattenDiskMetrics, isDisabledProbeMetric, normalizeProbeMetricRow } from '../utils/metrics.js';
 import { ensureServerOptimization, buildHistoryId, getServerHistoryInfo, getHistoryIdRange } from './indexOptimization.js';
 import { addHistoryColumns, ensureHistoryIndex, isHistoryOptimized } from './updateDatabase.js';
 import {
@@ -110,6 +110,12 @@ export async function initDatabase(db) {
           swap_used REAL DEFAULT 0,
           disk_total REAL DEFAULT 0,
           disk_used REAL DEFAULT 0,
+          disk_read_bps REAL,
+          disk_write_bps REAL,
+          disk_read_iops REAL,
+          disk_write_iops REAL,
+          disk_await_ms REAL,
+          disk_util REAL,
           cpu_cores INTEGER DEFAULT 0,
           cpu_info TEXT DEFAULT '',
           gpu_info TEXT DEFAULT '',
@@ -375,10 +381,10 @@ export async function getMetricsHistory(
     `).bind(...bindValues).all();
   }
 
-  const result = rawResult.results.map(row => normalizeProbeMetricRow({
+  const result = rawResult.results.map(row => attachDiskMetricsObject(normalizeProbeMetricRow({
     ...row,
     timestamp: Number(row.timestamp)
-  }));
+  })));
 
   result.sort((a, b) => a.timestamp - b.timestamp);
 
@@ -458,6 +464,8 @@ export async function saveMetricsHistory(db, serverId, historyPartitionId, metri
   };
 
   const insertHistoryRow = async () => {
+    const diskMetrics = flattenDiskMetrics(metrics);
+
     await db.prepare(`
     INSERT INTO metrics_history (
       id, server_id, timestamp, agent_version, cpu, load_avg,
@@ -467,6 +475,7 @@ export async function saveMetricsHistory(db, serverId, historyPartitionId, metri
       loss_ct, loss_cu, loss_cm, loss_bd,
       ram_total, ram_used, swap_total, swap_used,
       disk_total, disk_used,
+      disk_read_bps, disk_write_bps, disk_read_iops, disk_write_iops, disk_await_ms, disk_util,
       cpu_cores, cpu_info, gpu_info, arch, os, kernel_version, region, ip_v4, ip_v6, boot_time,
       net_rx_monthly, net_tx_monthly
     ) VALUES (
@@ -477,7 +486,7 @@ export async function saveMetricsHistory(db, serverId, historyPartitionId, metri
       ?, ?, ?, ?,
       ?, ?, ?, ?,
       ?, ?, ?,
-      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
       ?, ?
     )
   `).bind(
@@ -508,6 +517,12 @@ export async function saveMetricsHistory(db, serverId, historyPartitionId, metri
     parseFloat(metrics.swap_used) || 0,
     parseFloat(metrics.disk_total) || 0,
     parseFloat(metrics.disk_used) || 0,
+    diskMetrics.disk_read_bps,
+    diskMetrics.disk_write_bps,
+    diskMetrics.disk_read_iops,
+    diskMetrics.disk_write_iops,
+    diskMetrics.disk_await_ms,
+    diskMetrics.disk_util,
     parseInt(metrics.cpu_cores) || 0,
     metrics.cpu_info || '',
     Array.isArray(metrics.gpu_info) ? JSON.stringify(metrics.gpu_info) : (metrics.gpu_info || ''),
