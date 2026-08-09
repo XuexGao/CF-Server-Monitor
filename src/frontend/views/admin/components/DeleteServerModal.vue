@@ -23,7 +23,7 @@
         <div class="form-group flex-1 mb-3">
           <label class="form-label">{{ trans.targetOs }}</label>
           <select :value="deleteTargetOs" class="form-select" @change="$emit('update:delete-target-os', $event.target.value)">
-            <option value="linux">Linux (Ubuntu/Debian/CentOS)</option>
+            <option value="linux">Linux (Ubuntu/Debian/CentOS/FreeBSD)</option>
             <option value="alpine">Alpine Linux</option>
             <option value="openwrt">OpenWrt / LEDE / ImmortalWrt</option>
             <option value="mac">macOS (Intel / Apple Silicon)</option>
@@ -35,8 +35,8 @@
         <div class="form-group flex-1 mb-3">
           <label class="form-label">{{ trans.agentVersionSelect }}</label>
           <select :value="deleteVersion" class="form-select" @change="$emit('update:delete-version', $event.target.value)">
-            <option value="shell">{{ trans.agentVersionShell }}</option>
             <option value="go">{{ trans.agentVersionGo }}</option>
+            <option value="shell">{{ trans.agentVersionShell }}</option>
           </select>
         </div>
 
@@ -44,12 +44,18 @@
           <label class="form-label">{{ trans.ghProxy }}</label>
           <input
             type="text"
+            list="deleteGhProxyList"
             :value="deleteGhProxy"
             class="form-input"
             :placeholder="trans.ghProxyPlaceholder"
             @input="$emit('update:delete-gh-proxy', $event.target.value)"
           >
-          <p class="text-muted text-sm mt-1">{{ trans.ghProxyTip }}</p>
+          <datalist id="deleteGhProxyList">
+            <option value="https://gh.llkk.cc/">https://gh.llkk.cc/</option>
+            <option value="https://gh-proxy.com/">https://gh-proxy.com/</option>
+            <option value="https://ghproxy.net/">https://ghproxy.net/</option>
+            <option value="https://ghfast.top/">https://ghfast.top/</option>
+          </datalist>
         </div>
       </div>
 
@@ -78,7 +84,7 @@ defineProps({
   deleteServerId: { type: [String, Number], default: '' },
   currentServerName: { type: String, default: '' },
   deleteTargetOs: { type: String, default: 'linux' },
-  deleteVersion: { type: String, default: 'shell' },
+  deleteVersion: { type: String, default: 'go' },
   deleteGhProxy: { type: String, default: '' },
   uninstallCommand: { type: String, default: '' },
   uninstallCopied: { type: Boolean, default: false }

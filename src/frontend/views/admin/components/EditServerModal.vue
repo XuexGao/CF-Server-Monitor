@@ -38,11 +38,6 @@
 
       <div class="form-row">
         <div class="form-group flex-1">
-          <label class="form-label">{{ trans.price }}</label>
-          <input type="text" name="edit_price" autocomplete="off" inputmode="decimal" v-model="editForm.price" class="form-input" placeholder="40.00" @blur="normalizePriceInput">
-        </div>
-
-        <div class="form-group flex-1">
           <label class="form-label">{{ trans.currency }}</label>
           <input type="text" v-model="editForm.currency" class="form-input" list="currency-list" placeholder="e.g. $, ¥, €">
           <datalist id="currency-list">
@@ -51,17 +46,15 @@
         </div>
 
         <div class="form-group flex-1">
+          <label class="form-label">{{ trans.price }}</label>
+          <input type="text" name="edit_price" autocomplete="off" inputmode="decimal" v-model="editForm.price" class="form-input" placeholder="40.00" @blur="normalizePriceInput">
+        </div>
+
+        <div class="form-group flex-1">
           <label class="form-label">{{ trans.billingCycle }}</label>
           <select v-model="editForm.billing_cycle" class="form-select">
             <option v-for="item in billingCycleOptions" :key="item.value" :value="item.value">{{ cycleLabel(item) }}</option>
           </select>
-        </div>
-      </div>
-
-      <div class="form-row">
-        <div class="form-group flex-1">
-          <label class="form-label">{{ trans.expirationDate }}</label>
-          <input type="date" name="edit_expire_date" autocomplete="off" v-model="editForm.expire_date" class="form-input" @click="openDatePicker">
         </div>
 
         <div class="form-group flex-1">
@@ -74,7 +67,6 @@
           </div>
         </div>
       </div>
-
 
       <div class="form-row">
         <div class="form-group flex-1">
@@ -89,6 +81,10 @@
             <option value="dl">{{ trans.trafficCalcDl }}</option>
             <option value="max">{{ trans.trafficCalcMax }}</option>
           </select>
+        </div>
+        <div class="form-group flex-1">
+          <label class="form-label">{{ trans.expirationDate }}</label>
+          <input type="date" name="edit_expire_date" autocomplete="off" v-model="editForm.expire_date" class="form-input" @click="openDatePicker">
         </div>
         <div class="form-group flex-1">
           <label class="form-label">{{ trans.trafficResetDay }}</label>
@@ -125,9 +121,15 @@
         </div>
       </div>
 
-      <div class="text-muted text-sm mb-3">
-        <span class="warning-icon">[i]</span> {{ trans.collectIntervalHint }}<br>
-        <span class="warning-icon">[i]</span> {{ trans.trafficResetDayTip }}
+      <div class="form-row">
+        <div class="form-group flex-1">
+          <label class="form-label">{{ trans.rxCorrection }} (GB)</label>
+          <input type="number" name="edit_rx_correction" autocomplete="off" v-model="editForm.rx_correction" class="form-input" placeholder="0" min="0" step="0.1">
+        </div>
+        <div class="form-group flex-1">
+          <label class="form-label">{{ trans.txCorrection }} (GB)</label>
+          <input type="number" name="edit_tx_correction" autocomplete="off" v-model="editForm.tx_correction" class="form-input" placeholder="0" min="0" step="0.1">
+        </div>
       </div>
 
       <div class="form-row">
@@ -153,20 +155,6 @@
           <input type="text" name="edit_custom_bd" autocomplete="off" v-model.trim="editForm.custom_bd" :class="['form-input', { 'input-invalid': pingNodeErrors.custom_bd }]" :placeholder="settings.custom_bd || 'ip.zstaticcdn.com'">
           <p v-if="pingNodeErrors.custom_bd" class="text-red text-sm mt-1">{{ pingNodeErrors.custom_bd }}</p>
         </div>
-      </div>
-
-      <div class="form-row">
-        <div class="form-group flex-1">
-          <label class="form-label">{{ trans.rxCorrection }} (GB)</label>
-          <input type="number" name="edit_rx_correction" autocomplete="off" v-model="editForm.rx_correction" class="form-input" placeholder="0" min="0" step="0.1">
-        </div>
-        <div class="form-group flex-1">
-          <label class="form-label">{{ trans.txCorrection }} (GB)</label>
-          <input type="number" name="edit_tx_correction" autocomplete="off" v-model="editForm.tx_correction" class="form-input" placeholder="0" min="0" step="0.1">
-        </div>
-      </div>
-      <div class="text-muted text-sm mb-3">
-        <span class="warning-icon">[i]</span> {{ trans.correctionHint }}
       </div>
       <div class="form-row">
         <div class="form-group">
@@ -195,6 +183,11 @@
             </label>
           </div>
         </div>
+      </div>
+      <div class="text-muted text-sm mb-3">
+        <span class="warning-icon">[i]</span> {{ trans.collectIntervalHint }}<br>
+        <span class="warning-icon">[i]</span> {{ trans.correctionHint }}<br>
+        <span class="warning-icon">[i]</span> {{ trans.trafficResetDayTip }}
       </div>
 
       <div class="modal-footer flex-justify-between">

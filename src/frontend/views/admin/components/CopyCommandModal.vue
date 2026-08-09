@@ -10,33 +10,28 @@
         <div class="form-group flex-1">
           <label class="form-label">{{ trans.targetOs }}</label>
           <select :value="targetOs" class="form-select" @change="$emit('update:target-os', $event.target.value)">
-            <option value="linux">Linux (Ubuntu/Debian/CentOS)</option>
-            <option value="alpine">Alpine Linux</option>
-            <option value="openwrt">OpenWrt / LEDE / ImmortalWrt</option>
-            <option value="mac">macOS (Intel / Apple Silicon)</option>
-            <option value="synology">Synology DSM (群晖)</option>
+            <option value="linux">Linux/OpenWrt/Synology DSM/FreeBSD</option>
+            <option value="mac">macOS</option>
             <option value="windows">Windows</option>
           </select>
         </div>
 
         <div class="form-group flex-1">
-          <label class="form-label">{{ trans.agentVersionSelect }}</label>
-          <select :value="installVersion" class="form-select" @change="$emit('update:install-version', $event.target.value)">
-            <option value="shell">{{ trans.agentVersionShell }}</option>
-            <option value="go">{{ trans.agentVersionGo }}</option>
-          </select>
-        </div>
-
-        <div v-if="installVersion === 'go'" class="form-group flex-1">
           <label class="form-label">{{ trans.ghProxy }}</label>
           <input
             type="text"
+            list="ghProxyList"
             :value="installGhProxy"
             class="form-input"
             :placeholder="trans.ghProxyPlaceholder"
             @input="$emit('update:install-gh-proxy', $event.target.value)"
           >
-          <p class="text-muted text-sm mt-1">{{ trans.ghProxyTip }}</p>
+          <datalist id="ghProxyList">
+            <option value="https://ghfast.top/">https://ghfast.top/</option>
+            <option value="https://ghproxy.net/">https://ghproxy.net/</option>
+            <option value="https://gh.llkk.cc/">https://gh.llkk.cc/</option>
+            <option value="https://gh-proxy.com/">https://gh-proxy.com/</option>
+          </datalist>
         </div>
       </div>
 
@@ -115,7 +110,6 @@ defineProps({
   show: { type: Boolean, default: false },
   currentServerName: { type: String, default: '' },
   targetOs: { type: String, default: 'linux' },
-  installVersion: { type: String, default: 'shell' },
   installGhProxy: { type: String, default: '' },
   collectInterval: { type: [Number, String], default: 0 },
   reportInterval: { type: [Number, String], default: 60 },
@@ -137,7 +131,6 @@ defineEmits([
   'copy-cmd',
   'open-edit-from-copy',
   'update:target-os',
-  'update:install-version',
   'update:install-gh-proxy'
 ])
 

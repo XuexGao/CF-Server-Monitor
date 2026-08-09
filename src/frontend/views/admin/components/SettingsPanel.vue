@@ -513,8 +513,7 @@ const cspErrors = reactive({
 
 const offlineNotifyOptions = computed(() => [
   { value: '0', label: `${props.trans.disabled}` },
-  ...Array.from({ length: 29 }, (_, index) => {
-    const minutes = index + 2
+  ...[3, 4, 5, 6, 7, 8, 9, 10, 15, 20, 30].map(minutes => {
     const label = props.trans.notifyOfflineMinutes
       ? props.trans.notifyOfflineMinutes.replace('{minutes}', minutes)
       : `${minutes} min`

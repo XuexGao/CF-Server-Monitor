@@ -69,31 +69,6 @@ function storedInteger(value, allowedValues, fallback) {
   return Number.isInteger(number) && allowedValues.has(number) ? number : fallback;
 }
 
-function normalizeAgentVersionForCompare(value) {
-  if (value === null || value === undefined) return '';
-  return String(value)
-    .trim()
-    .replace(/[^0-9A-Za-z.+_-]/g, '')
-    .replace(/^v(?=\d)/i, '')
-    .toLowerCase()
-    .slice(0, 64);
-}
-
-export function isAgentAutoUpdateEnabled(value) {
-  return String(value ?? '').trim() === '1';
-}
-
-export function shouldSendAgentUpdate(clientAgentVersion, latestAgentVersion) {
-  const current = normalizeAgentVersionForCompare(clientAgentVersion);
-  const latest = normalizeAgentVersionForCompare(latestAgentVersion);
-  return !!current && !!latest && current !== latest;
-}
-
-export function appendAgentUpdateParam(body, shouldUpdate) {
-  if (!shouldUpdate) return body;
-  return `${body ? `${body}&` : ''}update=1`;
-}
-
 function isValidIpv4(host) {
   if (!IPV4_PATTERN.test(host)) return false;
   return host.split('.').every(part => {
