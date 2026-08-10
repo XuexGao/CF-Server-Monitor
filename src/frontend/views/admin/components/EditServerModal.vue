@@ -1,6 +1,6 @@
 <template>
   <div id="editModal" class="modal-overlay" :class="{ active: show }">
-    <div class="modal-dialog">
+    <div class="modal-dialog edit-server-modal">
       <div class="modal-header">
         <div class="modal-title">{{ currentServerName }}</div>
         <button class="modal-close" @click="$emit('close')">✕</button>
@@ -36,7 +36,7 @@
         <textarea name="edit_note" autocomplete="off" v-model="editForm.note" class="form-textarea" rows="2" :placeholder="trans.notePlaceholder"></textarea>
       </div>
 
-      <div class="form-row">
+      <div class="form-row mobile-two-row">
         <div class="form-group flex-1">
           <label class="form-label">{{ trans.currency }}</label>
           <input type="text" v-model="editForm.currency" class="form-input" list="currency-list" placeholder="e.g. $, ¥, €">
@@ -68,7 +68,7 @@
         </div>
       </div>
 
-      <div class="form-row">
+      <div class="form-row mobile-two-row">
         <div class="form-group flex-1">
           <label class="form-label">{{ trans.trafficLimit }} (GB)</label>
           <input type="number" name="edit_traffic_limit" autocomplete="off" v-model="editForm.traffic_limit" class="form-input" placeholder="e.g. 1000" min="0" step="1">

@@ -106,10 +106,11 @@
       <div v-if="sysConfig.show_tf" class="server-card-limit-section">
         <div class="server-card-limit-header">
           <span>{{ trans.monthlyTraffic }}</span>
-          <span>{{ trafficLimitText }} | <template v-if="trafficLimitSummary">{{ trafficLimitPercentText }}%</template><template v-else>Unlimited</template></span>
+          <span>{{ trafficLimitText }}<template v-if="trafficLimitSummary"> | {{ trafficLimitPercentText }}%</template></span>
         </div>
-        <div v-if="trafficLimitSummary" class="server-card-limit-bar">
-          <div class="server-card-limit-fill" :style="{ width: Math.min(100, trafficUsagePercent) + '%', background: getUsageColor(trafficUsagePercent) }"></div>
+        <div class="server-card-limit-bar">
+          <div v-if="trafficLimitSummary" class="server-card-limit-fill" :style="{ width: Math.min(100, trafficUsagePercent) + '%', background: getUsageColor(trafficUsagePercent) }"></div>
+          <div v-else class="server-card-limit-fill" style="background-image: linear-gradient(to right, #00d4aa, #4da6ff, #ffb870, #f85149);">></div>
         </div>
       </div>
       <div v-if="hasPingData" class="server-card-ping-row">

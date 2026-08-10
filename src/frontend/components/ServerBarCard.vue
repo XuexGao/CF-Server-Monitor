@@ -34,54 +34,79 @@
     <div class="server-stats">
       <div class="stat-row">
         <span class="stat-key">CPU</span>
-        <div class="stat-bar-container">
-          <div class="stat-bar-fill" :style="{ width: cpuPercent + '%', background: getUsageColor(cpuPercent) }"></div>
+        <div class="stat-content stat-content-meter">
+          <div class="stat-bar-container">
+            <div class="stat-bar-fill" :style="{ width: cpuPercent + '%', background: getUsageColor(cpuPercent) }"></div>
+          </div>
+          <span class="stat-value">{{ cpuPercent.toFixed(2) }}%</span>
         </div>
-        <span class="stat-value">{{ cpuPercent.toFixed(2) }}%</span>
       </div>
       <div class="stat-row">
         <span class="stat-key">RAM</span>
-        <div class="stat-bar-container">
-          <div class="stat-bar-fill" :style="{ width: ramPercent + '%', background: getUsageColor(ramPercent) }"></div>
+        <div class="stat-content stat-content-meter">
+          <div class="stat-bar-container">
+            <div class="stat-bar-fill" :style="{ width: ramPercent + '%', background: getUsageColor(ramPercent) }"></div>
+          </div>
+          <span class="stat-value">{{ ramPercent.toFixed(2) }}%</span>
         </div>
-        <span class="stat-value">{{ ramPercent.toFixed(2) }}%</span>
       </div>
       <div class="stat-row">
         <span class="stat-key">DISK</span>
-        <div class="stat-bar-container">
-          <div class="stat-bar-fill" :style="{ width: diskPercent + '%', background: getUsageColor(diskPercent) }"></div>
+        <div class="stat-content stat-content-meter">
+          <div class="stat-bar-container">
+            <div class="stat-bar-fill" :style="{ width: diskPercent + '%', background: getUsageColor(diskPercent) }"></div>
+          </div>
+          <span class="stat-value">{{ diskPercent.toFixed(2) }}%</span>
         </div>
-        <span class="stat-value">{{ diskPercent.toFixed(2) }}%</span>
       </div>
-      <div class="stat-row" v-if="sysConfig.show_tf && server.traffic_limit">
+      <div class="stat-row" v-if="sysConfig.show_tf">
         <span class="stat-key">USE</span>
-        <div class="stat-bar-container">
-          <div class="stat-bar-fill" :style="{ width: Math.min(100, trafficUsagePercent) + '%', background: getUsageColor(trafficUsagePercent) }"></div>
+        <div class="stat-content stat-content-meter">
+          <template v-if="server.traffic_limit">
+            <div class="stat-bar-container">
+              <div class="stat-bar-fill" :style="{ width: Math.min(100, trafficUsagePercent) + '%', background: getUsageColor(trafficUsagePercent) }"></div>
+            </div>
+            <span class="stat-value">{{ trafficUsagePercentText }}%</span>
+          </template>
+          <template v-else>
+            <div class="stat-bar-container">
+              <div class="stat-bar-fill" style="background-image: linear-gradient(to right, #00d4aa, #4da6ff, #ffb870, #f85149);"></div>
+            </div>
+            <span class="stat-value" style="font-size: 2em;line-height: 0;">∞</span>
+          </template>
         </div>
-        <span class="stat-value">{{ trafficUsagePercentText }}%</span>
       </div>
       <div class="stat-row">
         <span class="stat-key">LOAD</span>
-        <span class="net-down">{{ loadAvg[0].toFixed(2) }}</span>
-        <span>{{ loadAvg[1].toFixed(2) }}</span>
-        <span class="net-up">{{ loadAvg[2].toFixed(2) }}</span>
+        <div class="stat-content">
+          <span class="net-down">{{ loadAvg[0].toFixed(2) }}</span>
+          <span>{{ loadAvg[1].toFixed(2) }}</span>
+          <span class="net-up">{{ loadAvg[2].toFixed(2) }}</span>
+        </div>
       </div>
       <div class="stat-row">
         <span class="stat-key">NET</span>
-        <span class="net-down">▼ {{ netInSpeed }}/s</span>
-        <span class="net-up">▲ {{ netOutSpeed }}/s</span>
+        <div class="stat-content">
+          <span class="net-down">▼ {{ netInSpeed }}/s</span>
+          <span class="net-up">▲ {{ netOutSpeed }}/s</span>
+        </div>
       </div>
       <div class="stat-row">
         <span class="stat-key">TRF</span>
-        <span class="net-down">▼ {{ totalRxMonthly }}</span>
-        <span class="net-up">▲ {{ totalTxMonthly }}</span>
-        <span v-if="sysConfig.show_tf && server.traffic_limit" class="stat-limit">/ 📦 {{ formatBytes(server.traffic_limit * 1024 * 1024 * 1024) }}</span>
+        <div class="stat-content">
+          <span class="net-down">▼ {{ totalRxMonthly }}</span>
+          <span class="net-up">▲ {{ totalTxMonthly }}</span>
+          <span v-if="sysConfig.show_tf && server.traffic_limit" class="stat-limit">/ 📦 {{ formatBytes(server.traffic_limit * 1024 * 1024 * 1024) }}</span>
+        </div>
       </div>
       <div v-if="sysConfig.show_time" class="stat-row stat-time-row">
         <span class="stat-key">TIME</span>
-        <span class="stat-time-value">{{ dataTimeText }}</span>
+        <div class="stat-content stat-content-time">
+          <span class="stat-time-value">{{ dataTimeText }}</span>
+        </div>
       </div>
     </div>
+    <div class="server-space"></div>
     <div v-if="hasPingData" class="ping-panel">
       <div class="ping-item" v-for="p in pingList" :key="p.label">
         <span class="ping-label">{{ p.label }}</span>

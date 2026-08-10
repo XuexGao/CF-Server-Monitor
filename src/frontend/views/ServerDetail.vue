@@ -112,45 +112,34 @@
     </div>
 
     <div class="charts-container">
-      <div class="chart-card">
+      <div class="chart-card" :class="{ 'full-width': isChartExpanded('cpu') }">
         <div class="chart-card-header">
           <span class="chart-title">
             <span class="chart-title-icon">▸</span>
             {{ trans.cpuUsage }}
           </span>
-          <span class="chart-current-value">{{ cpuPercent }}%</span>
+          <div class="chart-header-actions">
+            <span class="chart-current-value">{{ cpuPercent }}%</span>
+            <ChartExpandButton :expanded="isChartExpanded('cpu')" @toggle="toggleChartExpanded('cpu')" />
+          </div>
         </div>
         <div class="chart-body">
           <canvas ref="cpuChartRef"></canvas>
         </div>
       </div>
 
-      <div class="chart-card">
-        <div class="chart-card-header">
-          <span class="chart-title">
-            <span class="chart-title-icon">▸</span>
-            {{ trans.loadAvgMonitor }}
-          </span>
-          <div class="load-avg-row">
-            <span class="load-1m">{{ trans.load1m }} <b>{{ (parseLoadAvg(server.load_avg)[0] || 0).toFixed(2) }}</b></span>
-            <span class="load-5m">{{ trans.load5m }} <b>{{ (parseLoadAvg(server.load_avg)[1] || 0).toFixed(2) }}</b></span>
-            <span class="load-15m">{{ trans.load15m }} <b>{{ (parseLoadAvg(server.load_avg)[2] || 0).toFixed(2) }}</b></span>
-          </div>
-        </div>
-        <div class="chart-body">
-          <canvas ref="loadChartRef"></canvas>
-        </div>
-      </div>
-
-      <div class="chart-card">
+      <div class="chart-card" :class="{ 'full-width': isChartExpanded('ram') }">
         <div class="chart-card-header">
           <span class="chart-title">
             <span class="chart-title-icon">▸</span>
             {{ trans.memoryUsage }}
           </span>
-          <div class="chart-current-value-container">
-            <span class="chart-current-value">{{ ramPercent }}%</span>
-            <div class="chart-subtitle">{{ trans.swap }}: {{ server.swap_used || '0' }} / {{ server.swap_total || '0' }} MiB</div>
+          <div class="chart-header-actions">
+            <div class="chart-current-value-container">
+              <span class="chart-current-value">{{ ramPercent }}%</span>
+              <div class="chart-subtitle">{{ trans.swap }}: {{ server.swap_used || '0' }} / {{ server.swap_total || '0' }} MiB</div>
+            </div>
+            <ChartExpandButton :expanded="isChartExpanded('ram')" @toggle="toggleChartExpanded('ram')" />
           </div>
         </div>
         <div class="chart-body">
@@ -158,63 +147,18 @@
         </div>
       </div>
 
-      <div class="chart-card">
-        <div class="chart-card-header">
-          <span class="chart-title">
-            <span class="chart-title-icon">▸</span>
-            {{ trans.diskUsage }}
-          </span>
-          <div class="chart-current-value-container">
-            <span class="chart-current-value">{{ diskPercent }}%</span>
-            <div class="chart-subtitle">{{ trans.used }} {{ formatBytes(server.disk_used*1024*1024) }} / {{ formatBytes(server.disk_total*1024*1024) }}</div>
-          </div>
-        </div>
-        <div class="chart-body">
-          <canvas ref="diskChartRef"></canvas>
-        </div>
-      </div>
-
-      <div class="chart-card" v-show="hasDiskIoData">
-        <div class="chart-card-header disk-io-header">
-          <span class="chart-title">
-            <span class="chart-title-icon">▸</span>
-            {{ trans.diskIo || 'Disk IO' }}
-          </span>
-          <div class="ping-indicator">
-            <span class="net-down">R <b>{{ formatBytes(diskIo.read_bps) }}/s</b></span>
-            <span class="net-up">W <b>{{ formatBytes(diskIo.write_bps) }}/s</b></span>
-            <span class="conn-tcp">IOPS <b>{{ formatDiskIoNumber(diskIo.read_iops) }}/{{ formatDiskIoNumber(diskIo.write_iops) }}</b></span>
-            <span class="conn-udp">await <b>{{ formatDiskIoNumber(diskIo.await_ms) }}ms</b></span>
-            <span>util <b>{{ formatDiskIoNumber(diskIo.util) }}%</b></span>
-          </div>
-        </div>
-        <div class="chart-body">
-          <canvas ref="diskIoChartRef"></canvas>
-        </div>
-      </div>
-
-      <div class="chart-card" v-show="hasGpuData">
-        <div class="chart-card-header">
-          <span class="chart-title">
-            <span class="chart-title-icon">▸</span>
-            {{ trans.gpuUsage || 'GPU Usage' }}
-          </span>
-          <span class="chart-current-value">{{ gpuPercentText }}</span>
-        </div>
-        <div class="chart-body">
-          <canvas ref="gpuChartRef"></canvas>
-        </div>
-      </div>
-
-      <div class="chart-card">
+      <div class="chart-card" :class="{ 'full-width': isChartExpanded('net') }">
         <div class="chart-card-header">
           <span class="chart-title">
             <span class="chart-title-icon">▸</span>
             {{ trans.networkTraffic }}
           </span>
-          <div class="net-indicator">
-            <span class="net-down">▼ {{ formatBytes(server.net_in_speed) }}/s</span>
-            <span class="net-up">▲ {{ formatBytes(server.net_out_speed) }}/s</span>
+          <div class="chart-header-actions">
+            <div class="net-indicator">
+              <span class="net-down">▼ {{ formatBytes(server.net_in_speed) }}/s</span>
+              <span class="net-up">▲ {{ formatBytes(server.net_out_speed) }}/s</span>
+            </div>
+            <ChartExpandButton :expanded="isChartExpanded('net')" @toggle="toggleChartExpanded('net')" />
           </div>
         </div>
         <div class="chart-body">
@@ -222,28 +166,111 @@
         </div>
       </div>
 
-      <div class="chart-card">
+      <div class="chart-card" :class="{ 'full-width': isChartExpanded('load') }">
+        <div class="chart-card-header">
+          <span class="chart-title">
+            <span class="chart-title-icon">▸</span>
+            {{ trans.loadAvgMonitor }}
+          </span>
+          <div class="chart-header-actions">
+            <div class="load-avg-row">
+              <span class="load-1m">{{ trans.load1m }} <b>{{ (parseLoadAvg(server.load_avg)[0] || 0).toFixed(2) }}</b></span>
+              <span class="load-5m">{{ trans.load5m }} <b>{{ (parseLoadAvg(server.load_avg)[1] || 0).toFixed(2) }}</b></span>
+              <span class="load-15m">{{ trans.load15m }} <b>{{ (parseLoadAvg(server.load_avg)[2] || 0).toFixed(2) }}</b></span>
+            </div>
+            <ChartExpandButton :expanded="isChartExpanded('load')" @toggle="toggleChartExpanded('load')" />
+          </div>
+        </div>
+        <div class="chart-body">
+          <canvas ref="loadChartRef"></canvas>
+        </div>
+      </div>
+
+      <div class="chart-card" :class="{ 'full-width': isChartExpanded('disk') }">
+        <div class="chart-card-header">
+          <span class="chart-title">
+            <span class="chart-title-icon">▸</span>
+            {{ trans.diskUsage }}
+          </span>
+          <div class="chart-header-actions">
+            <div class="chart-current-value-container">
+              <span class="chart-current-value">{{ diskPercent }}%</span>
+              <div class="chart-subtitle">{{ trans.used }} {{ formatBytes(server.disk_used*1024*1024) }} / {{ formatBytes(server.disk_total*1024*1024) }}</div>
+            </div>
+            <ChartExpandButton :expanded="isChartExpanded('disk')" @toggle="toggleChartExpanded('disk')" />
+          </div>
+        </div>
+        <div class="chart-body">
+          <canvas ref="diskChartRef"></canvas>
+        </div>
+      </div>
+
+      <div class="chart-card" :class="{ 'full-width': isChartExpanded('diskIo') }" v-show="hasDiskIoData">
+        <div class="chart-card-header disk-io-header">
+          <span class="chart-title">
+            <span class="chart-title-icon">▸</span>
+            {{ trans.diskIo || 'Disk IO' }}
+          </span>
+          <div class="chart-header-actions">
+            <div class="ping-indicator">
+              <span class="net-down">R <b>{{ formatBytes(diskIo.read_bps) }}/s</b></span>
+              <span class="net-up">W <b>{{ formatBytes(diskIo.write_bps) }}/s</b></span>
+              <span class="conn-tcp">IOPS <b>{{ formatDiskIoNumber(diskIo.read_iops) }}/{{ formatDiskIoNumber(diskIo.write_iops) }}</b></span>
+              <span class="conn-udp">await <b>{{ formatDiskIoNumber(diskIo.await_ms) }}ms</b></span>
+              <span>util <b>{{ formatDiskIoNumber(diskIo.util) }}%</b></span>
+            </div>
+            <ChartExpandButton :expanded="isChartExpanded('diskIo')" @toggle="toggleChartExpanded('diskIo')" />
+          </div>
+        </div>
+        <div class="chart-body">
+          <canvas ref="diskIoChartRef"></canvas>
+        </div>
+      </div>
+
+      <div class="chart-card" :class="{ 'full-width': isChartExpanded('gpu') }" v-show="hasGpuData">
+        <div class="chart-card-header">
+          <span class="chart-title">
+            <span class="chart-title-icon">▸</span>
+            {{ trans.gpuUsage || 'GPU Usage' }}
+          </span>
+          <div class="chart-header-actions">
+            <span class="chart-current-value">{{ gpuPercentText }}</span>
+            <ChartExpandButton :expanded="isChartExpanded('gpu')" @toggle="toggleChartExpanded('gpu')" />
+          </div>
+        </div>
+        <div class="chart-body">
+          <canvas ref="gpuChartRef"></canvas>
+        </div>
+      </div>
+
+      <div class="chart-card" :class="{ 'full-width': isChartExpanded('proc') }">
         <div class="chart-card-header">
           <span class="chart-title">
             <span class="chart-title-icon">▸</span>
             {{ trans.processes }}
           </span>
-          <span class="chart-current-value">{{ server.processes || '0' }}</span>
+          <div class="chart-header-actions">
+            <span class="chart-current-value">{{ server.processes || '0' }}</span>
+            <ChartExpandButton :expanded="isChartExpanded('proc')" @toggle="toggleChartExpanded('proc')" />
+          </div>
         </div>
         <div class="chart-body">
           <canvas ref="procChartRef"></canvas>
         </div>
       </div>
 
-      <div class="chart-card">
+      <div class="chart-card" :class="{ 'full-width': isChartExpanded('conn') }">
         <div class="chart-card-header">
           <span class="chart-title">
             <span class="chart-title-icon">▸</span>
             {{ trans.connections }}
           </span>
-          <div class="net-indicator">
-            <span class="conn-tcp">TCP <b>{{ server.tcp_conn || '0' }}</b></span>
-            <span class="conn-udp">UDP <b>{{ server.udp_conn || '0' }}</b></span>
+          <div class="chart-header-actions">
+            <div class="net-indicator">
+              <span class="conn-tcp">TCP <b>{{ server.tcp_conn || '0' }}</b></span>
+              <span class="conn-udp">UDP <b>{{ server.udp_conn || '0' }}</b></span>
+            </div>
+            <ChartExpandButton :expanded="isChartExpanded('conn')" @toggle="toggleChartExpanded('conn')" />
           </div>
         </div>
         <div class="chart-body">
@@ -251,16 +278,19 @@
         </div>
       </div>
 
-      <div class="chart-card" v-show="hasPingData">
+      <div class="chart-card" :class="{ 'full-width': isChartExpanded('ping') }" v-show="hasPingData">
         <div class="chart-card-header">
           <span class="chart-title">
             <span class="chart-title-icon">▸</span>
             {{ trans.latencyMonitor }}
           </span>
-          <div class="ping-indicator">
-            <span v-for="item in visiblePingStats" :key="item.field" :class="item.className">
-              {{ item.label }} <b>{{ item.value !== null ? item.value + 'ms' : 'Timeout' }}</b>
-            </span>
+          <div class="chart-header-actions">
+            <div class="ping-indicator">
+              <span v-for="item in visiblePingStats" :key="item.field" :class="item.className">
+                {{ item.label }} <b>{{ item.value !== null ? item.value + 'ms' : 'Timeout' }}</b>
+              </span>
+            </div>
+            <ChartExpandButton :expanded="isChartExpanded('ping')" @toggle="toggleChartExpanded('ping')" />
           </div>
         </div>
         <div class="chart-body">
@@ -268,17 +298,20 @@
         </div>
       </div>
 
-      <div class="chart-card" v-show="hasLossData">
+      <div class="chart-card" :class="{ 'full-width': isChartExpanded('loss') }" v-show="hasLossData">
         <div class="chart-card-header">
           <span class="chart-title">
             <span class="chart-title-icon">▸</span>
             {{ trans.packetLoss || 'Packet Loss' }}
           </span>
-          <div class="ping-indicator">
-            <span v-if="avgLossCt !== null" class="ping-ct">{{ trans.pingCt }} <b>{{ avgLossCt }}%</b></span>
-            <span v-if="avgLossCu !== null" class="ping-cu">{{ trans.pingCu }} <b>{{ avgLossCu }}%</b></span>
-            <span v-if="avgLossCm !== null" class="ping-cm">{{ trans.pingCm }} <b>{{ avgLossCm }}%</b></span>
-            <span v-if="avgLossBd !== null" class="ping-bd">{{ trans.pingBd }} <b>{{ avgLossBd }}%</b></span>
+          <div class="chart-header-actions">
+            <div class="ping-indicator">
+              <span v-if="avgLossCt !== null" class="ping-ct">{{ trans.pingCt }} <b>{{ avgLossCt }}%</b></span>
+              <span v-if="avgLossCu !== null" class="ping-cu">{{ trans.pingCu }} <b>{{ avgLossCu }}%</b></span>
+              <span v-if="avgLossCm !== null" class="ping-cm">{{ trans.pingCm }} <b>{{ avgLossCm }}%</b></span>
+              <span v-if="avgLossBd !== null" class="ping-bd">{{ trans.pingBd }} <b>{{ avgLossBd }}%</b></span>
+            </div>
+            <ChartExpandButton :expanded="isChartExpanded('loss')" @toggle="toggleChartExpanded('loss')" />
           </div>
         </div>
         <div class="chart-body">
@@ -309,7 +342,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick, h } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import TerminalHeader from '../components/TerminalHeader.vue'
 import Footer from '../components/Footer.vue'
@@ -357,6 +390,49 @@ const loading = ref(true)
 
 const trans = useTranslation()
 
+const ChartExpandButton = {
+  props: {
+    expanded: { type: Boolean, default: false }
+  },
+  emits: ['toggle'],
+  setup(props, { emit }) {
+    const getLabel = () => props.expanded
+      ? (currentLang.value === 'en' ? 'Collapse chart' : '收起图表')
+      : (currentLang.value === 'en' ? 'Expand chart' : '放大图表')
+
+    return () => h('button', {
+      type: 'button',
+      class: ['chart-expand-btn', { active: props.expanded }],
+      title: getLabel(),
+      'aria-label': getLabel(),
+      'aria-pressed': props.expanded ? 'true' : 'false',
+      onClick: () => emit('toggle')
+    }, [
+      h('svg', {
+        viewBox: '0 0 24 24',
+        width: '16',
+        height: '16',
+        fill: 'none',
+        stroke: 'currentColor',
+        'stroke-width': '2',
+        'stroke-linecap': 'round',
+        'stroke-linejoin': 'round',
+        'aria-hidden': 'true'
+      }, props.expanded
+        ? [
+            h('polyline', { points: '4 14 10 14 10 20' }),
+            h('polyline', { points: '20 10 14 10 14 4' })
+          ]
+        : [
+            h('polyline', { points: '15 3 21 3 21 9' }),
+            h('polyline', { points: '9 21 3 21 3 15' }),
+            h('line', { x1: '21', y1: '3', x2: '14', y2: '10' }),
+            h('line', { x1: '3', y1: '21', x2: '10', y2: '14' })
+          ])
+    ])
+  }
+}
+
 const PING_FIELD_DEFS = [
   { field: 'ping_ct', lossField: 'loss_ct', labelKey: 'pingCt', className: 'ping-ct', datasetIndex: 0 },
   { field: 'ping_cu', lossField: 'loss_cu', labelKey: 'pingCu', className: 'ping-cu', datasetIndex: 1 },
@@ -400,6 +476,15 @@ const diskIoAccessor = (field) => (row) => getDiskIoNumber(row, field)
 const formatDiskIoNumber = (value) => {
   const number = Number.parseFloat(value)
   return Number.isFinite(number) ? number.toFixed(1) : '0.0'
+}
+const formatDiskIoAxisTick = (value) => {
+  const number = Number.parseFloat(value)
+  if (!Number.isFinite(number)) return '0'
+  const abs = Math.abs(number)
+  if (abs >= 10000) return `${(number / 1000).toFixed(0)}k`
+  if (abs >= 1000) return `${(number / 1000).toFixed(1)}k`
+  if (abs >= 100) return number.toFixed(0)
+  return number.toFixed(1)
 }
 
 const timeOptions = computed(() => {
@@ -498,6 +583,7 @@ const hasDiskIoData = ref(false)
 
 const charts = {}
 const chartsReady = ref(false)
+const expandedCharts = ref({})
 const lossHistoryFields = ref({})
 const avgPingCt = ref(null)
 const avgPingCu = ref(null)
@@ -509,6 +595,27 @@ const avgLossCm = ref(null)
 const avgLossBd = ref(null)
 let isInitializingCharts = false
 let databaseUpgradeAlertShown = false
+
+const isChartExpanded = (key) => !!expandedCharts.value[key]
+
+const resizeChartAfterLayout = (key) => {
+  nextTick(() => {
+    requestAnimationFrame(() => {
+      const chart = charts[key]
+      if (!chart) return
+      if (typeof chart.resize === 'function') chart.resize()
+      chart.update('none')
+    })
+  })
+}
+
+const toggleChartExpanded = (key) => {
+  expandedCharts.value = {
+    ...expandedCharts.value,
+    [key]: !expandedCharts.value[key]
+  }
+  resizeChartAfterLayout(key)
+}
 
 const showDiskIoChart = () => {
   if (hasDiskIoData.value) return
@@ -672,7 +779,33 @@ const CHART_DEFS = [
   { key: 'gpu', ref: () => gpuChartRef.value, datasets: [], unit: '%', legend: true },
   { key: 'ram', ref: () => ramChartRef.value, datasets: [ds('Memory', '#b392f0', { fill: true }), ds('Swap', '#ffb870', { fill: true })], unit: '%', legend: true },
   { key: 'disk', ref: () => diskChartRef.value, datasets: [ds('Disk', '#39d2c0', { fill: true })], unit: '%' },
-  { key: 'diskIo', ref: () => diskIoChartRef.value, datasets: [ds('Read', '#00d4aa', { fill: true }), ds('Write', '#ffb870', { fill: true })], legend: true, formatValue: (v) => formatBytes(v) + '/s', tickFormat: (v) => formatBytes(v) },
+  {
+    key: 'diskIo',
+    ref: () => diskIoChartRef.value,
+    datasets: [
+      ds('Read', '#00d4aa', { fill: true, yAxisID: 'y', formatValue: (v) => formatBytes(v) + '/s' }),
+      ds('Write', '#ffb870', { fill: true, yAxisID: 'y', formatValue: (v) => formatBytes(v) + '/s' }),
+      ds('Read IOPS', '#4da6ff', { yAxisID: 'y1', borderDash: [5, 4], formatValue: (v) => `${formatDiskIoNumber(v)} ops/s` }),
+      ds('Write IOPS', '#b392f0', { yAxisID: 'y1', borderDash: [5, 4], formatValue: (v) => `${formatDiskIoNumber(v)} ops/s` }),
+      ds('await', '#f778ba', { yAxisID: 'y1', borderDash: [2, 4], formatValue: (v) => `${formatDiskIoNumber(v)} ms` }),
+      ds('util', '#ff7b72', { yAxisID: 'y1', borderDash: [8, 4], formatValue: (v) => `${formatDiskIoNumber(v)}%` })
+    ],
+    legend: true,
+    tickFormat: (v) => formatBytes(v),
+    extraScales: (chartTheme) => ({
+      y1: {
+        beginAtZero: true,
+        position: 'right',
+        grid: { color: chartTheme.grid, drawBorder: false, drawOnChartArea: false, tickLength: 0 },
+        ticks: {
+          color: chartTheme.axis,
+          font: { size: 9, family: "'JetBrains Mono', monospace" },
+          padding: 8,
+          callback: formatDiskIoAxisTick
+        }
+      }
+    })
+  },
   { key: 'proc', ref: () => procChartRef.value, datasets: [ds('Processes', '#f778ba', { fill: true })] },
   { key: 'net', ref: () => netChartRef.value, datasets: [ds('Download', '#00d4aa', { fill: true }), ds('Upload', '#4da6ff', { fill: true })], legend: true, formatValue: (v) => formatBytes(v) + '/s', tickFormat: (v) => formatBytes(v) },
   { key: 'conn', ref: () => connChartRef.value, datasets: [ds('TCP', '#b392f0'), ds('UDP', '#f778ba')], legend: true },
@@ -760,96 +893,106 @@ const initCharts = () => {
   Chart.defaults.plugins.tooltip.padding = 12
   Chart.defaults.plugins.tooltip.cornerRadius = 2
 
-  const createChartOptions = (unit = '', showLegend = false, formatCallback = null, tickFormat = null) => ({
-    responsive: true,
-    maintainAspectRatio: false,
-    animation: { duration: CHART.ANIMATION_DURATION, easing: 'easeOutCubic' },
-    interaction: { mode: 'index', intersect: false },
-    plugins: {
-      legend: {
-        display: showLegend,
-        position: 'top',
-        labels: {
-          boxWidth: 10,
-          padding: 12,
-          font: { size: 10, family: "'JetBrains Mono', monospace" },
-          usePointStyle: true,
-          color: chartTheme.axis,
-          filter: (legendItem, chartData) => !chartData.datasets[legendItem.datasetIndex]?.disabledProbe
+  const createChartOptions = (unit = '', showLegend = false, formatCallback = null, tickFormat = null, extraScales = null) => {
+    const resolvedExtraScales = typeof extraScales === 'function'
+      ? extraScales(chartTheme)
+      : (extraScales || {})
+
+    return {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: { duration: CHART.ANIMATION_DURATION, easing: 'easeOutCubic' },
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: {
+          display: showLegend,
+          position: 'top',
+          labels: {
+            boxWidth: 10,
+            padding: 12,
+            font: { size: 10, family: "'JetBrains Mono', monospace" },
+            usePointStyle: true,
+            color: chartTheme.axis,
+            filter: (legendItem, chartData) => !chartData.datasets[legendItem.datasetIndex]?.disabledProbe
+          }
+        },
+        tooltip: {
+          callbacks: {
+            title: function(items) {
+              if (items.length > 0 && items[0].raw) {
+                const label = items[0].raw.x ?? items[0].chart?.data?.labels?.[items[0].dataIndex]
+                const date = new Date(Number(label))
+                return '> ' + date.toLocaleString(undefined, {
+                  year: 'numeric',
+                  month: '2-digit',
+                  day: '2-digit',
+                  hour: '2-digit',
+                  minute: '2-digit',
+                  second: '2-digit',
+                  hour12: false
+                })
+              }
+              return ''
+            },
+            label: function(context) {
+              let label = context.dataset.label || ''
+              if (label) label += ': '
+              const value = context.parsed.y
+              const datasetFormatter = context.dataset.formatValue
+              if (value === null || value === undefined) {
+                label += trans.value.timeout
+              } else if (typeof datasetFormatter === 'function') {
+                label += datasetFormatter(value)
+              } else if (formatCallback) {
+                label += formatCallback(value)
+              } else {
+                label += typeof value === 'number' ? value.toFixed(2) : value
+                label += unit
+              }
+              return '$ ' + label
+            }
+          }
         }
       },
-      tooltip: {
-        callbacks: {
-          title: function(items) {
-            if (items.length > 0 && items[0].raw) {
-              const label = items[0].raw.x ?? items[0].chart?.data?.labels?.[items[0].dataIndex]
-              const date = new Date(Number(label))
-              return '> ' + date.toLocaleString(undefined, {
-                year: 'numeric',
-                month: '2-digit',
-                day: '2-digit',
-                hour: '2-digit',
-                minute: '2-digit',
-                second: '2-digit',
-                hour12: false
-              })
-            }
-            return ''
+      scales: {
+        x: {
+          type: 'category',
+          title: {
+            display: false,
+            text: '',
+            color: chartTheme.axis,
+            font: { size: 10, family: "'JetBrains Mono', monospace" }
           },
-          label: function(context) {
-            let label = context.dataset.label || ''
-            if (label) label += ': '
-            const value = context.parsed.y
-            if (value === null || value === undefined) {
-              label += trans.value.timeout
-            } else if (formatCallback) {
-              label += formatCallback(value)
-            } else {
-              label += typeof value === 'number' ? value.toFixed(2) : value
-              label += unit
+          ticks: {
+            maxTicksLimit: CHART.MAX_TICKS,
+            color: chartTheme.axis,
+            font: { size: 9, family: "'JetBrains Mono', monospace" },
+            maxRotation: 0,
+            padding: 8,
+            callback: function(value) {
+              return formatChartAxisTime(this.getLabelForValue(value))
             }
-            return '$ ' + label
-          }
-        }
-      }
-    },
-    scales: {
-      x: {
-        type: 'category',
-        title: {
-          display: false,
-          text: '',
-          color: chartTheme.axis,
-          font: { size: 10, family: "'JetBrains Mono', monospace" }
+          },
+          grid: { color: chartTheme.grid, drawBorder: false, tickLength: 0 }
         },
-        ticks: {
-          maxTicksLimit: CHART.MAX_TICKS,
-          color: chartTheme.axis,
-          font: { size: 9, family: "'JetBrains Mono', monospace" },
-          maxRotation: 0,
-          padding: 8,
-          callback: function(value) {
-            return formatChartAxisTime(this.getLabelForValue(value))
+        y: {
+          beginAtZero: true,
+          grid: { color: chartTheme.grid, drawBorder: false, tickLength: 0 },
+          ticks: {
+            color: chartTheme.axis,
+            font: { size: 9, family: "'JetBrains Mono', monospace" },
+            padding: 8,
+            callback: tickFormat || function(value) { return value + unit; }
           }
         },
-        grid: { color: chartTheme.grid, drawBorder: false, tickLength: 0 }
+        ...resolvedExtraScales
       },
-      y: {
-        beginAtZero: true,
-        grid: { color: chartTheme.grid, drawBorder: false, tickLength: 0 },
-        ticks: {
-          color: chartTheme.axis,
-          font: { size: 9, family: "'JetBrains Mono', monospace" },
-          padding: 8,
-          callback: tickFormat || function(value) { return value + unit; }
-        }
+      elements: {
+        point: { radius: 0, hoverRadius: 5, hitRadius: 10, borderWidth: 0, hoverBorderWidth: 2, hoverBorderColor: '#fff' },
+        line: { tension: 0.4, borderWidth: 1.5, fill: false, spanGaps: false }
       }
-    },
-    elements: {
-      point: { radius: 0, hoverRadius: 5, hitRadius: 10, borderWidth: 0, hoverBorderWidth: 2, hoverBorderColor: '#fff' },
-      line: { tension: 0.4, borderWidth: 1.5, fill: false, spanGaps: false }
     }
-  })
+  }
 
   for (const def of CHART_DEFS) {
     const ref = def.ref()
@@ -857,7 +1000,7 @@ const initCharts = () => {
     charts[def.key] = new Chart(ref.getContext('2d'), {
       type: 'line',
       data: { labels: [], datasets: def.datasets.map(d => ({ ...d })) },
-      options: createChartOptions(def.unit || '', def.legend, def.formatValue, def.tickFormat)
+      options: createChartOptions(def.unit || '', def.legend, def.formatValue, def.tickFormat, def.extraScales)
     })
   }
 
@@ -881,20 +1024,16 @@ const updateChartsTheme = () => {
       chart.options.plugins.legend.labels.color = chartTheme.axis
     }
 
-    if (chart.options.scales.x) {
-      if (chart.options.scales.x.title) {
-        chart.options.scales.x.title.color = chartTheme.axis
+    for (const scale of Object.values(chart.options.scales || {})) {
+      if (scale.title) {
+        scale.title.color = chartTheme.axis
       }
-      chart.options.scales.x.ticks.color = chartTheme.axis
-      chart.options.scales.x.grid.color = chartTheme.grid
-    }
-
-    if (chart.options.scales.y) {
-      if (chart.options.scales.y.title) {
-        chart.options.scales.y.title.color = chartTheme.axis
+      if (scale.ticks) {
+        scale.ticks.color = chartTheme.axis
       }
-      chart.options.scales.y.ticks.color = chartTheme.axis
-      chart.options.scales.y.grid.color = chartTheme.grid
+      if (scale.grid) {
+        scale.grid.color = chartTheme.grid
+      }
     }
 
     chart.update('none')
@@ -1084,8 +1223,9 @@ const loadAllHistory = async (hours) => {
       const diskIoRows = allData.filter(hasValidDiskIoPayload)
       if (diskIoRows.length > 0) {
         markDiskIoDataAvailable(diskIoRows[0])
-        updateChartDataset(charts.diskIo, 0, diskIoRows, diskIoAccessor('read_bps'))
-        updateChartDataset(charts.diskIo, 1, diskIoRows, diskIoAccessor('write_bps'))
+        DISK_IO_FIELDS.forEach((field, index) => {
+          updateChartDataset(charts.diskIo, index, diskIoRows, diskIoAccessor(field))
+        })
       } else {
         clearDiskIoChart()
         hasDiskIoData.value = false
@@ -1356,8 +1496,9 @@ const appendRealtimeSampleCharts = (data, dataTimestamp) => {
 const appendDiskIoChart = (data, dataTimestamp) => {
   if (!markDiskIoDataAvailable(data)) return
   const io = normalizeDiskIo(data)
-  appendDataToChart(charts.diskIo, 0, dataTimestamp, io.read_bps)
-  appendDataToChart(charts.diskIo, 1, dataTimestamp, io.write_bps)
+  DISK_IO_FIELDS.forEach((field, index) => {
+    appendDataToChart(charts.diskIo, index, dataTimestamp, io[field])
+  })
 }
 
 const appendReportCharts = (data, dataTimestamp) => {

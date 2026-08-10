@@ -989,7 +989,9 @@ body::before {
     text-decoration: none;
     color: inherit;
     transition: all 0.2s;
-    display: block;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
     position: relative;
 }
 
@@ -1005,6 +1007,10 @@ body::before {
     align-items: center;
     justify-content: space-between;
     margin-bottom: 12px;
+}
+
+.server-space {
+    flex: 1;
 }
 
 .server-identity {
@@ -1426,15 +1432,42 @@ body::before {
 .stat-row {
     display: flex;
     align-items: center;
-    gap: 8px;
+    justify-content: space-between;
+    gap: 12px;
     margin-bottom: 6px;
 }
 
 .stat-key {
     color: var(--text-primary);
-    width: 35px;
+    flex: 0 0 35px;
     text-transform: uppercase;
     letter-spacing: 0.5px;
+}
+
+.stat-content {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
+    text-align: right;
+}
+
+.stat-content:not(.stat-content-meter) {
+    flex-wrap: wrap;
+    row-gap: 2px;
+}
+
+.stat-content-meter {
+    flex-wrap: nowrap;
+    gap: 10px;
+}
+
+.stat-content-meter .stat-bar-container {
+    flex: 1 1 96px;
+    min-width: 72px;
+    max-width: 260px;
 }
 
 .stat-bar-container {
@@ -1457,6 +1490,7 @@ body::before {
     min-width: 40px;
     text-align: right;
     font-weight: 600;
+    flex-shrink: 0;
 }
 
 .net-down {
@@ -1481,7 +1515,8 @@ body::before {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    flex: 1;
+    min-width: 0;
+    max-width: 100%;
 }
 
 /* --------------------------------------------------------------------------
@@ -2432,6 +2467,7 @@ body::before {
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 12px;
     background: rgba(0, 0, 0, 0.2);
 }
 
@@ -2449,6 +2485,53 @@ body::before {
 .chart-title-icon {
     color: var(--accent-cyan);
     font-size: 14px;
+}
+
+.chart-header-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 10px;
+    min-width: 0;
+    margin-left: auto;
+}
+
+.chart-header-actions > .load-avg-row,
+.chart-header-actions > .net-indicator,
+.chart-header-actions > .ping-indicator,
+.chart-header-actions > .chart-current-value-container {
+    min-width: 0;
+}
+
+.chart-expand-btn {
+    width: 28px;
+    height: 28px;
+    flex: 0 0 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.03);
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: border-color 0.2s, color 0.2s, background 0.2s;
+}
+
+.chart-expand-btn:hover,
+.chart-expand-btn:focus-visible,
+.chart-expand-btn.active {
+    border-color: var(--accent-cyan);
+    color: var(--accent-cyan);
+    background: rgba(77, 166, 255, 0.08);
+    outline: none;
+}
+
+.chart-expand-btn svg {
+    width: 16px;
+    height: 16px;
+    pointer-events: none;
 }
 
 .chart-current-value-container {
@@ -2690,8 +2773,8 @@ body::before {
 }
 
 .server-row.dragging {
-    opacity: 0.5;
-    background: var(--accent-cyan) !important;
+    opacity: 0.28;
+    background: rgba(77, 166, 255, 0.16) !important;
 }
 
 .server-row.drag-over {
@@ -2703,10 +2786,40 @@ body::before {
     font-size: 12px;
     letter-spacing: -2px;
     cursor: grab;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-user-drag: none;
 }
 
 .drag-handle:hover {
     color: var(--accent-cyan);
+}
+
+body.server-row-drag-active,
+body.server-row-drag-active * {
+    cursor: grabbing !important;
+}
+
+.server-row-drag-ghost {
+    position: fixed;
+    z-index: 10020;
+    pointer-events: none;
+    opacity: 0.96;
+    transform: translateZ(0);
+    filter: drop-shadow(0 12px 24px rgba(0, 0, 0, 0.35));
+}
+
+.server-row-drag-ghost .terminal-table {
+    width: 100%;
+    min-width: 100%;
+    margin: 0;
+    background: var(--bg-card);
+    border: 1px solid var(--accent-cyan);
+}
+
+.server-row-drag-ghost .server-row {
+    background: var(--bg-hover) !important;
 }
 
 .drag-info {
@@ -3241,6 +3354,10 @@ body::before {
 
 .disk-io-header .chart-title {
     flex-shrink: 0;
+}
+
+.disk-io-header .chart-header-actions {
+    flex: 1 1 320px;
 }
 
 .load-1m {
@@ -4114,6 +4231,10 @@ body.mikus-theme .mikus-stats-mascot-img {
         font-size: 11px;
     }
 
+    .chart-expand-btn {
+        display: none;
+    }
+
     .host-card-header {
         padding: 12px 14px;
     }
@@ -4133,6 +4254,15 @@ body.mikus-theme .mikus-stats-mascot-img {
     .settings-grid .form-row {
         flex-direction: column;
         gap: 8px;
+    }
+
+    .edit-server-modal .mobile-two-row {
+        flex-wrap: wrap;
+    }
+
+    .edit-server-modal .mobile-two-row .form-group {
+        flex: 0 0 calc(50% - 6px);
+        min-width: 0;
     }
 
     .settings-section .flex[style*="gap"] {

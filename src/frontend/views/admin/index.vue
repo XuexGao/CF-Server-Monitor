@@ -487,6 +487,43 @@ import { detectBillingCycle, detectCurrencySymbol, normalizeBillingCycle, normal
 const trans = useTranslation()
 const route = useRoute()
 const router = useRouter()
+const AGENT_RELEASE_URL = 'https://api.github.com/repos/huilang-me/cfsm-agent/releases/latest'
+const AGENT_RELEASE_FAILURE_TTL = 30 * 1000
+
+let cachedAgentReleaseVersion = ''
+let cachedAgentReleaseFailureAt = 0
+let agentReleasePromise = null
+
+const normalizeVersion = (version) => String(version || '').trim()
+
+const fetchLatestAgentReleaseVersion = async () => {
+  if (cachedAgentReleaseVersion) return cachedAgentReleaseVersion
+  if (cachedAgentReleaseFailureAt && Date.now() - cachedAgentReleaseFailureAt < AGENT_RELEASE_FAILURE_TTL) return ''
+  if (agentReleasePromise) return agentReleasePromise
+
+  agentReleasePromise = fetch(AGENT_RELEASE_URL, {
+    headers: { Accept: 'application/vnd.github+json' }
+  }).then(async (res) => {
+    if (!res.ok) throw new Error(`GitHub release request failed: ${res.status}`)
+    const release = await res.json()
+    const version = normalizeVersion(release?.tag_name)
+    if (version) {
+      cachedAgentReleaseVersion = version
+      cachedAgentReleaseFailureAt = 0
+    } else {
+      cachedAgentReleaseFailureAt = Date.now()
+    }
+    return version
+  }).catch((e) => {
+    cachedAgentReleaseFailureAt = Date.now()
+    console.error('[ERROR] Load latest agent release failed:', e)
+    return ''
+  }).finally(() => {
+    agentReleasePromise = null
+  })
+
+  return agentReleasePromise
+}
 
 const getMessage = (msg) => {
   if (typeof msg === 'string') {
@@ -1010,10 +1047,11 @@ const handleAdminApiIndexChange = async () => {
 const loadLatestAgentVersion = async () => {
   try {
     const config = await fetchConfig(selectedApiIndex.value)
-    latestAgentVersion.value = config?.last_agent_version || ''
+    const configVersion = normalizeVersion(config?.last_agent_version)
+    latestAgentVersion.value = configVersion || await fetchLatestAgentReleaseVersion()
   } catch (e) {
     console.error('[ERROR] Load latest agent version failed:', e)
-    latestAgentVersion.value = ''
+    latestAgentVersion.value = await fetchLatestAgentReleaseVersion()
   }
 }
 
@@ -1626,18 +1664,29 @@ const toggleServer = (id) => {
 
 let draggedRow = null
 
-const handleDragStart = (e) => {
-  const row = e.target.closest('.server-row')
-  draggedRow = row ? row.dataset.serverId : null
-  e.dataTransfer.effectAllowed = 'move'
+const handleDragStart = (e, serverId = null) => {
+  const row = e?.target?.closest?.('.server-row')
+  draggedRow = String(serverId || row?.dataset?.serverId || '')
+  if (e?.dataTransfer) {
+    e.dataTransfer.effectAllowed = 'move'
+  }
 }
 
 const handleDrop = async (e, targetId) => {
-  if (!draggedRow || draggedRow === targetId) return
+  e?.preventDefault?.()
+  targetId = String(targetId || '')
+  if (!draggedRow || draggedRow === targetId) {
+    draggedRow = null
+    return
+  }
 
-  const rows = Array.from(document.querySelectorAll('.server-row'))
+  const rows = Array.from(document.querySelectorAll('#tab-servers .table-wrapper .terminal-table tbody > .server-row[data-server-id]'))
   const draggedIndex = rows.findIndex(r => r.dataset.serverId === draggedRow)
   const targetIndex = rows.findIndex(r => r.dataset.serverId === targetId)
+  if (draggedIndex < 0 || targetIndex < 0) {
+    draggedRow = null
+    return
+  }
 
   const orders = rows.map(r => r.dataset.serverId)
   const [dragged] = orders.splice(draggedIndex, 1)

@@ -54,7 +54,15 @@
             class="server-row"
             :data-server-id="server.id"
           >
-            <td class="drag-handle table-center-cell" :title="trans.dragSort" draggable="true" @dragstart="$emit('drag-start', $event)" @dragover.prevent @drop="$emit('drop', $event, server.id)">⋮⋮</td>
+            <td
+              class="drag-handle table-center-cell"
+              :title="trans.dragSort"
+              draggable="false"
+              @pointerdown="handlePointerDown($event, server.id)"
+              @pointermove="handlePointerMove"
+              @pointerup="handlePointerUp"
+              @pointercancel="handlePointerCancel"
+            >⋮⋮</td>
             <td class="table-center-cell"><input type="checkbox" class="server-checkbox" :value="server.id" :checked="selectedServers.includes(server.id)" @change="$emit('toggle-server', server.id)"></td>
             <td>
               <div class="server-info">
@@ -158,6 +166,7 @@
 </template>
 
 <script setup>
+import { onBeforeUnmount } from 'vue'
 import { getFlagRegionCode, formatBytes } from '../../../utils/api'
 import { getPublicAssetUrl } from '../../../utils/config'
 import { currentLang } from '../../../utils/i18n'
@@ -186,6 +195,177 @@ const emit = defineEmits([
   'drag-start', 'drop', 'toggle-server', 'copy-note',
   'copy-spec', 'copy-cmd', 'edit', 'delete'
 ])
+
+const POINTER_DRAG_THRESHOLD = 6
+let pointerDragState = null
+
+const emitDragStart = (event, serverId) => {
+  emit('drag-start', event, serverId)
+}
+
+const emitDrop = (event, serverId) => {
+  emit('drop', event, serverId)
+}
+
+const getServerRow = (target) => target?.closest?.('.server-row') || null
+const getServerRowAtPoint = (clientX, clientY) => {
+  const element = document.elementFromPoint(clientX, clientY)
+  return getServerRow(element)
+}
+
+const createDragGhost = () => {
+  if (!pointerDragState?.row || pointerDragState.ghost) return
+  const row = pointerDragState.row
+  const rect = row.getBoundingClientRect()
+  const table = row.closest('table')
+  const ghost = document.createElement('div')
+  ghost.className = 'server-row-drag-ghost'
+  ghost.style.width = `${rect.width}px`
+
+  const ghostTable = document.createElement('table')
+  ghostTable.className = table?.className || 'terminal-table'
+  const ghostBody = document.createElement('tbody')
+  const rowClone = row.cloneNode(true)
+  rowClone.classList.remove('dragging', 'drag-over')
+  rowClone.removeAttribute('data-server-id')
+  Array.from(row.children).forEach((cell, index) => {
+    const cloneCell = rowClone.children[index]
+    if (!cloneCell) return
+    const width = cell.getBoundingClientRect().width
+    cloneCell.style.width = `${width}px`
+    cloneCell.style.minWidth = `${width}px`
+  })
+  ghostBody.appendChild(rowClone)
+  ghostTable.appendChild(ghostBody)
+  ghost.appendChild(ghostTable)
+  document.body.appendChild(ghost)
+
+  pointerDragState.ghost = ghost
+  pointerDragState.ghostOffsetX = pointerDragState.startX - rect.left
+  pointerDragState.ghostOffsetY = pointerDragState.startY - rect.top
+}
+
+const updateDragGhost = (event) => {
+  if (!pointerDragState?.ghost) return
+  pointerDragState.ghost.style.left = `${event.clientX - pointerDragState.ghostOffsetX}px`
+  pointerDragState.ghost.style.top = `${event.clientY - pointerDragState.ghostOffsetY}px`
+}
+
+const clearPointerDragClasses = () => {
+  document.querySelectorAll('.server-row.dragging, .server-row.drag-over').forEach(row => {
+    row.classList.remove('dragging', 'drag-over')
+  })
+}
+
+const updatePointerDragTarget = (event) => {
+  if (!pointerDragState?.active) return null
+  const targetRow = getServerRowAtPoint(event.clientX, event.clientY)
+  const targetId = targetRow?.dataset?.serverId || ''
+
+  if (targetId !== pointerDragState.targetId) {
+    if (pointerDragState.targetRow) {
+      pointerDragState.targetRow.classList.remove('drag-over')
+    }
+    pointerDragState.targetRow = targetRow
+    pointerDragState.targetId = targetId
+    if (targetRow && targetId !== pointerDragState.serverId) {
+      targetRow.classList.add('drag-over')
+    }
+  }
+
+  return targetRow
+}
+
+const cleanupPointerDrag = () => {
+  if (pointerDragState?.handle?.releasePointerCapture && pointerDragState.pointerId !== undefined) {
+    try {
+      pointerDragState.handle.releasePointerCapture(pointerDragState.pointerId)
+    } catch (_) {}
+  }
+  clearPointerDragClasses()
+  pointerDragState?.ghost?.remove()
+  document.body.classList.remove('server-row-drag-active')
+  pointerDragState = null
+}
+
+const startPointerDrag = (event) => {
+  if (!pointerDragState || pointerDragState.active) return
+  pointerDragState.active = true
+  pointerDragState.row?.classList.add('dragging')
+  document.body.classList.add('server-row-drag-active')
+  createDragGhost()
+  updateDragGhost(event)
+  emitDragStart(event, pointerDragState.serverId)
+}
+
+const handlePointerDown = (event, serverId) => {
+  if (event.isPrimary === false) return
+  if (event.pointerType === 'mouse' && event.button !== 0) return
+  const row = getServerRow(event.target)
+  if (!row) return
+  event.preventDefault()
+
+  pointerDragState = {
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    serverId: String(serverId || ''),
+    row,
+    handle: event.currentTarget,
+    active: false,
+    targetId: '',
+    targetRow: null,
+    ghost: null,
+    ghostOffsetX: 0,
+    ghostOffsetY: 0
+  }
+
+  if (event.currentTarget?.setPointerCapture) {
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId)
+    } catch (_) {}
+  }
+}
+
+const handlePointerMove = (event) => {
+  if (!pointerDragState || event.pointerId !== pointerDragState.pointerId) return
+
+  const dx = Math.abs(event.clientX - pointerDragState.startX)
+  const dy = Math.abs(event.clientY - pointerDragState.startY)
+  if (!pointerDragState.active && Math.max(dx, dy) >= POINTER_DRAG_THRESHOLD) {
+    startPointerDrag(event)
+  }
+  if (!pointerDragState.active) return
+
+  event.preventDefault()
+  updateDragGhost(event)
+  updatePointerDragTarget(event)
+}
+
+const handlePointerUp = (event) => {
+  if (!pointerDragState || event.pointerId !== pointerDragState.pointerId) return
+
+  if (pointerDragState.active) {
+    event.preventDefault()
+    const targetRow = updatePointerDragTarget(event)
+    const targetId = targetRow?.dataset?.serverId || pointerDragState.targetId
+    emitDrop(event, targetId || pointerDragState.serverId)
+  }
+
+  cleanupPointerDrag()
+}
+
+const handlePointerCancel = (event) => {
+  if (!pointerDragState || event.pointerId !== pointerDragState.pointerId) return
+  if (pointerDragState.active) {
+    emitDrop(event, pointerDragState.serverId)
+  }
+  cleanupPointerDrag()
+}
+
+onBeforeUnmount(() => {
+  cleanupPointerDrag()
+})
 
 const getSpecCopyKey = (server, field) => `${server.id}:${field}`
 const isSpecCopied = (server, field) => props.copiedSpecKey === getSpecCopyKey(server, field)
