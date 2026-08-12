@@ -18,7 +18,6 @@
 >
 > - 免费托管在 Cloudflare，稳定性比自己服务器还高，超出免费额度也不扣费。目前支持 60+ 台监控，调整成 120 秒上报间隔后可以翻倍。
 > - 安全：无 WebSSH、无命令下发、单向上报，没有所谓的“主控”；Workers 项目只是一个纯收集数据和展示的平台。
-> - 客户端默认提供 Go 版本探针 [cfsm-agent](https://github.com/huilang-me/cfsm-agent)，单文件部署、轻量高效；同时保留 Shell 脚本版本兼容旧环境。
 > - 其他探针该有的功能基本都有，后续将继续完善。
 
 <details>
@@ -242,6 +241,30 @@ https://你的项目名.你的子域.workers.dev/admin
 | `-tx_correction`    | 上行流量校正（GB，直接设置当月上行数据）        | -      |
 
 > **注意**：`-collect_interval` 控制本机额外采集频率，`-interval` 控制向 Worker 上报频率。默认 `0` 为兼容模式：不额外采集，只按上报间隔发送单条数据；设置为 `1` 时才会 1 秒采集、按上报间隔批量发送。上报间隔越短，API 调用和数据库写入越多。
+
+
+### 非 root 安装
+Linux 非 root 执行安装时会使用当前用户，不会新建用户；二进制、配置和流量文件会写入 `~/.cf-probe/`，自启动使用 `systemd --user`。部分系统从旧的 root Go 版切换到非 root 安装时，建议先在 root 下卸载旧版：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/huilang-me/cfsm-agent/main/install.sh | sh -s -- uninstall
+```
+
+如果已有非 root 用户，先在 root 下为该用户开启 linger，以支持退出登录后后台运行和自启动：
+
+```bash
+loginctl enable-linger 用户名
+```
+
+如果没有非 root 用户，可先新建用户并设置密码或 SSH 密钥：
+
+```bash
+useradd -m -s /bin/bash cfsm
+loginctl enable-linger cfsm
+passwd cfsm
+```
+
+随后退出 root/su 会话，使用账户密码或 SSH 密钥登录该非 root 用户，再复制后台安装命令执行。不要在 root shell 中直接 `su` 后安装，否则当前会话可能无法连接 `systemd --user` 用户服务（例如 `Failed to connect to bus: No medium found`）。如果当前环境不支持 `systemd --user`，请改用 root 安装；如果检测到 root/system 旧版本安装，当前版本会提示先清理旧版本，暂不自动迁移。
 
 ### Go 版本探针（默认）
 

@@ -13,14 +13,37 @@
 Linux、OpenWrt、Synology DSM、FreeBSD、macOS 可使用安装脚本自动下载当前系统对应的最新 release：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/huilang-me/cfsm-agent/main/install.sh | sudo sh -s -- install -id=SERVER_ID -secret=SECRET -url=WORKER_URL
+curl -fsSL https://raw.githubusercontent.com/huilang-me/cfsm-agent/main/install.sh | sh -s -- install -id=SERVER_ID -secret=SECRET -url=WORKER_URL
 ```
 
 如果系统没有 `curl`，可使用 `wget`：
 
 ```bash
-wget -O- https://raw.githubusercontent.com/huilang-me/cfsm-agent/main/install.sh | sudo sh -s -- install -id=SERVER_ID -secret=SECRET -url=WORKER_URL
+wget -O- https://raw.githubusercontent.com/huilang-me/cfsm-agent/main/install.sh | sh -s -- install -id=SERVER_ID -secret=SECRET -url=WORKER_URL
 ```
+
+### 非 root 安装
+Linux 非 root 执行安装时会使用当前用户，不会新建用户；二进制、配置和流量文件会写入 `~/.cf-probe/`，自启动使用 `systemd --user`。部分系统从旧的 root Go 版切换到非 root 安装时，建议先在 root 下卸载旧版：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/huilang-me/cfsm-agent/main/install.sh | sh -s -- uninstall
+```
+
+如果已有非 root 用户，先在 root 下为该用户开启 linger，以支持退出登录后后台运行和自启动：
+
+```bash
+loginctl enable-linger 用户名
+```
+
+如果没有非 root 用户，可先新建用户并设置密码或 SSH 密钥：
+
+```bash
+useradd -m -s /bin/bash cfsm
+loginctl enable-linger cfsm
+passwd cfsm
+```
+
+随后退出 root/su 会话，使用账户密码或 SSH 密钥登录该非 root 用户，再复制后台安装命令执行。不要在 root shell 中直接 `su` 后安装，否则当前会话可能无法连接 `systemd --user` 用户服务（例如 `Failed to connect to bus: No medium found`）。如果当前环境不支持 `systemd --user`，请改用 root 安装；如果检测到 root/system 旧版本安装，当前版本会提示先清理旧版本，暂不自动迁移。
 
 ## Windows 安装
 
@@ -37,13 +60,13 @@ PowerShell -ExecutionPolicy Bypass -File $script install -id=SERVER_ID -secret=S
 默认安装最新 release。需要指定版本时：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/huilang-me/cfsm-agent/main/install.sh | sudo sh -s -- install --install-version=v1.0.0 -id=SERVER_ID -secret=SECRET -url=WORKER_URL
+curl -fsSL https://raw.githubusercontent.com/huilang-me/cfsm-agent/main/install.sh | sh -s -- install --install-version=v1.0.0 -id=SERVER_ID -secret=SECRET -url=WORKER_URL
 ```
 
 GitHub 下载较慢时，可以配置代理前缀：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/huilang-me/cfsm-agent/main/install.sh | sudo sh -s -- install --install-ghproxy=https://gh-proxy.example.com -id=SERVER_ID -secret=SECRET -url=WORKER_URL
+curl -fsSL https://raw.githubusercontent.com/huilang-me/cfsm-agent/main/install.sh | sh -s -- install --install-ghproxy=https://gh-proxy.example.com -id=SERVER_ID -secret=SECRET -url=WORKER_URL
 ```
 
 ## 常用安装参数
@@ -67,14 +90,19 @@ curl -fsSL https://raw.githubusercontent.com/huilang-me/cfsm-agent/main/install.
 | `-debug=0\|1` | 是否开启调试日志 | `0` |
 | `-no_start` | 安装后不立即启动服务 | 不启用 |
 
-再次执行 `install` 时，如果本机已有配置文件且未传入完整的 `-id`、`-secret`、`-url`，程序会沿用已有配置。
+再次执行 `install` 时，如果本机已有配置文件，程序会以已有配置为基础，只覆盖本次显式传入的参数，未传入的参数保留旧值（例如只传 `-auto_update=1` 就只修改自动更新开关）。首次安装（本机无已有配置）时 `-id`、`-secret`、`-url` 仍为必填。
 
-自动更新默认关闭。安装时传入 `-auto_update=1` 后，Agent 启动时会检查 GitHub release，之后每 6 小时检查一次；稳定版按版本号更新，`Snapshot-` 版本会跟随最新可用 Snapshot prerelease。自动更新只由本地 `AUTO_UPDATE` 配置控制，不依赖面板返回 `update=1`。如果安装时配置了 `--install-ghproxy`，代理会写入本地配置并用于后续自动更新；该本地字段不参与远端配置 MD5 对比。
+自动更新默认关闭。安装时传入 `-auto_update=1` 后，Agent 启动时会检查 GitHub release，之后每 6 小时检查一次；稳定版按版本号更新，`Snapshot-` 版本会跟随最新可用 Snapshot prerelease。自动更新只由本地 `AUTO_UPDATE` 配置控制，不依赖面板返回 `update=1`。如果安装时配置了 `--install-ghproxy`，代理会写入本地配置并用于后续自动更新；该本地字段不参与远端配置 MD5 对比。自动更新的检查结果、调度结果和失败原因始终以 info 级日志输出，无需开启 debug；nohup 环境下安装过程的输出会追加到 `/var/log/cf-probe.log`，systemd 环境可通过 `journalctl -u 'cf-probe-auto-update-*'` 查看。
+
+普通用户安装时，自动更新会在 `~/.cf-probe/` 内下载并替换当前用户的二进制，随后退出当前进程，由 `systemd --user` 按服务重启策略拉起新版本；不会触碰 root 路径或系统级 systemd 服务。
+
+更新检查（`api.github.com`）、新二进制下载（`github.com`）、指标上报以及公网 IP 查询的 DNS 解析默认使用系统原生 DNS；仅在配置了 `--install-ghproxy`（通常为系统 DNS 被污染的国内服务器）或通过环境变量 `CF_PROBE_UPDATE_DNS` 显式指定 DNS 服务器时，才启用 Agent 内置的公共 DNS 轮询解析（阿里、DNSPod、114、Cloudflare、Google，UDP 53），此时不依赖系统 DNS，内置 DNS 全部不可用时回退系统 DNS。`CF_PROBE_UPDATE_DNS` 会自动补全 `:53` 端口（如 `CF_PROBE_UPDATE_DNS=223.5.5.5`）。root/system 模式更新时 Agent 会把新二进制下载到配置目录，再调度新二进制执行自身的 `install` 完成替换并重启服务；普通用户模式按上一段直接自替换。两种模式都不经过 install.sh 和 curl；下载或调度失败时旧版本不受影响，下次检查自动重试。如 `github.com` 完全不可达，可配置 `--install-ghproxy` 代理（仅用于二进制文件下载；`api.github.com` 的版本检查始终直连，gh-proxy 类服务不支持 API 转发）。
 
 ## 安装位置
 
 | 系统 | 二进制默认位置 | 配置文件 | 日志 |
 | --- | --- | --- | --- |
+| Linux non-root (`systemd --user`) | `~/.cf-probe/bin/cf-probe` | `~/.cf-probe/config.conf` | `journalctl --user -u cf-probe -f` |
 | Linux / Synology DSM | `/usr/local/bin/cf-probe` | `/etc/config/cf-probe/config.conf` | `/var/log/cf-probe.log` |
 | OpenWrt | `/usr/bin/cf-probe` | `/etc/config/cf-probe/config.conf` | `/var/log/cf-probe.log` |
 | FreeBSD | `/usr/local/bin/cf-probe` | `/etc/config/cf-probe/config.conf` | `/var/log/cf-probe.log` |
@@ -83,13 +111,29 @@ curl -fsSL https://raw.githubusercontent.com/huilang-me/cfsm-agent/main/install.
 
 服务名固定为 `cf-probe`。服务会根据系统自动注册为 `systemd`、`OpenRC`、`procd`、`launchd`、Synology rc、Windows 计划任务，或在不支持服务管理器的环境中后台运行。
 
+Linux 普通用户安装固定使用 `systemd --user`；root 安装仍使用系统级服务。普通用户安装会阻止与其他用户或 root 版实例重复运行，但允许覆盖安装当前用户自己的运行实例。
+
 ## 查看状态和日志
+
+Linux non-root (`systemd --user`)：
+
+```bash
+systemctl --user status cf-probe
+journalctl --user -u cf-probe -f
+```
 
 systemd 系统：
 
 ```bash
 sudo systemctl status cf-probe
 sudo journalctl -u cf-probe -f
+```
+
+OpenRC（Alpine 等）：
+
+```bash
+rc-service cf-probe status
+tail -f /var/log/cf-probe.log
 ```
 
 OpenWrt：
@@ -127,8 +171,10 @@ Get-Content "C:\ProgramData\cf-probe\cf-probe.log" -Wait
 Linux、OpenWrt、Synology DSM、FreeBSD、macOS：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/huilang-me/cfsm-agent/main/install.sh | sudo sh -s -- uninstall
+curl -fsSL https://raw.githubusercontent.com/huilang-me/cfsm-agent/main/install.sh | sh -s -- uninstall
 ```
+
+普通用户执行卸载只清理当前用户的 `~/.cf-probe/` 和 `systemd --user` 自启动项；root 执行卸载清理系统级安装。
 
 Windows 请使用管理员权限打开 PowerShell：
 
@@ -323,7 +369,7 @@ go build -trimpath -ldflags "-s -w -X main.version=$(git describe --tags --alway
 构建后可直接安装：
 
 ```bash
-sudo ./cf-probe install -id=SERVER_ID -secret=SECRET -url=WORKER_URL
+./cf-probe install -id=SERVER_ID -secret=SECRET -url=WORKER_URL
 ```
 
 前台调试运行：
