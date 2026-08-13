@@ -1467,7 +1467,6 @@ body::before {
 .stat-content-meter .stat-bar-container {
     flex: 1 1 96px;
     min-width: 72px;
-    max-width: 260px;
 }
 
 .stat-bar-container {

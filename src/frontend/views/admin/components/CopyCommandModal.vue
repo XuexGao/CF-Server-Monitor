@@ -10,8 +10,7 @@
         <div class="form-group flex-1">
           <label class="form-label">{{ trans.targetOs }}</label>
           <select :value="targetOs" class="form-select" @change="$emit('update:target-os', $event.target.value)">
-            <option value="linux">Linux/OpenWrt/Synology DSM/FreeBSD</option>
-            <option value="mac">macOS</option>
+            <option value="linux">Linux/OpenWrt/Synology DSM/FreeBSD/macOS</option>
             <option value="windows">Windows</option>
           </select>
         </div>

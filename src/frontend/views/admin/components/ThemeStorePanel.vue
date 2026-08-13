@@ -52,10 +52,6 @@
         </div>
       </div>
 
-      <div v-if="notice" :class="notice.type === 'success' ? 'warning-box' : 'danger-box'" class="mb-4">
-        {{ notice.message }}
-      </div>
-
       <div v-if="loading" class="theme-loading">
         <div class="loading-spinner"></div>
         <div class="loading-text">$ {{ trans.themeStoreLoading }}...</div>
@@ -130,6 +126,13 @@
                 </option>
               </select>
             </div>
+            <div v-else-if="canLoadThemeVersions(theme)" class="theme-version-selector">
+              <button
+                @click="loadThemeVersions(theme)"
+                class="btn btn-sm version-load-btn"
+                :disabled="isThemeVersionsLoading(theme)"
+              >{{ isThemeVersionsLoading(theme) ? trans.themeLoadingVersions : trans.themeLoadVersions }}</button>
+            </div>
 
             <!-- 当前选中版本信息 -->
             <div v-if="getSelectedVersion(theme)" class="theme-version-info">
@@ -180,8 +183,10 @@ const props = defineProps({
   settings: { type: Object, default: () => ({}) }
 })
 
-const emit = defineEmits(['theme-applied', 'theme-options-applied'])
+const emit = defineEmits(['theme-applied', 'theme-options-applied', 'alert-message'])
 
+const THEME_STORE_URL = 'https://raw.githubusercontent.com/huilang-me/CFSM-Theme-Store/refs/heads/main/themes.json'
+const THEME_STORE_FETCH_TIMEOUT_MS = 8000
 const COMMIT_LIMIT = 10
 const GITHUB_FETCH_TIMEOUT_MS = 8000
 const SAFE_GITHUB_PART = /^[A-Za-z0-9._-]+$/
@@ -190,11 +195,11 @@ const themes = ref([])
 const loading = ref(false)
 const loaded = ref(false)
 const error = ref('')
-const notice = ref(null)
 const applyingThemeId = ref('')
 const previewingThemeId = ref('')
 const customThemeUrl = ref('')
 const selectedVersions = reactive({})
+const loadingVersions = reactive({})
 
 const parseThemeOptionsJson = () => {
   const raw = String(props.settings?.theme_options || '').trim()
@@ -242,22 +247,69 @@ const initSelectedVersions = (reset = false) => {
   })
 }
 
+const getThemeStoreNetworkError = () => {
+  return props.trans.themeStoreNetworkError ||
+    'Unable to load the theme store. Please check network access to raw.githubusercontent.com and api.github.com, then retry.'
+}
+
+const getThemeStoreLoadFailed = () => {
+  return props.trans.themeStoreLoadFailed || 'Failed to load theme store'
+}
+
+const showThemeMessage = (message) => {
+  if (message) emit('alert-message', message)
+}
+
+const normalizeThemeStore = (data) => {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    return { schema: 1, themes: [] }
+  }
+
+  return {
+    ...data,
+    schema: data.schema || 1,
+    themes: Array.isArray(data.themes) ? data.themes : []
+  }
+}
+
+const fetchThemeStoreFromRaw = async () => {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), THEME_STORE_FETCH_TIMEOUT_MS)
+  try {
+    const res = await fetch(THEME_STORE_URL, {
+      signal: controller.signal,
+      cache: 'no-cache'
+    })
+    if (!res.ok) throw new Error(`raw.githubusercontent.com ${res.status}`)
+
+    return normalizeThemeStore(await res.json())
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
+const fetchThemeStore = async () => {
+  const result = await http.get('/theme')
+  if (!result.error) return normalizeThemeStore(result.data)
+
+  return fetchThemeStoreFromRaw()
+}
+
 const loadThemes = async () => {
   if (loading.value) return
 
   loading.value = true
   error.value = ''
   try {
-    const result = await http.get('/theme')
-    if (result.error) throw new Error(result.error)
-    themes.value = Array.isArray(result.data?.themes) ? result.data.themes : []
+    const themeStore = await fetchThemeStore()
+    themes.value = themeStore.themes
     
     // 初始化选中版本为最新版本（索引0）
     initSelectedVersions(true)
     loaded.value = true
-    hydrateMissingThemeVersions()
   } catch (e) {
-    error.value = e.message || 'Failed to load themes'
+    error.value = getThemeStoreLoadFailed()
+    showThemeMessage(getThemeStoreNetworkError())
     loaded.value = false
   } finally {
     loading.value = false
@@ -277,7 +329,6 @@ const getSelectedVersion = (theme) => {
 
 const selectVersion = (themeId, idx) => {
   selectedVersions[themeId] = parseInt(idx)
-  notice.value = null
 }
 
 const getVersionTitle = (version) => {
@@ -390,7 +441,7 @@ const buildCommitVersion = (repoUrl, commit) => {
 
 const fetchThemeCommitVersions = async (theme) => {
   const source = getGithubCommitSource(theme)
-  if (!source) return []
+  if (!source) return { versions: [], failed: false }
 
   try {
     const apiUrl = new URL(`https://api.github.com/repos/${source.owner}/${source.repo}/commits`)
@@ -401,49 +452,69 @@ const fetchThemeCommitVersions = async (theme) => {
     const timeout = setTimeout(() => controller.abort(), GITHUB_FETCH_TIMEOUT_MS)
     try {
       const res = await fetch(apiUrl.href, { signal: controller.signal })
-      if (!res.ok) return []
+      if (!res.ok) return { versions: [], failed: true }
 
       const commits = await res.json()
-      if (!Array.isArray(commits)) return []
+      if (!Array.isArray(commits)) return { versions: [], failed: true }
 
-      return commits
+      const versions = commits
         .map(commit => buildCommitVersion(source.repoUrl, commit))
         .filter(Boolean)
+
+      return { versions, failed: versions.length === 0 }
     } finally {
       clearTimeout(timeout)
     }
   } catch (_) {
-    return []
+    return { versions: [], failed: true }
   }
 }
 
-const hydrateMissingThemeVersions = async () => {
-  const candidates = themes.value
-    .map((theme, index) => ({ theme, index }))
-    .filter(({ theme }) => !(theme.versions && theme.versions.length > 0) && getGithubCommitSource(theme))
+const getThemeVersionKey = (theme) => {
+  return String(theme?.id || theme?.url || theme?.title || '')
+}
 
-  if (candidates.length === 0) return
+const isThemeVersionsLoading = (theme) => {
+  return !!loadingVersions[getThemeVersionKey(theme)]
+}
 
-  const results = await Promise.allSettled(
-    candidates.map(({ theme }) => fetchThemeCommitVersions(theme))
-  )
+const canLoadThemeVersions = (theme) => {
+  return !(theme?.versions && theme.versions.length > 0) && !!getGithubCommitSource(theme)
+}
 
-  let changed = false
+const updateThemeVersions = (theme, versions) => {
+  const index = themes.value.findIndex(item => item === theme || (theme?.id && item.id === theme.id))
+  if (index < 0) return
+
   const nextThemes = [...themes.value]
+  nextThemes[index] = {
+    ...nextThemes[index],
+    versions
+  }
+  themes.value = nextThemes
 
-  results.forEach((result, resultIndex) => {
-    if (result.status !== 'fulfilled' || !result.value.length) return
-    const { theme, index } = candidates[resultIndex]
-    nextThemes[index] = {
-      ...theme,
-      versions: result.value
+  if (nextThemes[index].id) {
+    selectedVersions[nextThemes[index].id] = 0
+  }
+}
+
+const loadThemeVersions = async (theme) => {
+  if (!canLoadThemeVersions(theme)) return
+
+  const key = getThemeVersionKey(theme)
+  if (!key || loadingVersions[key]) return
+
+  loadingVersions[key] = true
+  try {
+    const result = await fetchThemeCommitVersions(theme)
+    if (result.failed || !result.versions.length) {
+      showThemeMessage(getThemeStoreNetworkError())
+      return
     }
-    changed = true
-  })
 
-  if (changed) {
-    themes.value = nextThemes
-    initSelectedVersions()
+    updateThemeVersions(theme, result.versions)
+  } finally {
+    loadingVersions[key] = false
   }
 }
 
@@ -486,13 +557,12 @@ const isCurrentTheme = (theme) => {
 
 const previewThemeUrl = async (themeUrl, previewingId) => {
   if (!themeUrl) {
-    notice.value = { type: 'error', message: props.trans.themeUrlUnavailable }
+    showThemeMessage(props.trans.themeUrlUnavailable)
     return
   }
 
   if (previewingThemeId.value) return
   previewingThemeId.value = previewingId
-  notice.value = null
   try {
     const result = await adminApi({
       action: 'start_theme_preview',
@@ -500,19 +570,19 @@ const previewThemeUrl = async (themeUrl, previewingId) => {
     }, props.selectedApiIndex)
 
     if (result.error) {
-      notice.value = { type: 'error', message: props.trans[result.error] || result.error || props.trans.themeApplyFailed }
+      showThemeMessage(props.trans[result.error] || result.error || props.trans.themeApplyFailed)
       return
     }
 
     const previewUrl = result.data?.preview_url
     if (!previewUrl) {
-      notice.value = { type: 'error', message: props.trans.themeApplyFailed }
+      showThemeMessage(props.trans.themeApplyFailed)
       return
     }
 
     window.open(previewUrl, '_blank', 'noopener,noreferrer')
   } catch (e) {
-    notice.value = { type: 'error', message: e.message || props.trans.themeApplyFailed }
+    showThemeMessage(e.message || props.trans.themeApplyFailed)
   } finally {
     previewingThemeId.value = ''
   }
@@ -529,7 +599,7 @@ const getCustomThemeUrl = () => {
 const previewCustomTheme = async () => {
   const themeUrl = getCustomThemeUrl()
   if (!themeUrl) {
-    notice.value = { type: 'error', message: props.trans.invalidThemeUrl }
+    showThemeMessage(props.trans.invalidThemeUrl)
     return
   }
   customThemeUrl.value = themeUrl
@@ -540,7 +610,6 @@ const saveThemeUrl = async (themeUrl, applyingId) => {
   if (applyingThemeId.value) return
 
   applyingThemeId.value = applyingId
-  notice.value = null
   try {
     const themeOptions = parseThemeOptionsJson()
     delete themeOptions.mikus
@@ -554,15 +623,15 @@ const saveThemeUrl = async (themeUrl, applyingId) => {
     }, props.selectedApiIndex)
 
     if (result.error) {
-      notice.value = { type: 'error', message: props.trans[result.error] || result.error || props.trans.themeApplyFailed }
+      showThemeMessage(props.trans[result.error] || result.error || props.trans.themeApplyFailed)
       return
     }
 
     emit('theme-applied', themeUrl)
     emit('theme-options-applied', themeOptions)
-    notice.value = { type: 'success', message: props.trans.themeApplied }
+    showThemeMessage(props.trans.themeApplied)
   } catch (e) {
-    notice.value = { type: 'error', message: e.message || props.trans.themeApplyFailed }
+    showThemeMessage(e.message || props.trans.themeApplyFailed)
   } finally {
     applyingThemeId.value = ''
   }
@@ -572,7 +641,6 @@ const saveMikusTheme = async (enabled, applyingId) => {
   if (applyingThemeId.value) return
 
   applyingThemeId.value = applyingId
-  notice.value = null
   try {
     const themeOptions = parseThemeOptionsJson()
     if (enabled) {
@@ -590,15 +658,15 @@ const saveMikusTheme = async (enabled, applyingId) => {
     }, props.selectedApiIndex)
 
     if (result.error) {
-      notice.value = { type: 'error', message: props.trans[result.error] || result.error || props.trans.themeApplyFailed }
+      showThemeMessage(props.trans[result.error] || result.error || props.trans.themeApplyFailed)
       return
     }
 
     emit('theme-applied', '')
     emit('theme-options-applied', themeOptions)
-    notice.value = { type: 'success', message: props.trans.themeApplied }
+    showThemeMessage(props.trans.themeApplied)
   } catch (e) {
-    notice.value = { type: 'error', message: e.message || props.trans.themeApplyFailed }
+    showThemeMessage(e.message || props.trans.themeApplyFailed)
   } finally {
     applyingThemeId.value = ''
   }
@@ -617,7 +685,7 @@ const disableMikusTheme = async () => {
 const applyTheme = async (theme) => {
   const themeUrl = getSelectedThemeUrl(theme)
   if (!themeUrl) {
-    notice.value = { type: 'error', message: props.trans.themeUrlUnavailable }
+    showThemeMessage(props.trans.themeUrlUnavailable)
     return
   }
   await saveThemeUrl(themeUrl, theme.id)
@@ -626,7 +694,7 @@ const applyTheme = async (theme) => {
 const applyCustomTheme = async () => {
   const themeUrl = getCustomThemeUrl()
   if (!themeUrl) {
-    notice.value = { type: 'error', message: props.trans.invalidThemeUrl }
+    showThemeMessage(props.trans.invalidThemeUrl)
     return
   }
   customThemeUrl.value = themeUrl
@@ -927,6 +995,10 @@ watch(
 .version-select:focus {
   outline: none;
   border-color: var(--accent-green);
+}
+
+.version-load-btn {
+  width: 100%;
 }
 
 .theme-version-info {

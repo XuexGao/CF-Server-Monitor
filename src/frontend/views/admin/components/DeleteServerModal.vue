@@ -51,10 +51,10 @@
             @input="$emit('update:delete-gh-proxy', $event.target.value)"
           >
           <datalist id="deleteGhProxyList">
+            <option value="https://ghfast.top/">https://ghfast.top/</option>
+            <option value="https://ghproxy.net/">https://ghproxy.net/</option>
             <option value="https://gh.llkk.cc/">https://gh.llkk.cc/</option>
             <option value="https://gh-proxy.com/">https://gh-proxy.com/</option>
-            <option value="https://ghproxy.net/">https://ghproxy.net/</option>
-            <option value="https://ghfast.top/">https://ghfast.top/</option>
           </datalist>
         </div>
       </div>

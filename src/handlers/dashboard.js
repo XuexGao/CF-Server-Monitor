@@ -9,8 +9,24 @@ import {
   getLatestReportSampleTimestamp,
   getWorkerLatestReportUpdates
 } from '../utils/latestReportCache.js';
+import {
+  cacheRealtimeState,
+  getCachedRealtimeState
+} from '../utils/realtimeStateCache.js';
 
 const LATEST_REPORT_ID_CHUNK_SIZE = 500;
+const LATENCY_NODE_FIELDS = ['ct', 'cu', 'cm', 'bd'];
+const LATENCY_LATEST_APPEND_THRESHOLD_MS = 2 * 60 * 1000;
+
+function createEmptyLatencyWindow() {
+  return { ping: [], loss: [] };
+}
+
+function normalizeTimestamp(value, fallback = 0) {
+  const timestamp = Number(value);
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return fallback;
+  return timestamp < 10000000000 ? timestamp * 1000 : timestamp;
+}
 
 function toPublicIpReachability(value) {
   const normalized = String(value ?? '').trim().toLowerCase();
@@ -64,30 +80,132 @@ function normalizeLatestReportUpdate(update) {
   };
 }
 
-async function getDurableLatestReportUpdates(env, serverIds) {
-  if (!env.METRICS_BROADCASTER || !Array.isArray(serverIds) || serverIds.length === 0) return [];
+function normalizeLatencyMetricValue(value) {
+  if (value === false || value === 'false') return false;
+  if (value === null || value === undefined) return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function normalizeLatencySeries(series) {
+  if (!Array.isArray(series)) return [];
+
+  return series
+    .map(point => {
+      if (!point || typeof point !== 'object') return null;
+      const ts = normalizeTimestamp(point.ts ?? point.timestamp, 0);
+      if (!ts) return null;
+
+      const normalized = { ts };
+      for (const field of LATENCY_NODE_FIELDS) {
+        if (Object.prototype.hasOwnProperty.call(point, field)) {
+          normalized[field] = normalizeLatencyMetricValue(point[field]);
+        }
+      }
+      return Object.keys(normalized).length > 1 ? normalized : null;
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.ts - b.ts);
+}
+
+function normalizeLatencyWindowUpdate(update) {
+  if (!update || !update.serverId) return null;
+  return {
+    serverId: String(update.serverId),
+    ping: normalizeLatencySeries(update.ping),
+    loss: normalizeLatencySeries(update.loss)
+  };
+}
+
+function attachLatencyWindowsToServers(servers, latencyWindows) {
+  const byServerId = new Map();
+  for (const update of latencyWindows || []) {
+    const normalized = normalizeLatencyWindowUpdate(update);
+    if (!normalized) continue;
+    byServerId.set(normalized.serverId, normalized);
+  }
+
+  for (const server of servers || []) {
+    const window = byServerId.get(String(server.id)) || createEmptyLatencyWindow();
+    server.ping = window.ping;
+    server.loss = window.loss;
+  }
+}
+
+function buildLatencyPointFromMetrics(metrics, prefix) {
+  if (!metrics || typeof metrics !== 'object') return null;
+  const point = {};
+  for (const field of LATENCY_NODE_FIELDS) {
+    const metricField = `${prefix}_${field}`;
+    if (!Object.prototype.hasOwnProperty.call(metrics, metricField)) continue;
+    point[field] = normalizeLatencyMetricValue(metrics[metricField]);
+  }
+  return Object.keys(point).length > 0 ? point : null;
+}
+
+function shouldAppendLatestLatencyPoint(series, timestamp, now = Date.now()) {
+  if (!timestamp) return false;
+  if (now - timestamp > 5 * 60 * 1000) return false;
+  if (!Array.isArray(series) || series.length === 0) return true;
+
+  const latestTs = normalizeTimestamp(series[series.length - 1]?.ts, 0);
+  return !latestTs || timestamp - latestTs > LATENCY_LATEST_APPEND_THRESHOLD_MS;
+}
+
+function appendLatestLatencyPoint(server, metrics, timestamp, now = Date.now()) {
+  const ts = normalizeTimestamp(timestamp ?? metrics?.timestamp, 0);
+  if (!ts) return;
+
+  const pingPoint = buildLatencyPointFromMetrics(metrics, 'ping');
+  if (pingPoint && shouldAppendLatestLatencyPoint(server.ping, ts, now)) {
+    server.ping = [
+      ...((Array.isArray(server.ping) ? server.ping : []).slice(-29)),
+      { ts, ...pingPoint }
+    ];
+  }
+
+  const lossPoint = buildLatencyPointFromMetrics(metrics, 'loss');
+  if (lossPoint && shouldAppendLatestLatencyPoint(server.loss, ts, now)) {
+    server.loss = [
+      ...((Array.isArray(server.loss) ? server.loss : []).slice(-29)),
+      { ts, ...lossPoint }
+    ];
+  }
+}
+
+async function getDurableRealtimeState(env, serverIds, options = {}) {
+  const includeLatencyWindows = options?.includeLatencyWindows !== false;
+  const empty = { latestReportUpdates: [], latencyWindows: [] };
+  if (!env.METRICS_BROADCASTER || !Array.isArray(serverIds) || serverIds.length === 0) return empty;
+
+  const cachedState = getCachedRealtimeState(serverIds, { includeLatencyWindows });
+  if (cachedState) return cachedState;
 
   try {
     const id = env.METRICS_BROADCASTER.idFromName('global');
     const stub = env.METRICS_BROADCASTER.get(id);
     const updates = [];
+    const latencyWindows = [];
 
     for (let offset = 0; offset < serverIds.length; offset += LATEST_REPORT_ID_CHUNK_SIZE) {
       const chunk = serverIds.slice(offset, offset + LATEST_REPORT_ID_CHUNK_SIZE);
       const response = await stub.fetch('http://internal/latest-report-updates', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ serverIds: chunk })
+        body: JSON.stringify({ serverIds: chunk, includeLatencyWindows })
       });
       if (!response.ok) continue;
       const data = await response.json();
       if (Array.isArray(data?.updates)) updates.push(...data.updates);
+      if (includeLatencyWindows && Array.isArray(data?.latencyWindows)) latencyWindows.push(...data.latencyWindows);
     }
 
-    return updates;
+    const state = { latestReportUpdates: updates, latencyWindows };
+    cacheRealtimeState(serverIds, state, { includeLatencyWindows });
+    return state;
   } catch (e) {
-    console.warn('[Dashboard] Failed to read latest report updates:', e?.message || e);
-    return [];
+    console.warn('[Dashboard] Failed to read realtime state:', e?.message || e);
+    return empty;
   }
 }
 
@@ -119,26 +237,33 @@ function mergeLatestReportUpdates(serverIds, durableUpdates, workerUpdates) {
     .filter(Boolean);
 }
 
-async function getLatestReportUpdatesForServers(env, serverIds) {
+async function getRealtimeStateForServers(env, serverIds, options = {}) {
+  const includeLatencyWindows = options?.includeLatencyWindows !== false;
   const normalizedServerIds = Array.from(new Set(
     (Array.isArray(serverIds) ? serverIds : [])
       .map(serverId => String(serverId || '').trim())
       .filter(Boolean)
   ));
-  if (normalizedServerIds.length === 0) return [];
+  if (normalizedServerIds.length === 0) {
+    return { latestReportUpdates: [], latencyWindows: [] };
+  }
 
-  const durableLatestReportUpdates = await getDurableLatestReportUpdates(env, normalizedServerIds);
+  const durableState = await getDurableRealtimeState(env, normalizedServerIds, { includeLatencyWindows });
+  const durableLatestReportUpdates = durableState.latestReportUpdates;
 
   // DO 命中后反向预热当前 Worker isolate，降低随后 DO 休眠造成的空缓存概率。
   for (const update of durableLatestReportUpdates) {
     cacheLatestReportUpdate(update.serverId, update.samples, update.reportTs);
   }
 
-  return mergeLatestReportUpdates(
-    normalizedServerIds,
-    durableLatestReportUpdates,
-    getWorkerLatestReportUpdates(normalizedServerIds)
-  );
+  return {
+    latestReportUpdates: mergeLatestReportUpdates(
+      normalizedServerIds,
+      durableLatestReportUpdates,
+      getWorkerLatestReportUpdates(normalizedServerIds)
+    ),
+    latencyWindows: includeLatencyWindows ? durableState.latencyWindows : []
+  };
 }
 
 export async function handleServerAPI(request, env, sys) {
@@ -156,12 +281,12 @@ export async function handleServerAPI(request, env, sys) {
   const server = await getServerDetail(env.DB, id, isLoggedIn);
   if (!server) return createNotFoundResponse('Server not found');
   
-  const [latestMetrics, latestReportUpdates] = await Promise.all([
+  const [latestMetrics, realtimeState] = await Promise.all([
     getLatestMetrics(env.DB, id, server),
-    getLatestReportUpdatesForServers(env, [id])
+    getRealtimeStateForServers(env, [id], { includeLatencyWindows: false })
   ]);
   mergeMetricsIntoServer(server, latestMetrics);
-  server.latestReportUpdates = latestReportUpdates;
+  server.latestReportUpdates = realtimeState.latestReportUpdates;
   server.sysConfig = {
     long_history_points: Number(normalizeLongHistoryPoints(sys.long_history_points))
   };
@@ -179,10 +304,11 @@ export async function handleServersAPI(request, env, sys) {
   const results = (await getAllServers(env.DB, isLoggedIn)).map(withoutPrivateServerFields);
   
   const serverIds = results.map(server => server.id).filter(Boolean);
-  const [latestMetricsMap, latestReportUpdates] = await Promise.all([
+  const [latestMetricsMap, realtimeState] = await Promise.all([
     getLatestMetricsForAllServers(env.DB),
-    getLatestReportUpdatesForServers(env, serverIds)
+    getRealtimeStateForServers(env, serverIds)
   ]);
+  attachLatencyWindowsToServers(results, realtimeState.latencyWindows);
   
   const now = Date.now();
   let globalOnline = 0;
@@ -197,6 +323,7 @@ export async function handleServersAPI(request, env, sys) {
     if (latestMetrics) {
       isOnline = (now - latestMetrics.timestamp) < 300000;
       mergeMetricsIntoServer(server, latestMetrics);
+      appendLatestLatencyPoint(server, latestMetrics, latestMetrics.timestamp, now);
     }
     normalizePublicIpFields(server);
     
@@ -219,7 +346,7 @@ export async function handleServersAPI(request, env, sys) {
 
   const data = {
     servers: results,
-    latestReportUpdates,
+    latestReportUpdates: realtimeState.latestReportUpdates,
     stats: {
       total: results.length,
       online: globalOnline,

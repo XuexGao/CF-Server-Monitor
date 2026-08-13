@@ -363,8 +363,21 @@ export default {
         });
       }},
       { method: 'GET', path: '/theme', handler: async () => {
-        const themeStore = await handleTheme()
-        return createSuccessResponse(themeStore)
+        const themeResult = await handleTheme()
+        if (!themeResult.ok) {
+          return new Response(JSON.stringify({
+            error: themeResult.error || 'themeStoreProxyFailed',
+            code: 502,
+            fallback: 'client'
+          }), {
+            status: 502,
+            headers: { 'Content-Type': 'application/json' }
+          })
+        }
+
+        return createSuccessResponse(themeResult.themeStore, {
+          'X-CFSM-Theme-Source': themeResult.cached ? 'cache' : 'raw'
+        })
       }},
       { method: 'GET', path: '/api/server', handler: async () => {
         await ensureSiteSettings();

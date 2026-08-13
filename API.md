@@ -486,10 +486,12 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
 | 字段            | 说明                                                                    |
 | ------------- | --------------------------------------------------------------------- |
 | `servers`     | 已合并最新指标的服务器列表（按 `sort_order ASC`），未登录用户**自动过滤** **`is_hidden = '1'`** |
-| `latestReportUpdates` | 每台服务器最近一次批量上报的采样回放数据，用于新页面连续回放；来自 Worker/DO 内存缓存，缓存约 5 分钟，进程重启或 DO 回收后允许为空。REST 响应中的样本统一为 `{ ts, data }`，`data` 按探针批量采样包透传；内置探针默认只在普通采样点上报 `cpu`、`ram_total`、`ram_used`、`swap_total`、`swap_used`、`net_in_speed`、`net_out_speed` |
+| `latestReportUpdates` | 每台服务器最近一次批量上报的采样回放数据，用于新页面连续回放；来自 Worker/DO 内存缓存，缓存约 4 分钟，进程重启或 DO 回收后允许为空。REST 响应中的样本统一为 `{ ts, data }`，`data` 按探针批量采样包透传；内置探针默认只在普通采样点上报 `cpu`、`ram_total`、`ram_used`、`swap_total`、`swap_used`、`net_in_speed`、`net_out_speed` |
 | `stats`       | 聚合统计：在线阈值 300 秒（5 分钟无上报视为离线）                                          |
 | `regionStats` | 按 ISO 区域码（大写）统计的服务器数                                                  |
 | `sysConfig`   | 当前站点开关：`show_price`、`show_expire`、`show_tf`、`show_time`、`display_mode`。主题配置请从 `/api/config` 的 `theme_options` 读取。~~旧版示例中的 `site_title` 不在该对象内。~~（2026-07-26 修订） |
+
+> `/api/servers` 的 `latestReportUpdates` 与 `servers[].ping` / `servers[].loss` 读取自 DO 实时状态，并在当前 Worker isolate 内短缓存约 4 分钟。该缓存不跨 isolate 共享，冷启动或缓存过期时会回源 DO。
 
 ***
 
@@ -594,7 +596,7 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
 ```
 
 > `last_updated` 来自最新指标；`timestamp` 是服务器配置记录的创建/导入时间字段，普通编辑不会刷新它。~~两者都表示最近上报时间。~~（2026-07-26 修订）
-> `latestReportUpdates` 与 `/api/servers` 同名字段形状一致，仅包含当前服务器最近一次批量上报的采样回放包；用于详情页打开时连续回放。REST 样本统一为 `{ ts, data }`，`data` 按探针采样包透传。缓存约 5 分钟，Worker/DO 重启后允许为空数组。
+> `/api/server` 详情接口不返回新增的 `ping` / `loss` 窗口数组；详情页仍可使用 `ping_ct` / `ping_cu` / `ping_cm` / `ping_bd` 与 `loss_ct` / `loss_cu` / `loss_cm` / `loss_bd` 当前单点值。`latestReportUpdates` 与 `/api/servers` 同名字段形状一致，仅包含当前服务器最近一次批量上报的采样回放包；用于详情页打开时连续回放。REST 样本统一为 `{ ts, data }`，`data` 按探针采样包透传。缓存约 4 分钟，Worker/DO 重启后允许为空数组。
 
 **失败返回**：
 
@@ -848,26 +850,17 @@ https://raw.githubusercontent.com/huilang-me/CFSM-Theme-Store/refs/heads/main/th
     {
       "name": "Example Theme",
       "url": "https://github.com/Tokinx/cf-server-monitor-theme-emerald",
-      "branch": "build",
-      "versions": [
-        {
-          "short_version": "8cea2bb",
-          "title": "update theme to 2024-01-01",
-          "releaseDate": "2024-01-01",
-          "changelog": "update theme",
-          "commitId": "8cea2bbdbadb50684f2e97e13f7b2149ef99911b",
-          "theme_url": "https://github.com/Tokinx/cf-server-monitor-theme-emerald/tree/8cea2bbdbadb50684f2e97e13f7b2149ef99911b"
-        }
-      ]
+      "branch": "build"
     }
   ]
 }
 ```
 
 - 上游对象的其他字段原样保留。
-- 主题对象配置 GitHub 仓库 `url` 和 `branch` 时，会通过 GitHub commits API 读取该分支最近 10 个 commit，并生成可直接写入 `theme_url` 的版本列表；`/theme` 响应里的 `versions` 只由 commits API 生成。commits API 失败时不会刷新内存缓存；已有成功缓存时返回旧缓存，无缓存时该主题 `versions` 返回空数组。管理端主题商店会对空 `versions` 主题执行浏览器端 GitHub commits API fallback 补齐版本下拉。
+- 后端只读取上游 `themes.json`，不调用 GitHub commits API 生成 `versions`。
+- 管理端主题商店默认不请求版本列表；点击主题卡片的“加载版本”后，才会在浏览器端通过 `api.github.com` 读取该主题仓库最近 10 个 commit，并生成可直接写入 `theme_url` 的版本下拉。
 - `schema` 缺失时补为 `1`；`themes` 不是数组时补为空数组；上游 `themes.json` 不需要提供 `versions`。
-- 上游失败时返回已有内存缓存，即使它已经超过 300 秒 TTL；从未成功缓存时返回 `{ "schema": 1, "themes": [] }`，HTTP 状态仍为 `200`。
+- 上游读取失败且没有命中 300 秒内存缓存时返回 `502`，管理端会改由浏览器端访问 `raw.githubusercontent.com` 作为 fallback。
 
 ***
 
@@ -1566,6 +1559,7 @@ UUID 缺失或格式非法时返回 `400 { "error": "invalidServerId", "code": 4
 | `udp_conn`                                    | number             | UDP 套接字数                  |
 | `ping_ct` / `ping_cu` / `ping_cm` / `ping_bd` | number\|null\|false | 各运营商延时 (ms)；`false` 表示禁用该节点 |
 | `loss_ct` / `loss_cu` / `loss_cm` / `loss_bd` | number\|null\|false | 各运营商丢包率 (%)；`false` 表示禁用该节点 |
+| `ping` / `loss`                               | array              | 仅 `/api/servers` 的 `servers[]` 列表项返回，`/api/server` 详情接口不返回；DO 缓存的一小时探测窗口，固定 30 个点，每 2 分钟一个槽位；实际采样不足 30 个槽位时，用时间最近的已有点补齐。若窗口最后一点落后当前最新指标超过 2 分钟，后端会用本次响应已查询到的最新指标追加一组点，不增加额外查询。点格式为 `{ ts, ct, cu, cm, bd }`，`ct/cu/cm/bd` 分别对应电信、联通、移动、BGP |
 | `ram_total` / `ram_used`                      | number             | MB                        |
 | `swap_total` / `swap_used`                    | number             | MB                        |
 | `disk_total` / `disk_used`                    | number             | MB                        |
