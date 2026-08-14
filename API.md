@@ -91,7 +91,7 @@
   1. 若 `site_options.password` 已设置为 PBKDF2 格式 → 按 `pbkdf2_sha256$iterations$salt$hash` 校验
   2. 若 `site_options.password` 为旧版 32 位 MD5 → 按 MD5 兼容校验，成功后自动升级为 PBKDF2
   3. 若 `site_options.password` 未设置或为空 → 与 `API_SECRET` 直接比对
-  4. 用户名：若 `site_options.username` 已设置则用之，否则使用 `API_USER_NAME` 环境变量，最终回退为 `admin`
+  4. 用户名：若 `site_options.username` 已设置则用之，否则回退为 `admin`
 - **失败返回**：`401 { "error": "Invalid username or password", "code": 401 }`
 
 #### C. JWT Bearer（管理操作 → 后续管理请求）
