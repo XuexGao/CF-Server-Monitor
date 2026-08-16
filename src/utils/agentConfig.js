@@ -1,16 +1,35 @@
 import { md5Hash } from './common.js';
+import { isWssReportEnabled } from './settings.js';
 
-export const AGENT_CONFIG_SCHEMA_VERSION = 3;
+export const AGENT_CONFIG_SCHEMA_VERSION = 4;
+export const AGENT_CONFIG_LEGACY_SCHEMA_VERSION = 3;
 export const AGENT_CONFIG_SCHEMA_HEADER = 'X-Agent-Config-Schema';
 export const AGENT_CONFIG_MD5_HEADER = 'X-Agent-Config-Md5';
 export const MAX_TRAFFIC_CORRECTION_GB = 1000000;
+export const CONNECTION_MODE_AUTO = 'auto';
+export const CONNECTION_MODE_HTTP = 'http';
 
 const ALLOWED_COLLECT_INTERVALS = new Set([0, 1, 2, 5, 10]);
 const ALLOWED_REPORT_INTERVALS = new Set([30, 60, 120, 180]);
+const ALLOWED_CONNECTION_MODES = new Set([CONNECTION_MODE_AUTO, CONNECTION_MODE_HTTP]);
 const PING_NODE_HOST_PATTERN = /^[a-zA-Z0-9._-]+$/;
 const IPV4_PATTERN = /^(?:\d{1,3}\.){3}\d{1,3}$/;
 const IPV4_LIKE_PATTERN = /^(?:\d+\.){3}\d+$/;
 const NETWORK_INTERFACE_PATTERN = /^[A-Za-z0-9_.:-]+$/;
+
+function normalizeSchemaVersion(value) {
+  const version = Number(value);
+  return Number.isInteger(version) && version >= AGENT_CONFIG_LEGACY_SCHEMA_VERSION && version <= AGENT_CONFIG_SCHEMA_VERSION
+    ? version
+    : AGENT_CONFIG_SCHEMA_VERSION;
+}
+
+export function normalizeAgentConfigSchemaVersion(value) {
+  const version = Number(value);
+  return Number.isInteger(version) && version >= AGENT_CONFIG_LEGACY_SCHEMA_VERSION && version <= AGENT_CONFIG_SCHEMA_VERSION
+    ? version
+    : null;
+}
 
 function validateInteger(name, value, allowedValues = null, min = null, max = null) {
   if (typeof value !== 'number' || !Number.isInteger(value)) {
@@ -53,12 +72,18 @@ export function validateAgentConfigInput(input) {
     return { valid: false, error: 'configuration would create more than 300 samples per report' };
   }
 
+  const connectionMode = normalizeConnectionMode(input.connection_mode);
+  if (!ALLOWED_CONNECTION_MODES.has(connectionMode)) {
+    return { valid: false, error: 'connection_mode is not allowed' };
+  }
+
   return {
     valid: true,
     config: {
       collect_interval: input.collect_interval,
       report_interval: input.report_interval,
       reset_day: input.reset_day,
+      connection_mode: connectionMode,
       schema_version: AGENT_CONFIG_SCHEMA_VERSION
     }
   };
@@ -155,6 +180,17 @@ export function sanitizeNetworkInterfaces(value) {
   return result.valid ? result.value : '';
 }
 
+export function normalizeConnectionMode(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  if (!raw || raw === CONNECTION_MODE_AUTO || raw === 'wss' || raw === 'websocket') {
+    return CONNECTION_MODE_AUTO;
+  }
+  if (raw === CONNECTION_MODE_HTTP || raw === 'post') {
+    return CONNECTION_MODE_HTTP;
+  }
+  return '';
+}
+
 export function isValidTrafficCorrection(value) {
   let number;
   if (typeof value === 'number') {
@@ -171,7 +207,8 @@ export function normalizeTrafficCorrection(value) {
   return isValidTrafficCorrection(value) ? Number(value) : 0;
 }
 
-export function buildAgentConfig(server, settings = null) {
+export function buildAgentConfig(server, settings = null, schemaVersion = AGENT_CONFIG_SCHEMA_VERSION) {
+  const version = normalizeSchemaVersion(schemaVersion);
   const collectInterval = storedInteger(server?.collect_interval, ALLOWED_COLLECT_INTERVALS, 0);
   let reportInterval = storedInteger(server?.report_interval, ALLOWED_REPORT_INTERVALS, 60);
   if (collectInterval > 0 && reportInterval < collectInterval) reportInterval = 60;
@@ -189,7 +226,7 @@ export function buildAgentConfig(server, settings = null) {
   const customBd = sanitizePingNode(server?.custom_bd || settings?.custom_bd || '');
   const networkInterface = sanitizeNetworkInterfaces(server?.interface || '');
 
-  return {
+  const config = {
     collect_interval: collectInterval,
     report_interval: reportInterval,
     reset_day: resetDay,
@@ -198,12 +235,19 @@ export function buildAgentConfig(server, settings = null) {
     custom_cm: customCm,
     custom_bd: customBd,
     interface: networkInterface,
-    schema_version: AGENT_CONFIG_SCHEMA_VERSION
+    schema_version: version
   };
+
+  if (version >= AGENT_CONFIG_SCHEMA_VERSION) {
+    const connectionMode = normalizeConnectionMode(server?.connection_mode) || CONNECTION_MODE_AUTO;
+    config.connection_mode = isWssReportEnabled(settings) ? connectionMode : CONNECTION_MODE_HTTP;
+  }
+
+  return config;
 }
 
 export function serializeAgentConfig(config) {
-  return `collect_interval=${config.collect_interval}` +
+  let serialized = `collect_interval=${config.collect_interval}` +
     `&report_interval=${config.report_interval}` +
     `&reset_day=${config.reset_day}` +
     `&schema_version=${config.schema_version}` +
@@ -212,6 +256,10 @@ export function serializeAgentConfig(config) {
     `&custom_cm=${config.custom_cm}` +
     `&custom_bd=${config.custom_bd}` +
     `&interface=${config.interface}`;
+  if (Object.prototype.hasOwnProperty.call(config, 'connection_mode')) {
+    serialized += `&connection_mode=${config.connection_mode}`;
+  }
+  return serialized;
 }
 
 export function serializeCorrection(correction) {
@@ -220,8 +268,8 @@ export function serializeCorrection(correction) {
     `&tx_correction=${correction.tx_correction}`;
 }
 
-export async function describeAgentConfig(server, settings = null) {
-  const config = buildAgentConfig(server, settings);
+export async function describeAgentConfig(server, settings = null, schemaVersion = AGENT_CONFIG_SCHEMA_VERSION) {
+  const config = buildAgentConfig(server, settings, schemaVersion);
   const serialized = serializeAgentConfig(config);
   const md5 = await md5Hash(serialized);
 

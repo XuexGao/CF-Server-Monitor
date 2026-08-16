@@ -5,22 +5,55 @@
 //   scope = 'all'        -> 订阅所有服务器更新（首页）
 //   scope = <serverId>   -> 只订阅某台服务器的更新（详情页）
 //
-// - 后端 /update 处理器在成功写入 DB 后，调用 /__do_push/<id>
-//   由本 DO 向所有订阅者广播刚收到的指标。
+// - 后端 /update WSS 由本 DO 接收 Agent 指标，并向所有订阅者广播。
+// - 兼容旧 POST 上报，/update 处理器在成功写入 DB 后会调用 /__do_push/<id>。
 //
-// - 使用 DO WebSocket Hibernation API，闲置时休眠以节省资源。
+// - 前端订阅连接使用 DO WebSocket Hibernation API，闲置时休眠以节省资源。
 //   通过 setWebSocketAutoResponse 自动响应 ping，无需唤醒 DO。
+// - Agent 上报连接使用标准 WebSocket API，避免高频指标消息计为 hibernation wakeup。
+
+import { saveMetricsHistory } from '../database/schema.js';
+import { ensureServerOptimization } from '../database/indexOptimization.js';
+import { getServerDetail, clearServerDetailCache } from '../utils/cache.js';
+import { isWssReportEnabled, loadSiteSettings } from '../utils/settings.js';
+import {
+  AGENT_CONFIG_MD5_HEADER,
+  AGENT_CONFIG_LEGACY_SCHEMA_VERSION,
+  AGENT_CONFIG_SCHEMA_HEADER,
+  AGENT_CONFIG_SCHEMA_VERSION,
+  describeAgentConfig,
+  normalizeAgentConfigSchemaVersion,
+  serializeCorrection
+} from '../utils/agentConfig.js';
+import {
+  applyHistoryMetricAggregates,
+  collectHistoryMetricAggregates,
+  getReportMetrics,
+  mergeHistoryMetricAggregates,
+  normalizeAgentVersion,
+  normalizeCorrectionValue,
+  normalizeMetricSamples,
+  toBroadcastSamples
+} from '../handlers/update.js';
 
 const MAX_SUBSCRIBE_IDS = 500;
 const MAX_SERVER_ID_LENGTH = 64;
 const SERVER_ID_PATTERN = /^[A-Za-z0-9._:-]+$/;
 const WS_POLICY_VIOLATION = 1008;
+const AGENT_REPORT_KIND = 'agent-report';
+const DEFAULT_AGENT_HISTORY_WRITE_INTERVAL_MS = 60 * 1000;
+const ALLOWED_AGENT_REPORT_INTERVALS = new Set([30, 60, 120, 180]);
+const AGENT_SERVER_DETAIL_TTL_MS = 120 * 1000;
+const AGENT_REALTIME_REPORT_DIVISOR = 15;
+const IDLE_AGENT_WSS_REPORT_INTERVAL_MULTIPLIER = 2;
+const RESOURCE_ALERT_AGENT_REPORT_INTERVAL_MS = 60 * 1000;
 const LATEST_REPORT_TTL_MS = 5 * 60 * 1000;
 const MAX_LATEST_REPORT_SERVERS = 1000;
 const RESOURCE_ALERT_STORAGE_KEY = 'resource_alert_windows_v1';
 const RESOURCE_ALERT_BUCKET_MS = 60 * 1000;
 const RESOURCE_ALERT_MAX_BUCKETS = 10;
 const RESOURCE_ALERT_MAX_SERVERS = 1000;
+const RESOURCE_ALERT_EVALUATE_RULE_BATCH_MAX = 20;
 const RESOURCE_ALERT_SNAPSHOT_INTERVAL_MS = 60 * 1000;
 const RESOURCE_ALERT_CACHE_ACTIVE_GRACE_MS = 3 * 60 * 1000;
 const RESOURCE_ALERT_LATEST_TOLERANCE_MS = 2 * 60 * 1000;
@@ -65,6 +98,25 @@ function normalizeMetricTimestamp(value, fallback = Date.now()) {
 function toPublicIpReachability(value) {
   const normalized = String(value ?? '').trim().toLowerCase();
   return normalized && normalized !== '0' && normalized !== 'false' ? '1' : '0';
+}
+
+function normalizeConfigSchema(value) {
+  const raw = String(value ?? '').trim();
+  if (!raw) return '';
+  const number = Number(raw);
+  return Number.isInteger(number) && number > 0 ? String(number) : raw;
+}
+
+function normalizeConfigMd5(value) {
+  const raw = String(value ?? '').trim().toLowerCase();
+  return raw || 'none';
+}
+
+function firstDefined(...values) {
+  for (const value of values) {
+    if (value !== undefined && value !== null && value !== '') return value;
+  }
+  return undefined;
 }
 
 function maskPublicIpFields(data) {
@@ -117,11 +169,16 @@ function maskPublicIpUpdate(update) {
 }
 
 function normalizeResourceAlertSample(sample) {
-  if (!sample || typeof sample !== 'object' || !sample.data || typeof sample.data !== 'object') {
+  if (!sample || typeof sample !== 'object') {
     return null;
   }
 
-  const metrics = sample.data.metrics || sample.data.payload || sample.data;
+  const data = sample.data || sample.payload || sample.metrics;
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    return null;
+  }
+
+  const metrics = data.metrics || data.payload || data;
   const ts = normalizeMetricTimestamp(sample.ts || sample.timestamp || metrics.sample_timestamp || metrics.last_updated || metrics.timestamp);
   const cpu = toFiniteNumber(metrics.cpu);
   const ramTotal = toFiniteNumber(metrics.ram_total);
@@ -385,6 +442,11 @@ export class MetricsBroadcaster {
     this.latencyWindowLoadedShards = new Set();
     this.latencyWindowDirtyShards = new Set();
     this.latencyWindowLastSnapshotSave = new Map();
+    this.agentServerDetails = new Map();
+    this.agentHistoryWrites = new Map();
+    this.standardAgentWebSocketCount = 0;
+    this.standardAgentWebSockets = new Set();
+    this.lastAgentRealtimeHintAt = 0;
 
     // 自动响应 ping 心跳，DO 无需被唤醒
     // @ts-ignore - Cloudflare Workers 运行时提供 WebSocketRequestResponsePair
@@ -435,6 +497,69 @@ export class MetricsBroadcaster {
     return { ok: true, ids: normalized };
   }
 
+  _normalizeResourceAlertServerIds(ids) {
+    if (!Array.isArray(ids) || ids.length > RESOURCE_ALERT_MAX_SERVERS) {
+      return { ok: false, ids: [] };
+    }
+
+    const seen = new Set();
+    const normalized = [];
+    for (const id of ids) {
+      if (typeof id !== 'string') {
+        return { ok: false, ids: [] };
+      }
+
+      const value = id.trim();
+      if (!this._isValidServerId(value)) {
+        return { ok: false, ids: [] };
+      }
+
+      if (seen.has(value)) continue;
+      seen.add(value);
+      normalized.push(value);
+    }
+    return { ok: true, ids: normalized };
+  }
+
+  _normalizeResourceAlertEvaluationRules(rules) {
+    if (
+      !Array.isArray(rules) ||
+      rules.length === 0 ||
+      rules.length > RESOURCE_ALERT_EVALUATE_RULE_BATCH_MAX
+    ) {
+      return { ok: false, rules: [] };
+    }
+
+    const normalized = [];
+    for (const rule of rules) {
+      if (!rule || typeof rule !== 'object' || Array.isArray(rule)) {
+        return { ok: false, rules: [] };
+      }
+
+      const ruleId = typeof rule.ruleId === 'string'
+        ? rule.ruleId.trim()
+        : String(rule.ruleId || '').trim();
+      if (!this._isValidServerId(ruleId)) {
+        return { ok: false, rules: [] };
+      }
+
+      const serverIds = this._normalizeResourceAlertServerIds(rule.serverIds);
+      if (!serverIds.ok) {
+        return { ok: false, rules: [] };
+      }
+
+      normalized.push({
+        ruleId,
+        serverIds: serverIds.ids,
+        mode: rule.mode,
+        windowMinutes: rule.windowMinutes,
+        thresholds: rule.thresholds
+      });
+    }
+
+    return { ok: true, rules: normalized };
+  }
+
   _closeInvalidSubscription(ws) {
     try {
       ws.close(WS_POLICY_VIOLATION, 'invalid subscription');
@@ -458,10 +583,808 @@ export class MetricsBroadcaster {
     return sessionScope === serverId;
   }
 
+  _getFrontendWebSockets() {
+    return this.state.getWebSockets().filter(ws => {
+      const attachment = ws.deserializeAttachment();
+      return !attachment || attachment.kind !== AGENT_REPORT_KIND;
+    });
+  }
+
+  _getFrontendSubscriberCount() {
+    return this._getFrontendWebSockets().length;
+  }
+
+  _getAgentReportWebSockets() {
+    const sockets = new Set(this.standardAgentWebSockets);
+    for (const ws of this.state.getWebSockets()) {
+      const attachment = ws.deserializeAttachment();
+      if (attachment?.kind === AGENT_REPORT_KIND) {
+        sockets.add(ws);
+      }
+    }
+    return Array.from(sockets);
+  }
+
+  _isWebSocketUpgrade(request) {
+    const upgradeHeader = request.headers.get('Upgrade');
+    return !!upgradeHeader && upgradeHeader.toLowerCase() === 'websocket';
+  }
+
+  _sendWsJson(ws, payload) {
+    try {
+      ws.send(JSON.stringify(payload));
+    } catch (_) {}
+  }
+
+  _acceptStandardAgentWebSocket(server, initialAttachment) {
+    // Agent 上报连接使用标准 WebSocket API，避免每条业务消息都成为 hibernation wakeup。
+    // 代价是只要 Agent 长连接存在，本 DO 就不能休眠，会持续产生 duration。
+    server.accept();
+
+    const session = { attachment: initialAttachment || {} };
+    const ws = {
+      send: data => server.send(data),
+      close: (code, reason) => server.close(code, reason),
+      serializeAttachment(value) {
+        session.attachment = value || {};
+      },
+      deserializeAttachment() {
+        return session.attachment;
+      }
+    };
+
+    this.standardAgentWebSocketCount += 1;
+    this.standardAgentWebSockets.add(ws);
+    let cleaned = false;
+    const cleanup = () => {
+      if (cleaned) return;
+      cleaned = true;
+      this.standardAgentWebSocketCount = Math.max(0, this.standardAgentWebSocketCount - 1);
+      this.standardAgentWebSockets.delete(ws);
+    };
+
+    server.addEventListener('message', event => {
+      this._handleAgentReportMessage(ws, event.data, ws.deserializeAttachment())
+        .catch(error => {
+          console.warn('[update-ws] Agent standard WebSocket message failed:', error?.message || error);
+          this._closeWsWithError(ws, 'Internal error', 500);
+        });
+    });
+    server.addEventListener('close', cleanup);
+    server.addEventListener('error', cleanup);
+
+    return ws;
+  }
+
+  _closeWsWithError(ws, message, code = 400) {
+    this._sendWsJson(ws, {
+      type: 'error',
+      ts: Date.now(),
+      error: message,
+      code
+    });
+    try {
+      ws.close(WS_POLICY_VIOLATION, message);
+    } catch (_) {}
+  }
+
+  _decodeWsMessage(message) {
+    if (typeof message === 'string') return message;
+    if (message instanceof ArrayBuffer) return new TextDecoder().decode(message);
+    if (ArrayBuffer.isView(message)) {
+      return new TextDecoder().decode(message.buffer.slice(message.byteOffset, message.byteOffset + message.byteLength));
+    }
+    return String(message || '');
+  }
+
+  _normalizeAgentReportData(message) {
+    if (!message || typeof message !== 'object' || Array.isArray(message)) return null;
+    if (message.type === 'update' && message.payload && typeof message.payload === 'object' && !Array.isArray(message.payload)) {
+      const payload = { ...message.payload };
+      const inheritedFields = [
+        'config_md5',
+        'configMd5',
+        'agent_config_md5',
+        'agentConfigMd5',
+        'config_schema',
+        'configSchema',
+        'agent_config_schema',
+        'agentConfigSchema',
+        'schema_version'
+      ];
+      for (const field of inheritedFields) {
+        if (payload[field] === undefined && message[field] !== undefined) {
+          payload[field] = message[field];
+        }
+      }
+      return {
+        ...payload,
+        id: message.id ?? payload.id,
+        secret: message.secret ?? payload.secret
+      };
+    }
+    return message;
+  }
+
+  _getAgentConfigState(data = {}, attachment = {}) {
+    const reportedSchema = firstDefined(
+      data.config_schema,
+      data.configSchema,
+      data.agent_config_schema,
+      data.agentConfigSchema,
+      data.schema_version
+    );
+    const reportedMd5 = firstDefined(
+      data.config_md5,
+      data.configMd5,
+      data.agent_config_md5,
+      data.agentConfigMd5
+    );
+    const requested = reportedSchema !== undefined || reportedMd5 !== undefined;
+    const schema = normalizeConfigSchema(firstDefined(reportedSchema, attachment.configSchema));
+    const md5 = normalizeConfigMd5(firstDefined(reportedMd5, attachment.configMd5));
+    return { schema, md5, requested };
+  }
+
+  _isCorrectionAck(data) {
+    return data && (
+      Object.prototype.hasOwnProperty.call(data, 'rx_correction') ||
+      Object.prototype.hasOwnProperty.call(data, 'tx_correction')
+    );
+  }
+
+  _normalizeAgentReportIntervalMs(value) {
+    const reportInterval = Number(value);
+    if (Number.isInteger(reportInterval) && ALLOWED_AGENT_REPORT_INTERVALS.has(reportInterval)) {
+      return reportInterval * 1000;
+    }
+    return null;
+  }
+
+  _getReportIntervalMs(serverDetail) {
+    const reportIntervalMs = this._normalizeAgentReportIntervalMs(serverDetail?.report_interval);
+    if (reportIntervalMs) {
+      return reportIntervalMs;
+    }
+    return DEFAULT_AGENT_HISTORY_WRITE_INTERVAL_MS;
+  }
+
+  async _getAgentServerDetail(serverId, forceRefresh = false) {
+    const key = String(serverId || '');
+    const now = Date.now();
+    const cached = this.agentServerDetails.get(key);
+    if (!forceRefresh && cached && now - cached.time < AGENT_SERVER_DETAIL_TTL_MS) {
+      return cached.data;
+    }
+
+    if (forceRefresh) {
+      clearServerDetailCache();
+    }
+    const server = await getServerDetail(this.env.DB, key, true);
+    this.agentServerDetails.set(key, { data: server, time: now });
+    return server;
+  }
+
+  async _resolveAgentContext(ws, attachment, data) {
+    const rawServerId = data.id ?? attachment.serverId;
+    const serverId = typeof rawServerId === 'string' ? rawServerId.trim() : String(rawServerId || '').trim();
+    if (!this._isValidServerId(serverId)) {
+      this._closeWsWithError(ws, 'Invalid server ID', 400);
+      return null;
+    }
+
+    if (attachment.authenticated && attachment.serverId && attachment.serverId !== serverId) {
+      this._closeWsWithError(ws, 'Server ID changed', 403);
+      return null;
+    }
+
+    const hasSecret = Object.prototype.hasOwnProperty.call(data, 'secret');
+    if (!attachment.authenticated || hasSecret) {
+      if (data.secret !== this.env.API_SECRET) {
+        this._closeWsWithError(ws, 'Invalid secret', 401);
+        return null;
+      }
+    }
+
+    let serverDetail = attachment.authenticated && attachment.historyPartitionId
+      ? { id: serverId, history_partition_id: attachment.historyPartitionId }
+      : await this._getAgentServerDetail(serverId);
+
+    if (!serverDetail) {
+      this._closeWsWithError(ws, 'Server not found', 404);
+      return null;
+    }
+
+    if (!serverDetail.history_partition_id) {
+      await ensureServerOptimization(this.env.DB, serverId);
+      serverDetail = await this._getAgentServerDetail(serverId, true);
+      if (!serverDetail?.history_partition_id) {
+        this._closeWsWithError(ws, 'Missing history_partition_id', 400);
+        return null;
+      }
+    }
+
+    const agentVersion = normalizeAgentVersion(
+      data.agent_version ??
+      data.metrics?.agent_version ??
+      attachment.agentVersion
+    );
+    const agentConfig = this._getAgentConfigState(data, attachment);
+    const reportedReportIntervalMs = this._normalizeAgentReportIntervalMs(firstDefined(
+      data.report_interval,
+      data.reportInterval
+    ));
+    const attachedReportIntervalMs = Number(attachment.reportIntervalMs);
+    const reportIntervalMs = reportedReportIntervalMs ||
+      (attachment.authenticated && Number.isFinite(attachedReportIntervalMs) && attachedReportIntervalMs > 0
+        ? attachedReportIntervalMs
+        : this._getReportIntervalMs(serverDetail));
+    const nextAttachment = {
+      ...attachment,
+      kind: AGENT_REPORT_KIND,
+      authenticated: true,
+      serverId,
+      historyPartitionId: serverDetail.history_partition_id,
+      agentVersion,
+      reportIntervalMs,
+      configSchema: agentConfig.schema,
+      configMd5: agentConfig.md5
+    };
+    ws.serializeAttachment(nextAttachment);
+
+    return {
+      attachment: nextAttachment,
+      serverId,
+      historyPartitionId: serverDetail.history_partition_id,
+      regionCode: attachment.region || '',
+      agentVersion,
+      reportIntervalMs,
+      agentConfig
+    };
+  }
+
+  async _loadAgentConfigDescriptor(serverId, forceRefresh = false, schemaVersion = AGENT_CONFIG_SCHEMA_VERSION) {
+    const [serverDetail, settings] = await Promise.all([
+      this._getAgentServerDetail(serverId, forceRefresh),
+      loadSiteSettings(this.env.DB, { forceRefresh })
+    ]);
+    if (!serverDetail) return null;
+    return describeAgentConfig(serverDetail, settings, schemaVersion);
+  }
+
+  _buildAgentConfigFrame(descriptor) {
+    const configBody = descriptor.serialized + serializeCorrection(descriptor.correction);
+    const hasCorrection = descriptor.correction !== null;
+    const configPayload = {
+      ...descriptor.config,
+      config_md5: descriptor.md5
+    };
+
+    if (hasCorrection) {
+      configPayload.rx_correction = descriptor.correction.rx_correction;
+      configPayload.tx_correction = descriptor.correction.tx_correction;
+    }
+
+    return { configBody, configPayload, hasCorrection };
+  }
+
+  async _buildAgentConfigAck(context) {
+    const schemaVersion = normalizeAgentConfigSchemaVersion(context?.agentConfig?.schema);
+    if (!context || !context.agentConfig?.requested || !schemaVersion) {
+      return null;
+    }
+
+    const clientMd5 = normalizeConfigMd5(context.agentConfig.md5);
+    try {
+      const descriptor = await this._loadAgentConfigDescriptor(context.serverId, false, schemaVersion);
+      if (!descriptor) return null;
+
+      const { configBody, configPayload, hasCorrection } = this._buildAgentConfigFrame(descriptor);
+      const md5Changed = clientMd5 !== descriptor.md5;
+      const ack = {
+        config_schema: schemaVersion,
+        config_md5: descriptor.md5,
+        has_config: md5Changed || hasCorrection
+      };
+
+      if (ack.has_config) {
+        // `body` keeps compatibility with currently deployed Go agents; `config_body`
+        // is the documented field, and `payload` carries the structured form.
+        ack.body = configBody;
+        ack.config_body = configBody;
+        ack.payload = configPayload;
+      }
+
+      return ack;
+    } catch (e) {
+      console.warn('[update-ws] Failed to build agent configuration:', e?.message || e);
+      return null;
+    }
+  }
+
+  _pushAgentConfigFrame(serverId, descriptors) {
+    let delivered = 0;
+    let matched = 0;
+
+    const descriptorForSchema = (schema) => {
+      const schemaVersion = normalizeAgentConfigSchemaVersion(schema);
+      if (!schemaVersion) return null;
+      if (descriptors instanceof Map) {
+        return descriptors.get(schemaVersion) || null;
+      }
+      return schemaVersion === AGENT_CONFIG_SCHEMA_VERSION ? descriptors : null;
+    };
+
+    for (const ws of this._getAgentReportWebSockets()) {
+      const attachment = ws.deserializeAttachment() || {};
+      if (
+        attachment.kind !== AGENT_REPORT_KIND ||
+        !attachment.authenticated ||
+        attachment.serverId !== serverId
+      ) {
+        continue;
+      }
+      matched += 1;
+
+      const descriptor = descriptorForSchema(attachment.configSchema);
+      if (!descriptor) continue;
+
+      const { configBody, configPayload, hasCorrection } = this._buildAgentConfigFrame(descriptor);
+      const clientMd5 = normalizeConfigMd5(attachment.configMd5);
+      if (clientMd5 === descriptor.md5 && !hasCorrection) {
+        continue;
+      }
+
+      this._sendWsJson(ws, {
+        type: 'config',
+        ts: Date.now(),
+        config_schema: descriptor.config.schema_version,
+        config_md5: descriptor.md5,
+        body: configBody,
+        config_body: configBody,
+        payload: configPayload
+      });
+      delivered += 1;
+    }
+
+    return { matched, delivered };
+  }
+
+  _closeAgentReportWebSockets(message = 'Agent WSS report disabled') {
+    let matched = 0;
+    let closed = 0;
+
+    for (const ws of this._getAgentReportWebSockets()) {
+      const attachment = ws.deserializeAttachment() || {};
+      if (attachment.kind !== AGENT_REPORT_KIND) continue;
+      matched += 1;
+
+      try {
+        this._sendWsJson(ws, {
+          type: 'error',
+          ts: Date.now(),
+          error: message,
+          code: 403
+        });
+      } catch (_) {}
+
+      try {
+        ws.close(WS_POLICY_VIOLATION, message);
+        closed += 1;
+      } catch (_) {}
+    }
+
+    return { matched, closed };
+  }
+
+  async _handleAgentConfigChanged(request) {
+    let body = null;
+    try {
+      body = await request.json();
+    } catch (_) {
+      return new Response(JSON.stringify({ error: 'invalid JSON' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+
+    if (body?.agentReportModeChanged === true) {
+      const settings = await loadSiteSettings(this.env.DB, { forceRefresh: true });
+      const wssReportEnabled = isWssReportEnabled(settings);
+      const result = wssReportEnabled
+        ? { matched: 0, closed: 0 }
+        : this._closeAgentReportWebSockets();
+      return new Response(JSON.stringify({
+        ok: true,
+        wssReportEnabled,
+        ...result
+      }), {
+        headers: {
+          'Cache-Control': 'no-store',
+          'Content-Type': 'application/json'
+        }
+      });
+    }
+
+    const serverId = String(body?.serverId || '').trim();
+    if (!this._isValidServerId(serverId)) {
+      return new Response(JSON.stringify({ error: 'invalid serverId' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+
+    clearServerDetailCache();
+    this.agentServerDetails.delete(serverId);
+
+    const descriptor = await this._loadAgentConfigDescriptor(serverId, true, AGENT_CONFIG_SCHEMA_VERSION);
+    if (!descriptor) {
+      return new Response(JSON.stringify({ error: 'server not found' }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+
+    const descriptors = new Map([[AGENT_CONFIG_SCHEMA_VERSION, descriptor]]);
+    for (let schemaVersion = AGENT_CONFIG_LEGACY_SCHEMA_VERSION; schemaVersion < AGENT_CONFIG_SCHEMA_VERSION; schemaVersion++) {
+      const legacyDescriptor = await this._loadAgentConfigDescriptor(serverId, false, schemaVersion);
+      if (legacyDescriptor) descriptors.set(schemaVersion, legacyDescriptor);
+    }
+
+    const result = this._pushAgentConfigFrame(serverId, descriptors);
+    return new Response(JSON.stringify({ ok: true, ...result }), {
+      headers: {
+        'Cache-Control': 'no-store',
+        'Content-Type': 'application/json'
+      }
+    });
+  }
+
+  async _ackTrafficCorrection(serverId, data) {
+    const ackRx = normalizeCorrectionValue(data.rx_correction);
+    const ackTx = normalizeCorrectionValue(data.tx_correction);
+    if (ackRx === null || ackTx === null) {
+      return { ok: false, error: 'Invalid correction' };
+    }
+
+    await this.env.DB.prepare(`
+      UPDATE servers
+      SET rx_correction = NULL, tx_correction = NULL
+      WHERE id = ?
+        AND (rx_correction IS NOT NULL OR tx_correction IS NOT NULL)
+        AND ABS(COALESCE(rx_correction, 0) - ?) < 0.000001
+        AND ABS(COALESCE(tx_correction, 0) - ?) < 0.000001
+    `).bind(serverId, ackRx, ackTx).run();
+    clearServerDetailCache();
+    this.agentServerDetails.delete(serverId);
+    return { ok: true };
+  }
+
+  async _ingestRealtimeUpdates(normalizedUpdates, reportTs = Date.now()) {
+    if (!Array.isArray(normalizedUpdates) || normalizedUpdates.length === 0) return;
+    if (this._shouldCacheResourceAlertSamples(reportTs)) {
+      await this._ensureResourceAlertSnapshotLoaded();
+      await this._cacheResourceAlertSamples(normalizedUpdates, reportTs);
+    }
+    await this._cacheLatencyWindowSamples(normalizedUpdates, reportTs);
+    this._cacheLatestReportUpdates(normalizedUpdates, reportTs);
+    this._broadcastBatch(normalizedUpdates, reportTs);
+  }
+
+  _getAgentRealtimeState(now = Date.now()) {
+    const frontendActive = this._getFrontendSubscriberCount() > 0;
+    const resourceAlertActive = this._shouldCacheResourceAlertSamples(now);
+    return {
+      frontendActive,
+      resourceAlertActive,
+      realtimeActive: frontendActive || resourceAlertActive
+    };
+  }
+
+  _normalizeRealtimeState(realtimeState) {
+    if (realtimeState && typeof realtimeState === 'object') {
+      return {
+        frontendActive: realtimeState.frontendActive === true,
+        resourceAlertActive: realtimeState.resourceAlertActive === true,
+        realtimeActive: realtimeState.realtimeActive === true ||
+          realtimeState.frontendActive === true ||
+          realtimeState.resourceAlertActive === true
+      };
+    }
+    return {
+      frontendActive: realtimeState === true,
+      resourceAlertActive: false,
+      realtimeActive: realtimeState === true
+    };
+  }
+
+  _getAgentNextWssReportAfterMs(reportIntervalMs, realtimeState) {
+    const historyIntervalMs = Math.max(
+      1000,
+      Number(reportIntervalMs) || DEFAULT_AGENT_HISTORY_WRITE_INTERVAL_MS
+    );
+    const state = this._normalizeRealtimeState(realtimeState);
+    const realtimeIntervalMs = Math.max(
+      1000,
+      Math.ceil((historyIntervalMs / 1000) / AGENT_REALTIME_REPORT_DIVISOR) * 1000
+    );
+    if (state.frontendActive) return realtimeIntervalMs;
+
+    if (state.resourceAlertActive) {
+      return Math.max(historyIntervalMs, RESOURCE_ALERT_AGENT_REPORT_INTERVAL_MS);
+    }
+
+    return realtimeIntervalMs * IDLE_AGENT_WSS_REPORT_INTERVAL_MULTIPLIER;
+  }
+
+  async _getAgentHintReportIntervalMs(attachment) {
+    const attachedReportIntervalMs = Number(attachment?.reportIntervalMs);
+    if (attachment?.serverId) {
+      try {
+        const serverDetail = await this._getAgentServerDetail(attachment.serverId);
+        if (serverDetail) {
+          const configuredReportIntervalMs = this._getReportIntervalMs(serverDetail);
+          if (configuredReportIntervalMs) return configuredReportIntervalMs;
+        }
+      } catch (e) {
+        console.warn('[update-ws] Failed to load agent interval for realtime hint:', e?.message || e);
+      }
+    }
+    if (Number.isFinite(attachedReportIntervalMs) && attachedReportIntervalMs > 0) {
+      return attachedReportIntervalMs;
+    }
+    return DEFAULT_AGENT_HISTORY_WRITE_INTERVAL_MS;
+  }
+
+  async _hintAgentRealtimeIntervals(realtimeState = null) {
+    const now = Date.now();
+    const state = realtimeState || this._getAgentRealtimeState(now);
+    if (!state.frontendActive) return 0;
+    if (now - this.lastAgentRealtimeHintAt < 1000) return 0;
+    this.lastAgentRealtimeHintAt = now;
+
+    let hinted = 0;
+    for (const ws of this._getAgentReportWebSockets()) {
+      const attachment = ws.deserializeAttachment() || {};
+      if (
+        attachment.kind !== AGENT_REPORT_KIND ||
+        !attachment.authenticated ||
+        !attachment.serverId
+      ) {
+        continue;
+      }
+
+      const reportIntervalMs = await this._getAgentHintReportIntervalMs(attachment);
+      const nextWssReportAfterMs = this._getAgentNextWssReportAfterMs(reportIntervalMs, state);
+      this._sendWsJson(ws, {
+        type: 'ack',
+        ts: Date.now(),
+        realtimeHint: true,
+        nextWssReportAfterMs
+      });
+      hinted += 1;
+    }
+
+    return hinted;
+  }
+
+  async _persistAgentHistoryIfDue(ws, attachment, payload) {
+    const serverId = String(payload.serverId || '');
+    const now = Date.now();
+    const state = this.agentHistoryWrites.get(serverId) || {};
+    const currentAggregate = payload.historyAggregate ||
+      collectHistoryMetricAggregates([{ metrics: payload.metrics }]);
+    state.pendingHistoryAggregate = mergeHistoryMetricAggregates(
+      state.pendingHistoryAggregate,
+      currentAggregate
+    );
+    const intervalMs = Math.max(
+      1000,
+      Number(payload.reportIntervalMs) ||
+      Number(attachment.reportIntervalMs) ||
+      DEFAULT_AGENT_HISTORY_WRITE_INTERVAL_MS
+    );
+    const lastWriteTs = Math.max(
+      Number(state.lastD1WriteTs) || 0,
+      Number(attachment.lastD1WriteTs) || 0
+    );
+    const nextWriteTs = lastWriteTs + intervalMs;
+
+    if (lastWriteTs > 0 && now < nextWriteTs) {
+      state.lastD1WriteTs = lastWriteTs;
+      this.agentHistoryWrites.set(serverId, state);
+      return { persisted: false, nextD1WriteAfterMs: nextWriteTs - now };
+    }
+
+    if (state.flushing) {
+      return { persisted: false, nextD1WriteAfterMs: 0 };
+    }
+
+    state.flushing = true;
+    this.agentHistoryWrites.set(serverId, state);
+    try {
+      const metrics = applyHistoryMetricAggregates(payload.metrics, state.pendingHistoryAggregate);
+      await saveMetricsHistory(
+        this.env.DB,
+        serverId,
+        payload.historyPartitionId,
+        metrics,
+        payload.regionCode,
+        payload.timestamp,
+        payload.agentVersion
+      );
+      const persistedAt = Date.now();
+      state.lastD1WriteTs = persistedAt;
+      const currentAttachment = ws.deserializeAttachment() || attachment;
+      ws.serializeAttachment({
+        ...currentAttachment,
+        lastD1WriteTs: persistedAt
+      });
+      delete state.pendingHistoryAggregate;
+      return {
+        persisted: true,
+        nextD1WriteAfterMs: intervalMs
+      };
+    } finally {
+      state.flushing = false;
+      this.agentHistoryWrites.set(serverId, state);
+    }
+  }
+
+  async _handleAgentReportMessage(ws, rawMessage, attachment = {}) {
+    let msg = null;
+    try {
+      msg = JSON.parse(this._decodeWsMessage(rawMessage) || '{}');
+    } catch (_) {
+      this._closeWsWithError(ws, 'Invalid JSON', 400);
+      return;
+    }
+
+    if (msg?.type === 'pong') return;
+
+    const data = this._normalizeAgentReportData(msg);
+    if (!data) {
+      this._closeWsWithError(ws, 'Invalid report payload', 400);
+      return;
+    }
+
+    const context = await this._resolveAgentContext(ws, attachment, data);
+    if (!context) return;
+
+    if (this._isCorrectionAck(data)) {
+      const result = await this._ackTrafficCorrection(context.serverId, data);
+      if (!result.ok) {
+        this._closeWsWithError(ws, result.error, 400);
+        return;
+      }
+      this._sendWsJson(ws, {
+        type: 'ack',
+        ts: Date.now(),
+        correction: true
+      });
+      return;
+    }
+
+    const samples = normalizeMetricSamples(data);
+    if (samples.length === 0) {
+      this._closeWsWithError(ws, 'Missing metrics', 400);
+      return;
+    }
+
+    const latestSample = samples[samples.length - 1];
+    const latestMetrics = getReportMetrics(data, latestSample);
+    const historyAggregate = collectHistoryMetricAggregates(samples);
+    const broadcastSamples = toBroadcastSamples(
+      context.serverId,
+      samples,
+      context.regionCode,
+      context.agentVersion,
+      latestMetrics
+    );
+    const reportTs = Date.now();
+    const normalizedUpdates = [{
+      serverId: context.serverId,
+      samples: broadcastSamples
+    }];
+    const realtimeState = this._getAgentRealtimeState(reportTs);
+    if (realtimeState.realtimeActive) {
+      await this._ingestRealtimeUpdates(normalizedUpdates, reportTs);
+    } else {
+      this._cacheLatestReportUpdates(normalizedUpdates, reportTs);
+    }
+
+    const persisted = await this._persistAgentHistoryIfDue(ws, context.attachment, {
+      serverId: context.serverId,
+      historyPartitionId: context.historyPartitionId,
+      metrics: latestMetrics,
+      historyAggregate,
+      regionCode: context.regionCode,
+      timestamp: latestSample.ts,
+      agentVersion: context.agentVersion,
+      reportIntervalMs: context.reportIntervalMs
+    });
+
+    const configAck = await this._buildAgentConfigAck(context);
+    const nextWssReportAfterMs = this._getAgentNextWssReportAfterMs(context.reportIntervalMs, realtimeState);
+    this._sendWsJson(ws, {
+      type: 'ack',
+      ts: Date.now(),
+      persisted: persisted.persisted,
+      nextD1WriteAfterMs: persisted.nextD1WriteAfterMs,
+      nextWssReportAfterMs,
+      ...(configAck || {})
+    });
+  }
+
+  async _handleAgentReportWebSocket(request, url) {
+    if (!this._isWebSocketUpgrade(request)) {
+      return new Response('Expected WebSocket upgrade request', { status: 426 });
+    }
+
+    const origin = request.headers.get('Origin');
+    const allowedOrigins = parseAllowedOrigins(this.env.CORS_ALLOWED_ORIGINS);
+    const realOrigin = request.headers.get('X-Real-Origin') || `${url.protocol}//${url.host}`;
+    if (origin && allowedOrigins.length > 0 && !allowedOrigins.includes(origin) && origin !== realOrigin) {
+      return new Response('Forbidden', { status: 403 });
+    }
+
+    // @ts-ignore - Cloudflare Workers runtime provides WebSocketPair
+    const pair = new WebSocketPair();
+    const [client, server] = Object.values(pair);
+    const agentSocket = this._acceptStandardAgentWebSocket(server, {
+      kind: AGENT_REPORT_KIND,
+      authenticated: false,
+      serverId: '',
+      historyPartitionId: 0,
+      region: request.headers.get('cf-ipcountry') || '',
+      agentVersion: normalizeAgentVersion(request.headers.get('X-Agent-Version')),
+      reportIntervalMs: DEFAULT_AGENT_HISTORY_WRITE_INTERVAL_MS,
+      lastD1WriteTs: 0,
+      configSchema: normalizeConfigSchema(firstDefined(
+        url.searchParams.get('config_schema'),
+        url.searchParams.get('agent_config_schema'),
+        request.headers.get(AGENT_CONFIG_SCHEMA_HEADER)
+      )),
+      configMd5: normalizeConfigMd5(firstDefined(
+        url.searchParams.get('config_md5'),
+        url.searchParams.get('agent_config_md5'),
+        request.headers.get(AGENT_CONFIG_MD5_HEADER)
+      ))
+    });
+
+    this._sendWsJson(agentSocket, {
+      type: 'hello',
+      ts: Date.now(),
+      protocol: 'update'
+    });
+
+    const responseHeaders = new Headers();
+    if (origin && allowedOrigins.length > 0) {
+      responseHeaders.set('Access-Control-Allow-Origin', origin);
+      responseHeaders.set('Access-Control-Allow-Credentials', 'true');
+    } else if (allowedOrigins.length === 0) {
+      responseHeaders.set('Access-Control-Allow-Origin', '*');
+    }
+
+    return new Response(null, {
+      status: 101,
+      webSocket: client,
+      headers: responseHeaders
+    });
+  }
+
   async fetch(request) {
     const url = new URL(request.url);
     const path = url.pathname;
     const method = request.method;
+
+    if (method === 'GET' && (path === '/update' || path.endsWith('/update'))) {
+      return this._handleAgentReportWebSocket(request, url);
+    }
+
+    if (method === 'POST' && path === '/agent-config-changed') {
+      return this._handleAgentConfigChanged(request);
+    }
 
     // ── 1) WebSocket 接入 ──────────────────────────────
     if (path === '/ws' || path.endsWith('/ws')) {
@@ -543,6 +1466,12 @@ export class MetricsBroadcaster {
       }
 
       const reportTs = Date.now();
+      const subscribers = this._getFrontendSubscriberCount();
+      if (subscribers === 0) {
+        return new Response(JSON.stringify({ ok: true, skipped: true, subscribers: 0 }), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
       if (this._shouldCacheResourceAlertSamples(reportTs)) {
         await this._ensureResourceAlertSnapshotLoaded();
         await this._cacheResourceAlertSamples([{
@@ -555,8 +1484,7 @@ export class MetricsBroadcaster {
         samples: [{ ts: reportTs, data: payload }]
       }], reportTs);
       this._broadcast(serverId, payload);
-      const count = this.state.getWebSockets().length;
-      return new Response(JSON.stringify({ ok: true, subscribers: count }), {
+      return new Response(JSON.stringify({ ok: true, subscribers }), {
         headers: { 'Content-Type': 'application/json' }
       });
     }
@@ -590,17 +1518,31 @@ export class MetricsBroadcaster {
         });
       }
 
-      const reportTs = Date.now();
-      if (this._shouldCacheResourceAlertSamples(reportTs)) {
-        await this._ensureResourceAlertSnapshotLoaded();
-        await this._cacheResourceAlertSamples(normalizedUpdates, reportTs);
+      const maintainState = body?.maintainState === true;
+      const latestReportOnly = body?.latestReportOnly === true;
+      const subscribers = this._getFrontendSubscriberCount();
+      if (!maintainState && !latestReportOnly && subscribers === 0) {
+        return new Response(JSON.stringify({ ok: true, skipped: true, count: normalizedUpdates.length, subscribers: 0 }), {
+          headers: { 'Content-Type': 'application/json' }
+        });
       }
-      await this._cacheLatencyWindowSamples(normalizedUpdates, reportTs);
-      this._cacheLatestReportUpdates(normalizedUpdates, reportTs);
-      this._broadcastBatch(normalizedUpdates, reportTs);
 
-      const count = this.state.getWebSockets().length;
-      return new Response(JSON.stringify({ ok: true, count: normalizedUpdates.length, subscribers: count }), {
+      const reportTs = Date.now();
+      if (latestReportOnly && subscribers === 0) {
+        this._cacheLatestReportUpdates(normalizedUpdates, reportTs);
+        return new Response(JSON.stringify({
+          ok: true,
+          count: normalizedUpdates.length,
+          subscribers,
+          latestReportOnly: true
+        }), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      await this._ingestRealtimeUpdates(normalizedUpdates, reportTs);
+
+      return new Response(JSON.stringify({ ok: true, count: normalizedUpdates.length, subscribers }), {
         headers: { 'Content-Type': 'application/json' }
       });
     }
@@ -652,9 +1594,9 @@ export class MetricsBroadcaster {
         });
       }
 
-      const normalizedServerIds = this._normalizeServerIds(body?.serverIds);
-      if (!normalizedServerIds.ok) {
-        return new Response(JSON.stringify({ error: 'invalid serverIds' }), {
+      const normalizedRules = this._normalizeResourceAlertEvaluationRules(body?.rules);
+      if (!normalizedRules.ok) {
+        return new Response(JSON.stringify({ error: 'invalid rules' }), {
           status: 400,
           headers: { 'Content-Type': 'application/json' }
         });
@@ -662,10 +1604,7 @@ export class MetricsBroadcaster {
 
       this._activateResourceAlertCache();
       await this._ensureResourceAlertSnapshotLoaded();
-      const result = await this._evaluateResourceAlerts({
-        ...body,
-        serverIds: normalizedServerIds.ids
-      });
+      const result = await this._evaluateResourceAlertRules(normalizedRules.rules);
 
       return new Response(JSON.stringify(result), {
         headers: {
@@ -677,8 +1616,10 @@ export class MetricsBroadcaster {
 
     // ── 3) 健康检查 ────────────────────────────────────
     if (method === 'GET' && (path === '/health' || path.endsWith('/health'))) {
-      const count = this.state.getWebSockets().length;
-      return new Response(JSON.stringify({ ok: true, subscribers: count }), {
+      const subscribers = this._getFrontendSubscriberCount();
+      const agentSockets = this.standardAgentWebSocketCount;
+      const sockets = this.state.getWebSockets().length + agentSockets;
+      return new Response(JSON.stringify({ ok: true, subscribers, sockets, agentSockets }), {
         headers: { 'Content-Type': 'application/json' }
       });
     }
@@ -1062,17 +2003,14 @@ export class MetricsBroadcaster {
     }
   }
 
-  async _evaluateResourceAlerts(body = {}) {
-    const now = Date.now();
-    this._pruneResourceAlertWindows(now);
-
-    const windowMinutesNumber = Number(body.windowMinutes);
+  _evaluateResourceAlertRule(rule = {}, now = Date.now()) {
+    const windowMinutesNumber = Number(rule.windowMinutes);
     const windowMinutes = Number.isInteger(windowMinutesNumber)
       ? Math.max(5, Math.min(10, windowMinutesNumber))
       : 5;
     const cutoffMinute = getAlertCutoffMinute(now, windowMinutes);
-    const mode = normalizeResourceAlertMode(body.mode);
-    const thresholds = normalizeThresholds(body.thresholds);
+    const mode = normalizeResourceAlertMode(rule.mode);
+    const thresholds = normalizeThresholds(rule.thresholds);
     const metricThresholds = [
       ['cpu', thresholds.cpu],
       ['ram', thresholds.ram],
@@ -1086,11 +2024,10 @@ export class MetricsBroadcaster {
     const evaluatedServerIds = [];
     const evaluations = [];
     if (metricThresholds.length === 0) {
-      await this._persistResourceAlertSnapshotIfNeeded(now);
-      return { now, mode, windowMinutes, alerts, evaluatedServerIds, evaluations };
+      return { ruleId: rule.ruleId, now, mode, windowMinutes, alerts, evaluatedServerIds, evaluations };
     }
 
-    for (const serverId of body.serverIds || []) {
+    for (const serverId of rule.serverIds || []) {
       const samples = (this.resourceAlertWindows.get(serverId)?.samples || [])
         .filter(sample => sample && Number(sample.minuteTs) >= cutoffMinute)
         .sort((a, b) => a.minuteTs - b.minuteTs);
@@ -1160,8 +2097,20 @@ export class MetricsBroadcaster {
       }
     }
 
+    return { ruleId: rule.ruleId, now, mode, windowMinutes, alerts, evaluatedServerIds, evaluations };
+  }
+
+  async _evaluateResourceAlertRules(rules = []) {
+    const now = Date.now();
+    this._pruneResourceAlertWindows(now);
+    const results = [];
+
+    for (const rule of rules) {
+      results.push(this._evaluateResourceAlertRule(rule, now));
+    }
+
     await this._persistResourceAlertSnapshotIfNeeded(now);
-    return { now, mode, windowMinutes, alerts, evaluatedServerIds, evaluations };
+    return { now, results };
   }
 
   // WebSocket 收到消息（ping 已被自动响应拦截，不会到达此处）
@@ -1189,7 +2138,7 @@ export class MetricsBroadcaster {
   }
 
   _broadcastBatch(updates, ts = Date.now()) {
-    const websockets = this.state.getWebSockets();
+    const websockets = this._getFrontendWebSockets();
 
     for (const ws of websockets) {
       const attachment = ws.deserializeAttachment();
@@ -1214,7 +2163,12 @@ export class MetricsBroadcaster {
     }
   }
 
-  webSocketMessage(ws, message) {
+  async webSocketMessage(ws, message) {
+    const attachment = ws.deserializeAttachment() || {};
+    if (attachment.kind === AGENT_REPORT_KIND) {
+      await this._handleAgentReportMessage(ws, message, attachment);
+      return;
+    }
     // 保留处理扩展消息的入口
     try {
       const msg = JSON.parse(message || '{}');
@@ -1248,6 +2202,15 @@ export class MetricsBroadcaster {
             count: serverIds.length
           }));
         } catch (_) {}
+        try {
+          await this._hintAgentRealtimeIntervals({
+            frontendActive: true,
+            resourceAlertActive: this._shouldCacheResourceAlertSamples(),
+            realtimeActive: true
+          });
+        } catch (e) {
+          console.warn('[ws] Failed to hint agent realtime interval:', e?.message || e);
+        }
         return;
       }
       if (msg && msg.type === 'pong') return;

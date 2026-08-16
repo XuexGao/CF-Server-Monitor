@@ -1,19 +1,32 @@
 import { checkAuth, simpleAuthResponse, validateCredentials, generateToken } from '../middleware/auth.js';
 import { getLatestMetricsForAllServers } from '../database/schema.js';
 import { getAllServers, clearServersListCache } from '../utils/cache.js';
-import { clearAppearanceSettingsCache, normalizeDisplayMode, normalizeExpireReminder, normalizeLongHistoryPoints, normalizeResourceAlertRules, normalizeTgNotify, saveSiteOptions, SITE_FIELDS, APPEARANCE_FIELDS } from '../utils/settings.js';
+import { clearAppearanceSettingsCache, isWssReportEnabled, normalizeBooleanSetting, normalizeDisplayMode, normalizeExpireReminder, normalizeLongHistoryPoints, normalizeResourceAlertRules, normalizeTgNotify, saveSiteOptions, SITE_FIELDS, APPEARANCE_FIELDS } from '../utils/settings.js';
 import { mergeMetricsIntoServer } from '../utils/metrics.js';
 import { verifyTurnstileToken, hashPassword } from '../utils/common.js';
 import { AppError, createSuccessResponse, createBadRequestResponse, createUnauthorizedResponse, createErrorResponse } from '../utils/errors.js';
 import { addServerColumns } from '../database/updateDatabase.js';
 import { clearResourceAlertState, sendNotification } from '../services/notification.js';
 import { getNextServerHistoryPartitionId, HISTORY_MAX_PARTITION_ID } from '../database/indexOptimization.js';
-import { isValidTrafficCorrection, validateAgentConfigInput, validatePingNode, validateNetworkInterfaces } from '../utils/agentConfig.js';
+import { isValidTrafficCorrection, normalizeConnectionMode, validateAgentConfigInput, validatePingNode, validateNetworkInterfaces } from '../utils/agentConfig.js';
+import { scheduleAgentConfigChanged, scheduleAgentReportModeChanged } from '../utils/agentConfigNotify.js';
 import { detectBillingCycle, detectCurrencySymbol, normalizeBillingCycle, normalizeCurrency, normalizePrice, renewExpireDateIfNeeded } from '../utils/serverBilling.js';
 
 const PING_NODE_FIELDS = ['custom_ct', 'custom_cu', 'custom_cm', 'custom_bd'];
 const THEME_PREVIEW_AUTH_COOKIE = 'cfsm_theme_preview_auth';
 const THEME_PREVIEW_AUTH_TTL = 600;
+const DURABLE_OBJECTS_WEBSOCKET_MESSAGE_BILLING_RATIO = 20;
+
+function toUsageNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? number : 0;
+}
+
+function isDurableObjectsHibernationInvocationType(value) {
+  const type = String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+  if (!type) return false;
+  return type.includes('hibernation') || (type.includes('websocket') && type.includes('message'));
+}
 
 function normalizeBooleanFlag(value) {
   return value === true || value === 1 || value === '1' || value === 'true' ? '1' : '0';
@@ -265,6 +278,55 @@ async function cloudflareGraphql(query, variables, token) {
   return data.data;
 }
 
+function estimateDurableObjectsWebSocketBillableRequests(messages) {
+  const count = toUsageNumber(messages);
+  if (count <= 0) return 0;
+  return Math.ceil(count / DURABLE_OBJECTS_WEBSOCKET_MESSAGE_BILLING_RATIO);
+}
+
+export function estimateDurableObjectsBillableRequests(breakdown = {}) {
+  if (breakdown === null || typeof breakdown !== 'object') {
+    return estimateDurableObjectsWebSocketBillableRequests(breakdown);
+  }
+
+  const httpRequests = toUsageNumber(breakdown.httpRequests);
+  const hibernationWakeups = toUsageNumber(breakdown.hibernationWakeups);
+  const inboundWebSocketMessages = toUsageNumber(breakdown.inboundWebSocketMessages);
+
+  return Math.ceil(httpRequests) +
+    Math.ceil(hibernationWakeups) +
+    estimateDurableObjectsWebSocketBillableRequests(inboundWebSocketMessages);
+}
+
+export function summarizeDurableObjectsUsage(invocationGroups = [], periodicGroups = []) {
+  const summary = {
+    httpRequests: 0,
+    hibernationWakeups: 0,
+    inboundWebSocketMessages: 0,
+    outboundWebSocketMessages: 0,
+    rawRequests: 0,
+    billableRequests: 0
+  };
+
+  for (const group of invocationGroups || []) {
+    const requests = toUsageNumber(group?.sum?.requests);
+    summary.rawRequests += requests;
+    if (isDurableObjectsHibernationInvocationType(group?.dimensions?.type)) {
+      summary.hibernationWakeups += requests;
+    } else {
+      summary.httpRequests += requests;
+    }
+  }
+
+  for (const group of periodicGroups || []) {
+    summary.inboundWebSocketMessages += toUsageNumber(group?.sum?.inboundWebsocketMsgCount);
+    summary.outboundWebSocketMessages += toUsageNumber(group?.sum?.outboundWebsocketMsgCount);
+  }
+
+  summary.billableRequests = estimateDurableObjectsBillableRequests(summary);
+  return summary;
+}
+
 async function fetchCloudflareUsage(token, accountId, range) {
   const query = `query CloudflareUsage($accountTag: string!, $start: Date, $end: Date, $startTime: Time!, $endTime: Time!) {
     viewer {
@@ -281,6 +343,19 @@ async function fetchCloudflareUsage(token, accountId, range) {
           filter: { datetime_geq: $startTime, datetime_leq: $endTime }
         ) {
           sum { requests }
+        }
+        durableObjectsInvocationsAdaptiveGroups(
+          limit: 10000
+          filter: { date_geq: $start, date_leq: $end }
+        ) {
+          sum { requests }
+          dimensions { type }
+        }
+        durableObjectsPeriodicGroups(
+          limit: 10000
+          filter: { date_geq: $start, date_leq: $end }
+        ) {
+          sum { duration inboundWebsocketMsgCount outboundWebsocketMsgCount }
         }
       }
     }
@@ -302,7 +377,28 @@ async function fetchCloudflareUsage(token, accountId, range) {
   const workersRequests = (account.workersInvocationsAdaptive || []).reduce((total, group) => {
     return total + Number(group.sum?.requests || 0);
   }, 0);
-  return { rowsRead: usage.rowsRead, rowsWritten: usage.rowsWritten, workersRequests, databaseCount: groups.length };
+  const durableObjectsUsage = summarizeDurableObjectsUsage(
+    account.durableObjectsInvocationsAdaptiveGroups || [],
+    account.durableObjectsPeriodicGroups || []
+  );
+  const durableObjectsDuration = (account.durableObjectsPeriodicGroups || []).reduce((total, group) => {
+    return total + Number(group.sum?.duration || 0);
+  }, 0);
+  return {
+    rowsRead: usage.rowsRead,
+    rowsWritten: usage.rowsWritten,
+    workersRequests,
+    durableObjectsRequests: durableObjectsUsage.billableRequests,
+    durableObjectsHttpRequests: durableObjectsUsage.httpRequests,
+    durableObjectsHibernationWakeups: durableObjectsUsage.hibernationWakeups,
+    durableObjectsInboundWebSocketMessages: durableObjectsUsage.inboundWebSocketMessages,
+    durableObjectsOutboundWebSocketMessages: durableObjectsUsage.outboundWebSocketMessages,
+    durableObjectsRawRequests: durableObjectsUsage.rawRequests,
+    durableObjectsRequestsEstimated: true,
+    durableObjectsRequestBillingRatio: DURABLE_OBJECTS_WEBSOCKET_MESSAGE_BILLING_RATIO,
+    durableObjectsDuration,
+    databaseCount: groups.length
+  };
 }
 
 async function getD1DailyUsage(token, accountId) {
@@ -320,20 +416,38 @@ async function getD1DailyUsage(token, accountId) {
   const yesterday = {
     rowsRead: yesterdayUsage.rowsRead,
     rowsWritten: yesterdayUsage.rowsWritten,
-    workersRequests: yesterdayUsage.workersRequests
+    workersRequests: yesterdayUsage.workersRequests,
+    durableObjectsRequests: yesterdayUsage.durableObjectsRequests,
+    durableObjectsHttpRequests: yesterdayUsage.durableObjectsHttpRequests,
+    durableObjectsHibernationWakeups: yesterdayUsage.durableObjectsHibernationWakeups,
+    durableObjectsInboundWebSocketMessages: yesterdayUsage.durableObjectsInboundWebSocketMessages,
+    durableObjectsOutboundWebSocketMessages: yesterdayUsage.durableObjectsOutboundWebSocketMessages,
+    durableObjectsRawRequests: yesterdayUsage.durableObjectsRawRequests,
+    durableObjectsRequestsEstimated: yesterdayUsage.durableObjectsRequestsEstimated,
+    durableObjectsRequestBillingRatio: yesterdayUsage.durableObjectsRequestBillingRatio,
+    durableObjectsDuration: yesterdayUsage.durableObjectsDuration
   };
 
   return {
     today: {
       rowsRead: todayUsage.rowsRead,
       rowsWritten: todayUsage.rowsWritten,
-      workersRequests: todayUsage.workersRequests
+      workersRequests: todayUsage.workersRequests,
+      durableObjectsRequests: todayUsage.durableObjectsRequests,
+      durableObjectsHttpRequests: todayUsage.durableObjectsHttpRequests,
+      durableObjectsHibernationWakeups: todayUsage.durableObjectsHibernationWakeups,
+      durableObjectsInboundWebSocketMessages: todayUsage.durableObjectsInboundWebSocketMessages,
+      durableObjectsOutboundWebSocketMessages: todayUsage.durableObjectsOutboundWebSocketMessages,
+      durableObjectsRawRequests: todayUsage.durableObjectsRawRequests,
+      durableObjectsRequestsEstimated: todayUsage.durableObjectsRequestsEstimated,
+      durableObjectsRequestBillingRatio: todayUsage.durableObjectsRequestBillingRatio,
+      durableObjectsDuration: todayUsage.durableObjectsDuration
     },
     yesterday
   };
 }
 
-export async function handleAdminAPI(request, env, sys, loadFullSettings = null) {
+export async function handleAdminAPI(request, env, sys, loadFullSettings = null, ctx = null) {
   try {
     const data = await request.json();
 
@@ -618,6 +732,8 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null)
       }
 
       const siteOptions = {};
+      const shouldCloseAgentWssReports = settings.wss_report_enabled !== undefined &&
+        normalizeBooleanSetting(settings.wss_report_enabled) === 'false';
       for (const field of SITE_FIELDS) {
         if (settings[field] !== undefined) {
           if (field === 'password') {
@@ -634,6 +750,8 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null)
             siteOptions[field] = normalizeLongHistoryPoints(settings[field]);
           } else if (field === 'resource_alert_rules') {
             siteOptions[field] = normalizedResourceAlertRules;
+          } else if (field === 'wss_report_enabled') {
+            siteOptions[field] = normalizeBooleanSetting(settings[field]);
           } else if (field === 'theme_url') {
             siteOptions[field] = normalizedThemeUrl;
           } else {
@@ -648,6 +766,9 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null)
         await clearResourceAlertState(env.DB);
       }
       Object.assign(sys, shouldSaveAppearanceOptions ? appearanceOptions : {}, siteOptions);
+      if (shouldCloseAgentWssReports) {
+        scheduleAgentReportModeChanged(env, ctx);
+      }
       return createSuccessResponse({
         success: true,
         message: 'updateSuccess'
@@ -726,14 +847,16 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null)
       });
     }
     else if (data.action === 'edit') {
-      const { id, name, server_group, region, tags, note, price, billing_cycle, auto_renewal, currency, expire_date, traffic_limit, traffic_calc_type, interface: networkInterfaceInput, reset_day, collect_interval, report_interval, auto_update, custom_ct, custom_cu, custom_cm, custom_bd, rx_correction, tx_correction, offline_notify_disabled, is_hidden } = data;
+      const { id, name, server_group, region, tags, note, price, billing_cycle, auto_renewal, currency, expire_date, traffic_limit, traffic_calc_type, interface: networkInterfaceInput, reset_day, collect_interval, report_interval, connection_mode, auto_update, custom_ct, custom_cu, custom_cm, custom_bd, rx_correction, tx_correction, offline_notify_disabled, is_hidden } = data;
       if (!id || !isValidUUID(id)) {
         return createBadRequestResponse('invalidServerId');
       }
+      const effectiveConnectionMode = isWssReportEnabled(sys) ? connection_mode : 'http';
       const agentConfigResult = validateAgentConfigInput({
         collect_interval,
         report_interval,
-        reset_day
+        reset_day,
+        connection_mode: effectiveConnectionMode
       });
       if (!agentConfigResult.valid) {
         return createBadRequestResponse(agentConfigResult.error);
@@ -777,7 +900,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null)
       try {
         await env.DB.prepare(`
           UPDATE servers
-          SET name = ?, server_group = ?, region = ?, tags = ?, note = ?, price = ?, billing_cycle = ?, auto_renewal = ?, currency = ?, expire_date = ?, traffic_limit = ?, traffic_calc_type = ?, "interface" = ?, reset_day = ?, collect_interval = ?, report_interval = ?, auto_update = ?, custom_ct = ?, custom_cu = ?, custom_cm = ?, custom_bd = ?, rx_correction = ?, tx_correction = ?, offline_notify_disabled = ?, is_hidden = ?
+          SET name = ?, server_group = ?, region = ?, tags = ?, note = ?, price = ?, billing_cycle = ?, auto_renewal = ?, currency = ?, expire_date = ?, traffic_limit = ?, traffic_calc_type = ?, "interface" = ?, reset_day = ?, collect_interval = ?, report_interval = ?, connection_mode = ?, auto_update = ?, custom_ct = ?, custom_cu = ?, custom_cm = ?, custom_bd = ?, rx_correction = ?, tx_correction = ?, offline_notify_disabled = ?, is_hidden = ?
           WHERE id = ?
         `).bind(
           name || '',
@@ -796,6 +919,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null)
           normalizedAgentConfig.reset_day,
           normalizedAgentConfig.collect_interval,
           normalizedAgentConfig.report_interval,
+          normalizedAgentConfig.connection_mode,
           normalizeBooleanFlag(auto_update),
           pingNodes.values.custom_ct,
           pingNodes.values.custom_cu,
@@ -812,6 +936,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null)
       }
       
       clearServersListCache();
+      scheduleAgentConfigChanged(env, ctx, id);
       
       return createSuccessResponse({ 
         success: true, 
@@ -916,10 +1041,10 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null)
           await env.DB.prepare(`
             INSERT INTO servers (id, name, server_group, region, tags, note, price, billing_cycle, auto_renewal,
               currency, expire_date,
-              traffic_limit, traffic_calc_type, "interface", reset_day, collect_interval, report_interval,
+              traffic_limit, traffic_calc_type, "interface", reset_day, collect_interval, report_interval, connection_mode,
               auto_update, custom_ct, custom_cu, custom_cm, custom_bd, rx_correction, tx_correction,
               offline_notify_disabled, is_hidden, sort_order, history_partition_id, timestamp)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `).bind(
             server.id,
             server.name || '',
@@ -938,6 +1063,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null)
             server.reset_day ?? 1,
             server.collect_interval ?? 0,
             server.report_interval ?? 60,
+            normalizeConnectionMode(server.connection_mode) || 'auto',
             normalizeBooleanFlag(server.auto_update),
             server.custom_ct || '',
             server.custom_cu || '',

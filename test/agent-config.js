@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import {
+  AGENT_CONFIG_LEGACY_SCHEMA_VERSION,
   buildAgentConfig,
   describeAgentConfig,
   isValidTrafficCorrection,
@@ -17,15 +18,23 @@ const server = {
   report_interval: 60,
   reset_day: 15
 };
-const expected = 'collect_interval=1&report_interval=60&reset_day=15&schema_version=3&custom_ct=&custom_cu=&custom_cm=&custom_bd=&interface=';
+const expected = 'collect_interval=1&report_interval=60&reset_day=15&schema_version=4&custom_ct=&custom_cu=&custom_cm=&custom_bd=&interface=&connection_mode=http';
+const expectedWssEnabled = 'collect_interval=1&report_interval=60&reset_day=15&schema_version=4&custom_ct=&custom_cu=&custom_cm=&custom_bd=&interface=&connection_mode=auto';
+const expectedLegacy = 'collect_interval=1&report_interval=60&reset_day=15&schema_version=3&custom_ct=&custom_cu=&custom_cm=&custom_bd=&interface=';
 
 const config = buildAgentConfig(server);
 assert.equal(serializeAgentConfig(config), expected);
+assert.equal(serializeAgentConfig(buildAgentConfig(server, { wss_report_enabled: 'true' })), expectedWssEnabled);
+assert.equal(serializeAgentConfig(buildAgentConfig(server, null, AGENT_CONFIG_LEGACY_SCHEMA_VERSION)), expectedLegacy);
 
 const descriptor = await describeAgentConfig(server);
 assert.equal(descriptor.serialized, expected);
 assert.equal(descriptor.md5, createHash('md5').update(expected).digest('hex'));
 assert.equal(descriptor.correction, null);
+
+const legacyDescriptor = await describeAgentConfig(server, null, AGENT_CONFIG_LEGACY_SCHEMA_VERSION);
+assert.equal(legacyDescriptor.serialized, expectedLegacy);
+assert.equal(Object.prototype.hasOwnProperty.call(legacyDescriptor.config, 'connection_mode'), false);
 
 const autoUpdateDescriptor = await describeAgentConfig({ ...server, auto_update: '1' });
 assert.equal(autoUpdateDescriptor.serialized, expected);
@@ -63,8 +72,14 @@ assert.deepEqual(buildAgentConfig({}), {
   custom_cm: '',
   custom_bd: '',
   interface: '',
-  schema_version: 3
+  schema_version: 4,
+  connection_mode: 'http'
 });
+assert.equal(buildAgentConfig({ connection_mode: 'post' }).connection_mode, 'http');
+assert.equal(buildAgentConfig({ connection_mode: 'auto' }, { wss_report_enabled: 'true' }).connection_mode, 'auto');
+assert.equal(buildAgentConfig({ connection_mode: 'http' }, { wss_report_enabled: 'true' }).connection_mode, 'http');
+assert.equal(validateAgentConfigInput({ ...server, connection_mode: 'http' }).config.connection_mode, 'http');
+assert.equal(validateAgentConfigInput({ ...server, connection_mode: 'bad' }).valid, false);
 
 // Test server-level ping node priority
 const serverWithCustomPing = {

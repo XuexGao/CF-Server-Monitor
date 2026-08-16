@@ -10,7 +10,7 @@ A lightweight multi-server monitoring dashboard built on Cloudflare Workers, D1,
   <a href="README-en.md">English</a>
 </p>
 
-[![Workers](https://img.shields.io/badge/Workers-2.8.3%20Beta2-f38020?style=flat-square&logo=cloudflare&logoColor=white)](version.json)
+[![Workers](https://img.shields.io/badge/Workers-2.8.4%20Beta1-f38020?style=flat-square&logo=cloudflare&logoColor=white)](version.json)
 [![Agent](https://img.shields.io/badge/Agent-1.0.3-2563eb?style=flat-square)](https://github.com/huilang-me/cfsm-agent)
 [![GitHub Stars](https://img.shields.io/github/stars/huilang-me/CF-Server-Monitor?style=flat-square&logo=github)](https://github.com/huilang-me/CF-Server-Monitor/stargazers)
 [![GitHub Forks](https://img.shields.io/github/forks/huilang-me/CF-Server-Monitor?style=flat-square&logo=github)](https://github.com/huilang-me/CF-Server-Monitor/forks)
@@ -101,12 +101,13 @@ Core flow:
 
 | Component | Current version | Notes |
 | --- | --- | --- |
-| Workers | `2.8.3 Beta2` | Current repository version, see [version.json](version.json) |
+| Workers | `2.8.4 Beta1` | Current repository version, see [version.json](version.json) |
 | Go Agent | `1.0.3` | Default Agent, maintained in [cfsm-agent](https://github.com/huilang-me/cfsm-agent) |
 | Shell / PowerShell Agent | Legacy version, no longer maintained | Legacy script path, only suggested as a fallback for special systems or script-only environments |
 
 Recent changes:
 
+- `2.8.4`: Added Agent WSS reporting to improve realtime push latency, added account usage for D1 / Workers / Durable Objects, and reduced idle Durable Object realtime broadcast requests when no frontend is subscribed.
 - `2.8.3`: Added disk IO metrics, switched the default Agent to Go, and added realtime latency / packet-loss windows.
 - `2.8.2`: Added Go Agent support.
 - `2.8.1`: Optimized long-range D1 history reads, added resource load notifications, and improved the theme store API.
@@ -297,7 +298,7 @@ Configure notifications in Admin -> Global Settings -> Notifications. The platfo
 | DingTalk | Custom robot Webhook URL | Empty |
 | OneBot / QQ | `onebot:http://host/send_private_msg?...` or `send_group_msg` | User ID or group ID |
 | Bark | `https://api.day.app/xxxx/` or `bark:https://example.com/xxxx/` | Empty |
-| ServerChan | `https://sctapi.ftqq.com/<SendKey>.send` | Empty |
+| ServerChan | `https://sctapi.ftqq.com/<SendKey>.send` or `server:https://example.com/s/<SendKey>.send` | Empty |
 | WxPusher | `https://wxpusher.zjiecode.com/api/send/message/[SPT_xxx]/Hello` | Empty |
 | Gotify | `https://gotify.example.com/message?token=xxx` | Empty |
 

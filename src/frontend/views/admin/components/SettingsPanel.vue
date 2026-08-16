@@ -114,8 +114,11 @@
           </div>
         </div>
 
-
         <div class="form-row">
+          <div class="form-group flex-1 checkbox-item">
+            <input type="checkbox" id="cfg_wss_report_enabled" v-model="settings.wss_report_enabled">
+            <label><b>{{ trans.wssReportEnabled }}</b></label>
+          </div>
           <div class="form-group flex-1 checkbox-item">
             <input type="checkbox" id="cfg_show_tf" v-model="settings.show_tf">
             <label>{{ trans.showTf }}</label>
@@ -125,6 +128,13 @@
             <input type="checkbox" id="cfg_show_time" v-model="settings.show_time">
             <label>{{ trans.showTime }}</label>
           </div>
+        </div>
+
+        <div class="form-group">
+          <p class="text-muted text-sm mt-1">
+            <span class="warning-icon">[i]</span>
+            {{ trans.wssReportTip }}
+          </p>
         </div>
 
         <div class="form-group">

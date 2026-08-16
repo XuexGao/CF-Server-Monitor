@@ -230,6 +230,7 @@
         :install-gh-proxy="installGhProxy"
         :collect-interval="collectInterval"
         :report-interval="reportInterval"
+        :connection-mode="connectionMode"
         :custom-ct="customCt"
         :custom-cu="customCu"
         :custom-cm="customCm"
@@ -303,7 +304,7 @@
       <div v-if="d1UsageResult" id="d1UsageModal" class="modal-overlay active">
         <div class="modal-dialog">
           <div class="modal-header">
-            <div class="modal-title">$ D1 & Workers quota --utc</div>
+            <div class="modal-title">$ D1, Workers & Durable Objects quota --utc</div>
             <button class="modal-close" @click="d1UsageResult = null">✕</button>
           </div>
 
@@ -320,7 +321,7 @@
                     <span>{{ getUsagePercent(d1UsageResult.usage.today.rowsRead, 5000000) }}%</span>
                   </div>
                   <div class="quota-progress-bar">
-                    <div class="quota-progress-fill" :style="{ width: getUsagePercent(d1UsageResult.usage.today.rowsRead, 5000000) + '%' }"></div>
+                    <div class="quota-progress-fill" :style="{ width: getUsageBarPercent(d1UsageResult.usage.today.rowsRead, 5000000) + '%' }"></div>
                   </div>
                 </div>
                 <div class="quota-progress-item">
@@ -329,7 +330,7 @@
                     <span>{{ getUsagePercent(d1UsageResult.usage.today.rowsWritten, 100000) }}%</span>
                   </div>
                   <div class="quota-progress-bar">
-                    <div class="quota-progress-fill" :style="{ width: getUsagePercent(d1UsageResult.usage.today.rowsWritten, 100000) + '%' }"></div>
+                    <div class="quota-progress-fill" :style="{ width: getUsageBarPercent(d1UsageResult.usage.today.rowsWritten, 100000) + '%' }"></div>
                   </div>
                 </div>
                 <div class="quota-progress-item">
@@ -338,7 +339,44 @@
                     <span>{{ getUsagePercent(d1UsageResult.usage.today.workersRequests, 100000) }}%</span>
                   </div>
                   <div v-if="d1UsageResult.usage.today.workersRequests" class="quota-progress-bar">
-                    <div class="quota-progress-fill" :style="{ width: getUsagePercent(d1UsageResult.usage.today.workersRequests, 100000) + '%' }"></div>
+                    <div class="quota-progress-fill" :style="{ width: getUsageBarPercent(d1UsageResult.usage.today.workersRequests, 100000) + '%' }"></div>
+                  </div>
+                </div>
+                <div class="quota-progress-item">
+                  <div class="flex-justify-between text-sm mb-1">
+                    <span class="quota-label-with-help">
+                      <span>{{ trans.durableObjectsRequests }}：{{ formatNumber(d1UsageResult.usage.today.durableObjectsRequests) }} / {{ formatNumber(100000) }}</span>
+                      <span class="quota-help" tabindex="0" :aria-label="formatDurableObjectsUsageTooltip(d1UsageResult.usage.today)">
+                        <span class="quota-help-dot" aria-hidden="true">?</span>
+                        <span class="quota-help-tooltip" role="tooltip">
+                          <span v-for="row in getDurableObjectsUsageRows(d1UsageResult.usage.today)" :key="row.key" class="quota-help-row">
+                            <span class="quota-help-label">{{ row.label }}</span>
+                            <span class="quota-help-value">{{ row.value }}</span>
+                          </span>
+                        </span>
+                      </span>
+                    </span>
+                    <span>{{ getUsagePercent(d1UsageResult.usage.today.durableObjectsRequests, 100000) }}%</span>
+                  </div>
+                  <div class="quota-progress-bar">
+                    <div class="quota-progress-fill" :style="{ width: getUsageBarPercent(d1UsageResult.usage.today.durableObjectsRequests, 100000) + '%' }"></div>
+                  </div>
+                </div>
+                <div class="quota-progress-item">
+                  <div class="flex-justify-between text-sm mb-1">
+                    <span class="quota-label-with-help">
+                      <span>{{ trans.durableObjectsDuration }}：{{ formatNumber(d1UsageResult.usage.today.durableObjectsDuration, 2) }} / {{ formatNumber(13000) }}</span>
+                      <span class="quota-help" tabindex="0" :aria-label="trans.durableObjectsDurationTip">
+                        <span class="quota-help-dot" aria-hidden="true">?</span>
+                        <span class="quota-help-tooltip" role="tooltip">
+                          <span class="quota-help-row">{{ trans.durableObjectsDurationTip }}</span>
+                        </span>
+                      </span>
+                    </span>
+                    <span>{{ getUsagePercent(d1UsageResult.usage.today.durableObjectsDuration, 13000) }}%</span>
+                  </div>
+                  <div class="quota-progress-bar">
+                    <div class="quota-progress-fill" :style="{ width: getUsageBarPercent(d1UsageResult.usage.today.durableObjectsDuration, 13000) + '%' }"></div>
                   </div>
                 </div>
               </div>
@@ -353,7 +391,7 @@
                     <span>{{ getUsagePercent(d1UsageResult.usage.yesterday.rowsRead, 5000000) }}%</span>
                   </div>
                   <div class="quota-progress-bar">
-                    <div class="quota-progress-fill" :style="{ width: getUsagePercent(d1UsageResult.usage.yesterday.rowsRead, 5000000) + '%' }"></div>
+                    <div class="quota-progress-fill" :style="{ width: getUsageBarPercent(d1UsageResult.usage.yesterday.rowsRead, 5000000) + '%' }"></div>
                   </div>
                 </div>
                 <div class="quota-progress-item">
@@ -362,7 +400,7 @@
                     <span>{{ getUsagePercent(d1UsageResult.usage.yesterday.rowsWritten, 100000) }}%</span>
                   </div>
                   <div class="quota-progress-bar">
-                    <div class="quota-progress-fill" :style="{ width: getUsagePercent(d1UsageResult.usage.yesterday.rowsWritten, 100000) + '%' }"></div>
+                    <div class="quota-progress-fill" :style="{ width: getUsageBarPercent(d1UsageResult.usage.yesterday.rowsWritten, 100000) + '%' }"></div>
                   </div>
                 </div>
                 <div v-if="d1UsageResult.usage.yesterday.workersRequests" class="quota-progress-item">
@@ -371,7 +409,44 @@
                     <span>{{ getUsagePercent(d1UsageResult.usage.yesterday.workersRequests, 100000) }}%</span>
                   </div>
                   <div class="quota-progress-bar">
-                    <div class="quota-progress-fill" :style="{ width: getUsagePercent(d1UsageResult.usage.yesterday.workersRequests, 100000) + '%' }"></div>
+                    <div class="quota-progress-fill" :style="{ width: getUsageBarPercent(d1UsageResult.usage.yesterday.workersRequests, 100000) + '%' }"></div>
+                  </div>
+                </div>
+                <div class="quota-progress-item">
+                  <div class="flex-justify-between text-sm mb-1">
+                    <span class="quota-label-with-help">
+                      <span>{{ trans.durableObjectsRequests }}：{{ formatNumber(d1UsageResult.usage.yesterday.durableObjectsRequests) }} / {{ formatNumber(100000) }}</span>
+                      <span class="quota-help" tabindex="0" :aria-label="formatDurableObjectsUsageTooltip(d1UsageResult.usage.yesterday)">
+                        <span class="quota-help-dot" aria-hidden="true">?</span>
+                        <span class="quota-help-tooltip" role="tooltip">
+                          <span v-for="row in getDurableObjectsUsageRows(d1UsageResult.usage.yesterday)" :key="row.key" class="quota-help-row">
+                            <span class="quota-help-label">{{ row.label }}</span>
+                            <span class="quota-help-value">{{ row.value }}</span>
+                          </span>
+                        </span>
+                      </span>
+                    </span>
+                    <span>{{ getUsagePercent(d1UsageResult.usage.yesterday.durableObjectsRequests, 100000) }}%</span>
+                  </div>
+                  <div class="quota-progress-bar">
+                    <div class="quota-progress-fill" :style="{ width: getUsageBarPercent(d1UsageResult.usage.yesterday.durableObjectsRequests, 100000) + '%' }"></div>
+                  </div>
+                </div>
+                <div class="quota-progress-item">
+                  <div class="flex-justify-between text-sm mb-1">
+                    <span class="quota-label-with-help">
+                      <span>{{ trans.durableObjectsDuration }}：{{ formatNumber(d1UsageResult.usage.yesterday.durableObjectsDuration, 2) }} / {{ formatNumber(13000) }}</span>
+                      <span class="quota-help" tabindex="0" :aria-label="trans.durableObjectsDurationTip">
+                        <span class="quota-help-dot" aria-hidden="true">?</span>
+                        <span class="quota-help-tooltip" role="tooltip">
+                          <span class="quota-help-row">{{ trans.durableObjectsDurationTip }}</span>
+                        </span>
+                      </span>
+                    </span>
+                    <span>{{ getUsagePercent(d1UsageResult.usage.yesterday.durableObjectsDuration, 13000) }}%</span>
+                  </div>
+                  <div class="quota-progress-bar">
+                    <div class="quota-progress-fill" :style="{ width: getUsageBarPercent(d1UsageResult.usage.yesterday.durableObjectsDuration, 13000) + '%' }"></div>
                   </div>
                 </div>
               </div>
@@ -662,10 +737,42 @@ const parseThemeOptions = (value) => {
   }
 }
 
-const formatNumber = (value) => Number(value || 0).toLocaleString()
+const formatNumber = (value, maximumFractionDigits = 0) => (
+  Number(value || 0).toLocaleString(undefined, { maximumFractionDigits })
+)
+const getDurableObjectsUsageRows = (usage = {}) => ([
+  {
+    key: 'http',
+    label: trans.value.durableObjectsHttpRequests,
+    value: `${formatNumber(usage.durableObjectsHttpRequests)} · ${trans.value.billingRatioOneToOne}`
+  },
+  {
+    key: 'hibernation',
+    label: trans.value.durableObjectsHibernationWakeups,
+    value: `${formatNumber(usage.durableObjectsHibernationWakeups)} · ${trans.value.billingRatioOneToOne}`
+  },
+  {
+    key: 'inbound-ws',
+    label: trans.value.durableObjectsInboundWebSocketMessages,
+    value: `${formatNumber(usage.durableObjectsInboundWebSocketMessages)} · ${trans.value.billingRatioWebSocketIncoming}`
+  },
+  {
+    key: 'outbound-ws',
+    label: trans.value.durableObjectsOutboundWebSocketMessages,
+    value: `${formatNumber(usage.durableObjectsOutboundWebSocketMessages)} · ${trans.value.billingRatioNotBilled}`
+  }
+])
+const formatDurableObjectsUsageTooltip = (usage = {}) => (
+  getDurableObjectsUsageRows(usage)
+    .map(row => `${row.label}: ${row.value}`)
+    .join('\n')
+)
 const getUsagePercent = (used, limit) => {
   if (!limit) return 0
-  return Math.min(100, Number(((Number(used || 0) / Number(limit)) * 100).toFixed(2)))
+  return Number(((Number(used || 0) / Number(limit)) * 100).toFixed(2))
+}
+const getUsageBarPercent = (used, limit) => {
+  return Math.min(100, Math.max(0, getUsagePercent(used, limit)))
 }
 
 const isMultipleMode = computed(() => hasMultipleApiBases())
@@ -720,6 +827,7 @@ const settings = ref({
   show_expire: true,
   show_tf: true,
   show_time: true,
+  wss_report_enabled: false,
   long_history_points: String(HISTORY.DEFAULT_LONG_RANGE_POINTS),
   tg_notify: '0',
   expire_reminder: '0',
@@ -794,6 +902,7 @@ const editForm = ref({
   reset_day: 1,
   collect_interval: 0,
   report_interval: 60,
+  connection_mode: 'auto',
   custom_ct: '',
   custom_cu: '',
   custom_cm: '',
@@ -842,6 +951,7 @@ const targetOs = ref('linux')
 const installGhProxy = ref('')
 const collectInterval = ref(0)
 const reportInterval = ref(60)
+const connectionMode = ref('auto')
 const customCt = ref('')
 const customCu = ref('')
 const customCm = ref('')
@@ -852,6 +962,19 @@ const rxCorrection = ref('')
 const txCorrection = ref('')
 const autoUpdate = ref(false)
 const copiedCmd = ref(false)
+
+const isWssReportEnabled = computed(() => settings.value.wss_report_enabled === true)
+const getEffectiveConnectionMode = (value) => {
+  const connectionMode = value === 'http' ? 'http' : 'auto'
+  return isWssReportEnabled.value ? connectionMode : 'http'
+}
+
+watch(isWssReportEnabled, (enabled) => {
+  if (!enabled) {
+    editForm.value.connection_mode = 'http'
+    connectionMode.value = 'http'
+  }
+})
 
 const getPingNodeLabel = (field) => ({
   custom_ct: trans.value.customCt,
@@ -1075,6 +1198,7 @@ const loadSettings = async () => {
         show_expire: settingsData.show_expire === 'true',
         show_tf: settingsData.show_tf === 'true',
         show_time: settingsData.show_time === 'true',
+        wss_report_enabled: settingsData.wss_report_enabled === 'true' || settingsData.wss_report_enabled === true,
         long_history_points: normalizeLongHistoryPointsSetting(settingsData.long_history_points),
         tg_notify: normalizeTgNotifySetting(settingsData.tg_notify),
         expire_reminder: normalizeExpireReminderSetting(settingsData.expire_reminder),
@@ -1213,6 +1337,7 @@ const saveSettings = async () => {
       show_expire: settings.value.show_expire ? 'true' : 'false',
       show_tf: settings.value.show_tf ? 'true' : 'false',
       show_time: settings.value.show_time ? 'true' : 'false',
+      wss_report_enabled: settings.value.wss_report_enabled ? 'true' : 'false',
       long_history_points: normalizeLongHistoryPointsSetting(settings.value.long_history_points),
       tg_notify: normalizeTgNotifySetting(settings.value.tg_notify),
       expire_reminder: normalizeExpireReminderSetting(settings.value.expire_reminder),
@@ -1347,6 +1472,7 @@ const copyCmd = (serverId) => {
   installGhProxy.value = ''
   collectInterval.value = server?.collect_interval ?? 0
   reportInterval.value = server?.report_interval || 60
+  connectionMode.value = getEffectiveConnectionMode(server?.connection_mode)
   customCt.value = server?.custom_ct || settings.value.custom_ct
   customCu.value = server?.custom_cu || settings.value.custom_cu
   customCm.value = server?.custom_cm || settings.value.custom_cm
@@ -1373,6 +1499,7 @@ const getCustomInstallCommand = () => {
   const HOST = selectedApiBase.value
   const autoUpdateFlag = autoUpdate.value ? 1 : 0
   const proxy = installGhProxy.value.trim()
+  const effectiveConnectionMode = getEffectiveConnectionMode(connectionMode.value)
   if (targetOs.value === 'windows') {
     const params = [
       'install'
@@ -1384,6 +1511,7 @@ const getCustomInstallCommand = () => {
       `-url='${HOST}/update'`,
       `-collect_interval='${collectInterval.value}'`,
       `-interval='${reportInterval.value}'`,
+      `-connection_mode='${effectiveConnectionMode}'`,
       `-reset_day='${resetDay.value ?? 1}'`,
       `-auto_update='${autoUpdateFlag}'`
     )
@@ -1405,6 +1533,7 @@ const getCustomInstallCommand = () => {
     `-url=${HOST}/update`,
     `-collect_interval=${collectInterval.value}`,
     `-interval=${reportInterval.value}`,
+    `-connection_mode=${effectiveConnectionMode}`,
     `-reset_day=${resetDay.value ?? 1}`,
     `-auto_update=${autoUpdateFlag}`
   )
@@ -1478,6 +1607,7 @@ const openEditModal = (server) => {
     reset_day: server.reset_day ?? 1,
     collect_interval: server.collect_interval ?? 0,
     report_interval: server.report_interval || 60,
+    connection_mode: getEffectiveConnectionMode(server.connection_mode),
     custom_ct: server.custom_ct || '',
     custom_cu: server.custom_cu || '',
     custom_cm: server.custom_cm || '',
@@ -1563,6 +1693,7 @@ const saveEdit = async () => {
     reset_day: editForm.value.reset_day,
     collect_interval: editForm.value.collect_interval,
     report_interval: editForm.value.report_interval,
+    connection_mode: getEffectiveConnectionMode(editForm.value.connection_mode),
     custom_ct: pingNodeValidation.values.custom_ct,
     custom_cu: pingNodeValidation.values.custom_cu,
     custom_cm: pingNodeValidation.values.custom_cm,

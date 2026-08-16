@@ -964,6 +964,97 @@ body::before {
     transition: width 0.3s ease;
 }
 
+.quota-label-with-help {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    flex-wrap: wrap;
+}
+
+.quota-help {
+    display: inline-flex;
+    align-items: center;
+    position: relative;
+    outline: none;
+}
+
+.quota-help-dot {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 15px;
+    height: 15px;
+    border: 1px solid var(--border-active);
+    border-radius: 50%;
+    background: var(--bg-primary);
+    color: var(--accent-cyan);
+    cursor: help;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1;
+}
+
+.quota-help-tooltip {
+    position: absolute;
+    bottom: calc(100% + 8px);
+    left: 50%;
+    z-index: 30;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    width: min(360px, calc(100vw - 48px));
+    min-width: min(300px, calc(100vw - 48px));
+    padding: 9px 11px;
+    border: 1px solid var(--border-active);
+    border-radius: 4px;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.38), 0 0 12px rgba(57, 210, 192, 0.08);
+    font-size: 11px;
+    line-height: 1.45;
+    letter-spacing: 0;
+    opacity: 0;
+    pointer-events: none;
+    transform: translate(-50%, 4px);
+    transition: opacity 0.16s ease, transform 0.16s ease;
+}
+
+.quota-help-tooltip::before {
+    content: "";
+    position: absolute;
+    bottom: -5px;
+    left: 50%;
+    width: 8px;
+    height: 8px;
+    border-right: 1px solid var(--border-active);
+    border-bottom: 1px solid var(--border-active);
+    background: var(--bg-primary);
+    transform: translateX(-50%) rotate(45deg);
+}
+
+.quota-help:hover .quota-help-tooltip,
+.quota-help:focus .quota-help-tooltip,
+.quota-help:focus-within .quota-help-tooltip {
+    opacity: 1;
+    transform: translate(-50%, 0);
+}
+
+.quota-help-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 14px;
+    align-items: start;
+}
+
+.quota-help-label {
+    color: var(--text-secondary);
+}
+
+.quota-help-value {
+    white-space: nowrap;
+}
+
 .quota-section {
     background: var(--bg-secondary);
     border: 1px solid var(--border-color);

@@ -1,18 +1,28 @@
 import { saveMetricsHistory } from '../database/schema.js';
 import { getServerDetail, clearServerDetailCache } from '../utils/cache.js';
-import { mergeMetricsIntoServer, coerceNumericMetricFields } from '../utils/metrics.js';
+import {
+  DISK_IO_FIELD_TO_COLUMN,
+  DISK_IO_METRIC_FIELDS,
+  mergeMetricsIntoServer,
+  coerceNumericMetricFields
+} from '../utils/metrics.js';
 import { createErrorResponse, createUnauthorizedResponse, createNotFoundResponse, createBadRequestResponse } from '../utils/errors.js';
 import { ensureServerOptimization } from '../database/indexOptimization.js';
-import { loadSiteSettings } from '../utils/settings.js';
+import { getResourceAlertConfig, isWssReportEnabled, loadSiteSettings } from '../utils/settings.js';
 import { cacheLatestReportUpdate } from '../utils/latestReportCache.js';
+import {
+  hasRecentFrontendRealtimeActivity,
+  markFrontendRealtimeActive
+} from '../utils/realtimeBroadcastGate.js';
 import {
   AGENT_CONFIG_MD5_HEADER,
   AGENT_CONFIG_SCHEMA_HEADER,
-  AGENT_CONFIG_SCHEMA_VERSION,
   describeAgentConfig,
   isValidTrafficCorrection,
+  normalizeAgentConfigSchemaVersion,
   serializeCorrection
 } from '../utils/agentConfig.js';
+import { scheduleAgentConfigChanged } from '../utils/agentConfigNotify.js';
 
 // 将最新一次上报打包成前端可直接消费的 "当前状态" 对象
 // 与 /api/server 和 /api/servers 返回的字段保持一致，便于页面直接合并
@@ -27,11 +37,35 @@ function buildPayloadForBroadcast(id, metrics = {}, extra = {}) {
   return coerceNumericMetricFields(payload);
 }
 
-// 批量推送：5秒窗口内合并向 DO 推送一次，减少请求次数
-const BATCH_WINDOW = 5000;
+// 批量推送：前端实时使用短窗口；仅资源告警缓存时使用较长窗口降低 DO 请求。
+const REALTIME_BATCH_WINDOW_MS = 5 * 1000;
+const RESOURCE_ALERT_BATCH_WINDOW_MS = 25 * 1000;
 const MAX_BATCH_SAMPLES = 300;
+const FRONTEND_SUBSCRIBER_CHECK_INTERVAL_MS = 5 * 60 * 1000;
+const HISTORY_AGGREGATION_MAX_FIELDS = [
+  'net_in_speed', 'net_out_speed',
+  'disk_read_bps', 'disk_write_bps', 'disk_read_iops',
+  'disk_write_iops', 'disk_await_ms', 'disk_util',
+  'processes', 'tcp_conn', 'udp_conn'
+];
+const HISTORY_AGGREGATION_AVG_FIELDS = [
+  'cpu', 'ram_used', 'swap_used',
+  'ping_ct', 'ping_cu', 'ping_cm', 'ping_bd',
+  'loss_ct', 'loss_cu', 'loss_cm', 'loss_bd'
+];
+const HISTORY_METRIC_AGGREGATION_POLICY = Object.freeze({
+  ...Object.fromEntries(HISTORY_AGGREGATION_MAX_FIELDS.map(field => [field, 'max'])),
+  ...Object.fromEntries(HISTORY_AGGREGATION_AVG_FIELDS.map(field => [field, 'avg']))
+});
+const DISK_IO_COLUMN_TO_FIELD = Object.freeze(Object.fromEntries(
+  DISK_IO_METRIC_FIELDS.map(field => [DISK_IO_FIELD_TO_COLUMN[field], field])
+));
 let batchQueue = new Map();
 let flushingPromise = null;
+let flushTimer = null;
+let flushDueAt = 0;
+let resolveFlushingPromise = null;
+let frontendSubscriberSnapshot = { checkedAt: 0, count: 0 };
 
 // 用于过滤不需要实时更新的字段
 const BROADCAST_DELETE_FIELDS = ['id', 'name', 'region', 'arch', 'os', 'kernel_version', 'cpu_info', 'cpu_cores', 'expire_date', 'server_group', 'traffic_limit', 'net_rx_monthly', 'net_tx_monthly', 'boot_time', 'timestamp', 'ip_v4', 'ip_v6'];
@@ -42,7 +76,7 @@ function normalizeTimestamp(value, fallback = Date.now()) {
   return ts < 10000000000 ? ts * 1000 : ts;
 }
 
-function normalizeAgentVersion(value) {
+export function normalizeAgentVersion(value) {
   if (value === null || value === undefined) return '';
   return String(value)
     .trim()
@@ -54,12 +88,12 @@ function logUpdateBadRequest(reason, details = {}) {
   console.warn('[Update] 400 Bad Request:', reason, details);
 }
 
-function normalizeCorrectionValue(value) {
+export function normalizeCorrectionValue(value) {
   if (value === null || value === undefined || value === '') return 0;
   return isValidTrafficCorrection(value) ? Number(value) : null;
 }
 
-function normalizeMetricSamples(data) {
+export function normalizeMetricSamples(data) {
   const now = Date.now();
   const rawSamples = Array.isArray(data.samples)
     ? data.samples
@@ -84,13 +118,150 @@ function normalizeMetricSamples(data) {
   return samples.slice(-MAX_BATCH_SAMPLES);
 }
 
-function getReportMetrics(data, latestSample) {
+export function getReportMetrics(data, latestSample) {
   const reportMetrics = data?.metrics && typeof data.metrics === 'object' ? data.metrics : null;
   if (!reportMetrics) return latestSample?.metrics || {};
   return {
     ...reportMetrics,
     ...(latestSample?.metrics || {})
   };
+}
+
+function hasOwnMetric(source, field) {
+  return !!source && Object.prototype.hasOwnProperty.call(source, field);
+}
+
+function isPlainMetricObject(value) {
+  return value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function toFiniteHistoryMetricNumber(value) {
+  if (value === false || value === 'false' || value === null || value === undefined || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function getHistoryMetricSourceValue(source, field) {
+  if (!isPlainMetricObject(source)) return null;
+
+  if (hasOwnMetric(source, field)) {
+    return source[field];
+  }
+
+  const diskField = DISK_IO_COLUMN_TO_FIELD[field];
+  if (diskField && isPlainMetricObject(source.disk) && hasOwnMetric(source.disk, diskField)) {
+    return source.disk[diskField];
+  }
+
+  return null;
+}
+
+function getSampleMetricSource(sample) {
+  if (!isPlainMetricObject(sample)) return null;
+  return sample.metrics || sample.data || sample.payload || sample;
+}
+
+function createEmptyHistoryMetricAggregate() {
+  return { max: {}, avg: {} };
+}
+
+export function mergeHistoryMetricAggregates(...aggregates) {
+  const result = createEmptyHistoryMetricAggregate();
+
+  for (const aggregate of aggregates) {
+    if (!isPlainMetricObject(aggregate)) continue;
+
+    if (isPlainMetricObject(aggregate.max)) {
+      for (const [field, value] of Object.entries(aggregate.max)) {
+        const number = toFiniteHistoryMetricNumber(value);
+        if (number === null) continue;
+        if (!hasOwnMetric(result.max, field) || number > result.max[field]) {
+          result.max[field] = number;
+        }
+      }
+    }
+
+    if (isPlainMetricObject(aggregate.avg)) {
+      for (const [field, item] of Object.entries(aggregate.avg)) {
+        if (!isPlainMetricObject(item)) continue;
+        const sum = toFiniteHistoryMetricNumber(item.sum);
+        const count = Number(item.count);
+        if (sum === null || !Number.isFinite(count) || count <= 0) continue;
+        if (!result.avg[field]) {
+          result.avg[field] = { sum: 0, count: 0 };
+        }
+        result.avg[field].sum += sum;
+        result.avg[field].count += count;
+      }
+    }
+  }
+
+  return result;
+}
+
+function addHistoryMetricAggregateSource(aggregate, source) {
+  if (!isPlainMetricObject(source)) return;
+
+  for (const [field, policy] of Object.entries(HISTORY_METRIC_AGGREGATION_POLICY)) {
+    const value = toFiniteHistoryMetricNumber(getHistoryMetricSourceValue(source, field));
+    if (value === null) continue;
+
+    if (policy === 'max') {
+      if (!hasOwnMetric(aggregate.max, field) || value > aggregate.max[field]) {
+        aggregate.max[field] = value;
+      }
+    } else if (policy === 'avg') {
+      if (!aggregate.avg[field]) {
+        aggregate.avg[field] = { sum: 0, count: 0 };
+      }
+      aggregate.avg[field].sum += value;
+      aggregate.avg[field].count += 1;
+    }
+  }
+}
+
+export function collectHistoryMetricAggregates(samples = [], previousAggregate = null) {
+  const aggregate = mergeHistoryMetricAggregates(previousAggregate);
+  for (const sample of Array.isArray(samples) ? samples : []) {
+    addHistoryMetricAggregateSource(aggregate, getSampleMetricSource(sample));
+  }
+  return aggregate;
+}
+
+function setHistoryMetricResultValue(result, field, value) {
+  const diskField = DISK_IO_COLUMN_TO_FIELD[field];
+  if (diskField) {
+    result[field] = value;
+    result.disk = isPlainMetricObject(result.disk)
+      ? { ...result.disk, [diskField]: value }
+      : { [diskField]: value };
+    return;
+  }
+
+  result[field] = value;
+}
+
+export function applyHistoryMetricAggregates(metrics = {}, aggregate = null) {
+  const result = { ...(metrics || {}) };
+  const mergedAggregate = mergeHistoryMetricAggregates(aggregate);
+
+  for (const [field, value] of Object.entries(mergedAggregate.max)) {
+    setHistoryMetricResultValue(result, field, value);
+  }
+
+  for (const [field, item] of Object.entries(mergedAggregate.avg)) {
+    if (!item || !Number.isFinite(item.sum) || !Number.isFinite(item.count) || item.count <= 0) continue;
+    setHistoryMetricResultValue(result, field, item.sum / item.count);
+  }
+
+  return result;
+}
+
+export function getHistoryMetrics(data, samples, latestSample) {
+  return applyHistoryMetricAggregates(
+    getReportMetrics(data, latestSample),
+    collectHistoryMetricAggregates(samples)
+  );
 }
 
 function buildSamplePayloadForBroadcast(metrics = {}, timestamp = Date.now()) {
@@ -101,7 +272,7 @@ function buildSamplePayloadForBroadcast(metrics = {}, timestamp = Date.now()) {
   return coerceNumericMetricFields(payload);
 }
 
-function toBroadcastSamples(id, samples, regionCode, agentVersion = '', reportMetrics = null) {
+export function toBroadcastSamples(id, samples, regionCode, agentVersion = '', reportMetrics = null) {
   const lastIndex = samples.length - 1;
   return samples.map((sample, index) => {
     const metrics = reportMetrics && typeof reportMetrics === 'object' && index === lastIndex
@@ -132,9 +303,84 @@ function queueBroadcastSamples(serverId, samples) {
   batchQueue.set(serverId, { samples: merged.slice(-MAX_BATCH_SAMPLES) });
 }
 
-async function _flushBatch(env) {
-  flushingPromise = null;
+async function getCachedFrontendSubscriberCount(env) {
+  const now = Date.now();
+  if (now - frontendSubscriberSnapshot.checkedAt < FRONTEND_SUBSCRIBER_CHECK_INTERVAL_MS) {
+    return frontendSubscriberSnapshot.count;
+  }
 
+  let count = 0;
+  try {
+    const id = env.METRICS_BROADCASTER.idFromName('global');
+    const stub = env.METRICS_BROADCASTER.get(id);
+    const response = await stub.fetch('http://internal/health', {
+      headers: { 'Cache-Control': 'no-store' }
+    });
+    if (response.ok) {
+      const data = await response.json();
+      count = Math.max(0, Number(data?.subscribers) || 0);
+    }
+  } catch (e) {
+    console.warn('[broadcast] subscriber check failed:', e?.message || e);
+  }
+
+  frontendSubscriberSnapshot = { checkedAt: now, count };
+  return count;
+}
+
+async function getRealtimeBatchIntent(env) {
+  if (!env?.METRICS_BROADCASTER) return null;
+
+  let resourceAlertEnabled = false;
+  try {
+    const settings = await loadSiteSettings(env.DB);
+    resourceAlertEnabled = !!settings?.tg_bot_token && getResourceAlertConfig(settings).enabled;
+  } catch (e) {
+    console.warn('[broadcast] failed to load realtime gate settings:', e?.message || e);
+  }
+
+  const frontendActive = hasRecentFrontendRealtimeActivity();
+  if (frontendActive) {
+    return {
+      maintainState: resourceAlertEnabled
+    };
+  }
+
+  if (resourceAlertEnabled) {
+    return {
+      maintainState: true
+    };
+  }
+
+  const subscribers = await getCachedFrontendSubscriberCount(env);
+  if (subscribers > 0) {
+    return {
+      maintainState: false
+    };
+  }
+
+  return {
+    maintainState: false,
+    latestReportOnly: true
+  };
+}
+
+async function getBatchFlushDelayMs(env, now = Date.now()) {
+  if (hasRecentFrontendRealtimeActivity(now)) return REALTIME_BATCH_WINDOW_MS;
+
+  try {
+    const settings = await loadSiteSettings(env.DB);
+    if (settings?.tg_bot_token && getResourceAlertConfig(settings).enabled) {
+      return RESOURCE_ALERT_BATCH_WINDOW_MS;
+    }
+  } catch (e) {
+    console.warn('[broadcast] failed to load batch delay settings:', e?.message || e);
+  }
+
+  return REALTIME_BATCH_WINDOW_MS;
+}
+
+async function _flushBatch(env) {
   if (batchQueue.size === 0) return;
 
   // 原子性地取出当前队列，避免并发写入干扰
@@ -155,12 +401,19 @@ async function _flushBatch(env) {
   if (updates.length === 0) return;
 
   try {
+    const intent = await getRealtimeBatchIntent(env);
+    if (!intent) return;
+
     const id = env.METRICS_BROADCASTER.idFromName('global');
     const stub = env.METRICS_BROADCASTER.get(id);
     await stub.fetch('http://internal/batch-push', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ updates })
+      body: JSON.stringify({
+        updates,
+        maintainState: intent.maintainState,
+        latestReportOnly: intent.latestReportOnly === true
+      })
     });
   } catch (e) {
     console.warn('[broadcast] batch push failed:', e.message || e);
@@ -168,10 +421,43 @@ async function _flushBatch(env) {
 }
 
 function _ensureBatchFlush(env) {
-  if (flushingPromise) return flushingPromise;
+  const now = Date.now();
+  if (flushingPromise) {
+    if (
+      hasRecentFrontendRealtimeActivity(now) &&
+      flushDueAt > now + REALTIME_BATCH_WINDOW_MS
+    ) {
+      if (flushTimer) clearTimeout(flushTimer);
+      flushDueAt = now + REALTIME_BATCH_WINDOW_MS;
+      flushTimer = setTimeout(() => {
+        const resolve = resolveFlushingPromise;
+        flushTimer = null;
+        flushDueAt = 0;
+        resolveFlushingPromise = null;
+        _flushBatch(env).finally(() => {
+          flushingPromise = null;
+          if (resolve) resolve();
+        });
+      }, REALTIME_BATCH_WINDOW_MS);
+    }
+    return flushingPromise;
+  }
 
-  flushingPromise = new Promise(resolve => setTimeout(resolve, BATCH_WINDOW))
-    .then(() => _flushBatch(env));
+  flushingPromise = getBatchFlushDelayMs(env, now).then(delayMs => new Promise(resolve => {
+    resolveFlushingPromise = resolve;
+    const normalizedDelayMs = Math.max(0, Number(delayMs) || REALTIME_BATCH_WINDOW_MS);
+    flushDueAt = Date.now() + normalizedDelayMs;
+    flushTimer = setTimeout(() => {
+      const currentResolve = resolveFlushingPromise;
+      flushTimer = null;
+      flushDueAt = 0;
+      resolveFlushingPromise = null;
+      _flushBatch(env).finally(() => {
+        flushingPromise = null;
+        if (currentResolve) currentResolve();
+      });
+    }, normalizedDelayMs);
+  }));
 
   return flushingPromise;
 }
@@ -213,6 +499,7 @@ export async function handleUpdate(request, env, ctx) {
           AND ABS(COALESCE(tx_correction, 0) - ?) < 0.000001
       `).bind(id, ackRx, ackTx).run();
       clearServerDetailCache();
+      scheduleAgentConfigChanged(env, ctx, id);
 
       return new Response('OK', {
         status: 200,
@@ -245,11 +532,12 @@ export async function handleUpdate(request, env, ctx) {
     // 获取最后一条插入（如果是批量数据，取最后一个样本）
     const latestSample = samples[samples.length - 1];
     const latestMetrics = getReportMetrics(data, latestSample);
+    const historyMetrics = getHistoryMetrics(data, samples, latestSample);
     await saveMetricsHistory(
       env.DB,
       id,
       historyPartitionId,
-      latestMetrics,
+      historyMetrics,
       regionCode,
       latestSample.ts,
       agentVersion
@@ -261,8 +549,8 @@ export async function handleUpdate(request, env, ctx) {
     queueBroadcastSamples(id, broadcastSamples);
     ctx.waitUntil(_ensureBatchFlush(env));
 
-    const clientConfigSchema = request.headers.get(AGENT_CONFIG_SCHEMA_HEADER);
-    if (clientConfigSchema !== String(AGENT_CONFIG_SCHEMA_VERSION)) {
+    const clientConfigSchema = normalizeAgentConfigSchemaVersion(request.headers.get(AGENT_CONFIG_SCHEMA_HEADER));
+    if (!clientConfigSchema) {
       return new Response('OK', {
         status: 200,
         headers: { 'Content-Type': 'text/plain; charset=utf-8' }
@@ -271,13 +559,13 @@ export async function handleUpdate(request, env, ctx) {
 
     try {
       const settings = await loadSiteSettings(env.DB);
-      const descriptor = await describeAgentConfig(serverDetail, settings);
+      const descriptor = await describeAgentConfig(serverDetail, settings, clientConfigSchema);
       const clientConfigMd5 = (request.headers.get(AGENT_CONFIG_MD5_HEADER) || '').trim().toLowerCase();
       const hasCorrection = descriptor.correction !== null;
       const md5Changed = clientConfigMd5 !== descriptor.md5;
       const responseHeaders = {
         'Cache-Control': 'no-store',
-        [AGENT_CONFIG_SCHEMA_HEADER]: String(AGENT_CONFIG_SCHEMA_VERSION),
+        [AGENT_CONFIG_SCHEMA_HEADER]: String(clientConfigSchema),
         [AGENT_CONFIG_MD5_HEADER]: descriptor.md5
       };
 
@@ -310,12 +598,21 @@ export async function handleUpdate(request, env, ctx) {
 }
 
 // 暴露给 index.js 路由使用的 WebSocket 接入函数
-export async function handleWebSocketUpgrade(request, env) {
+function isWebSocketUpgradeRequest(request) {
+  const upgradeHeader = request.headers.get('Upgrade');
+  return !!upgradeHeader && upgradeHeader.toLowerCase() === 'websocket';
+}
+
+async function forwardWebSocketUpgrade(request, env, internalPath, logPrefix) {
   if (!env || !env.METRICS_BROADCASTER) {
     return new Response(JSON.stringify({ error: 'WebSocket not enabled', code: 503 }), {
       status: 503,
       headers: { 'Content-Type': 'application/json' }
     });
+  }
+
+  if (!isWebSocketUpgradeRequest(request)) {
+    return new Response('Expected WebSocket upgrade request', { status: 426 });
   }
 
   const url = new URL(request.url);
@@ -326,17 +623,39 @@ export async function handleWebSocketUpgrade(request, env) {
     const realOrigin = new URL(request.url).origin;
     const headers = new Headers(request.headers);
     headers.set('X-Real-Origin', realOrigin);
-    return await stub.fetch(new Request(`http://internal/ws${qs}`, {
+    if (request.cf?.country && !headers.get('cf-ipcountry')) {
+      headers.set('cf-ipcountry', request.cf.country);
+    }
+    return await stub.fetch(new Request(`http://internal${internalPath}${qs}`, {
       method: request.method,
       headers,
       body: request.body,
       redirect: request.redirect
     }));
   } catch (e) {
-    console.error('[ws] DO upgrade failed:', e);
+    console.error(`${logPrefix} DO upgrade failed:`, e);
     return new Response(JSON.stringify({ error: 'WebSocket error', code: 500 }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' }
     });
   }
+}
+
+export async function handleWebSocketUpgrade(request, env) {
+  const response = await forwardWebSocketUpgrade(request, env, '/ws', '[ws]');
+  if (response?.status === 101) {
+    markFrontendRealtimeActive();
+  }
+  return response;
+}
+
+export async function handleUpdateWebSocketUpgrade(request, env) {
+  const settings = await loadSiteSettings(env.DB);
+  if (!isWssReportEnabled(settings)) {
+    return new Response(JSON.stringify({ error: 'Agent WSS report disabled', code: 403 }), {
+      status: 403,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+  return forwardWebSocketUpgrade(request, env, '/update', '[update-ws]');
 }

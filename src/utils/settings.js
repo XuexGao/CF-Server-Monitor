@@ -1,8 +1,8 @@
-const CURRENT_VERSION = '2.8.3 Beta2';
+const CURRENT_VERSION = '2.8.4 Beta1';
 export const DEFAULT_SITE_TITLE = 'Cloudflare Server Monitor';
 export const APPEARANCE_FIELDS = ['site_title', 'custom_bg', 'favicon', 'custom_head', 'custom_script', 'csp_static', 'csp_api', 'display_mode', 'theme_options'];
 
-export const SITE_FIELDS = ['is_public', 'show_price', 'show_expire', 'show_tf', 'show_time', 'long_history_points', 'tg_notify', 'tg_bot_token', 'tg_chat_id', 'turnstile_enabled', 'turnstile_login_enabled', 'turnstile_site_key', 'turnstile_secret_key', 'jwt_secret', 'username', 'password', 'cloudflare_account_id', 'cloudflare_token', 'custom_ct', 'custom_cu', 'custom_cm', 'custom_bd', 'expire_reminder', 'resource_alert_rules', 'theme_url', 'history_id_optimized','servers_optimized'];
+export const SITE_FIELDS = ['is_public', 'show_price', 'show_expire', 'show_tf', 'show_time', 'wss_report_enabled', 'long_history_points', 'tg_notify', 'tg_bot_token', 'tg_chat_id', 'turnstile_enabled', 'turnstile_login_enabled', 'turnstile_site_key', 'turnstile_secret_key', 'jwt_secret', 'username', 'password', 'cloudflare_account_id', 'cloudflare_token', 'custom_ct', 'custom_cu', 'custom_cm', 'custom_bd', 'expire_reminder', 'resource_alert_rules', 'theme_url', 'history_id_optimized','servers_optimized'];
 
 const SITE_SETTINGS_TTL = 120 * 1000;
 const JWT_SECRET_MIN_LENGTH = 32;
@@ -50,6 +50,7 @@ const defaults = {
   show_expire: 'true',
   show_tf: 'true',
   show_time: 'true',
+  wss_report_enabled: 'false',
   long_history_points: String(DEFAULT_LONG_HISTORY_POINTS),
   tg_notify: '0',
   tg_bot_token: '',
@@ -340,6 +341,20 @@ export function normalizeDisplayMode(value, fallback = 'bar') {
   return fallback === 'ring' || fallback === 'table' ? fallback : 'bar';
 }
 
+export function normalizeBooleanSetting(value, fallback = 'false') {
+  if (value === true || value === 1) return 'true';
+  if (value === false || value === 0 || value === null || value === undefined || value === '') return 'false';
+
+  const normalized = String(value).trim().toLowerCase();
+  if (['true', '1', 'yes', 'on'].includes(normalized)) return 'true';
+  if (['false', '0', 'no', 'off'].includes(normalized)) return 'false';
+  return fallback === 'true' ? 'true' : 'false';
+}
+
+export function isWssReportEnabled(settings = {}) {
+  return normalizeBooleanSetting(settings?.wss_report_enabled) === 'true';
+}
+
 function hasMissingFields(source, fields) {
   if (!source || typeof source !== 'object') return true;
   return fields.some(field => source[field] === undefined);
@@ -431,6 +446,7 @@ export async function loadSiteSettings(db, options = {}) {
     result.expire_reminder = normalizeExpireReminder(result.expire_reminder);
     result.long_history_points = normalizeLongHistoryPoints(result.long_history_points);
     result.resource_alert_rules = normalizeResourceAlertRules(result.resource_alert_rules);
+    result.wss_report_enabled = normalizeBooleanSetting(result.wss_report_enabled);
   } catch (e) {
     console.error('加载站点设置失败:', e);
   }
@@ -514,6 +530,7 @@ export async function saveSiteOptions(db, updates) {
   siteOptions.expire_reminder = normalizeExpireReminder(siteOptions.expire_reminder);
   siteOptions.long_history_points = normalizeLongHistoryPoints(siteOptions.long_history_points);
   siteOptions.resource_alert_rules = normalizeResourceAlertRules(siteOptions.resource_alert_rules);
+  siteOptions.wss_report_enabled = normalizeBooleanSetting(siteOptions.wss_report_enabled);
   
   await db.prepare(
     'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'

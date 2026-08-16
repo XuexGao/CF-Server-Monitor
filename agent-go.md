@@ -8,7 +8,7 @@
 
 - `SERVER_ID`：服务器 ID
 - `SECRET`：服务器密钥
-- `WORKER_URL`：Worker 上报地址，例如 `https://example.com`
+- `WORKER_URL`：Worker 上报地址，例如 `https://example.com/update`
 
 Linux、OpenWrt、Synology DSM、FreeBSD、macOS 可使用安装脚本自动下载当前系统对应的最新 release：
 
@@ -92,6 +92,7 @@ curl -fsSL https://raw.githubusercontent.com/huilang-me/cfsm-agent/main/install.
 | `-bd=HOST` | 百度测试节点，可写 `host` 或 `host:port` | 空 |
 | `-interface=IFACES` | 指定统计网卡，多个用英文逗号分隔 | 自动汇总 |
 | `-reset_day=N` | 每月流量重置日，`1-31`；`0` 表示不重置 | `1` |
+| `-connection_mode=auto\|http` | 连接模式；`auto` 优先 WSS 实时上报并在不可用时 POST 兜底，`http` 仅按上报间隔 POST | `auto` |
 | `-auto_update=0\|1` | 是否开启自动检查更新 | `0` |
 | `-rx_correction=N` | 下行流量校正，单位 GB | 空 |
 | `-tx_correction=N` | 上行流量校正，单位 GB | 空 |
@@ -196,7 +197,56 @@ PowerShell -ExecutionPolicy Bypass -File $script uninstall
 
 ## 上报数据说明
 
-Agent 会按 `REPORT_INTERVAL` 向 `WORKER_URL` 发起 `POST` 请求，`Content-Type` 为 `application/json`。为了兼容旧版接收端，`metrics` 内大多数基础指标仍以字符串上报；新增的 `disk` 磁盘 IO 对象使用数值类型。
+Agent 优先使用 WebSocket 上报，并保留旧版 `POST` fallback。配置中的 `WORKER_URL` 仍填写 HTTP(S) 上报地址，例如 `https://example.com/update`；Agent 会把 `https://` 转为 `wss://`、把 `http://` 转为 `ws://`，路径和查询参数保持不变。WebSocket 握手使用标准 `GET + Upgrade`。
+
+WSS 建连成功后，Agent 会等待服务端 hello：
+
+```json
+{ "type": "hello", "ts": 1720000000000, "protocol": "update" }
+```
+
+第一条有效 WSS 上报发送的就是旧 POST body，不改变 payload 结构；后续同一连接内也继续发送相同结构。旧版接收端仍可按 `REPORT_INTERVAL` 接收 `POST` fallback，`Content-Type` 为 `application/json`。为了兼容旧版接收端，`metrics` 内大多数基础指标仍以字符串上报；新增的 `disk` 磁盘 IO 对象使用数值类型。
+
+WSS 可用且 `CONNECTION_MODE=auto` 时，Agent 默认按 `REPORT_INTERVAL / 15` 并向上取整到秒发送实时上报，例如 `REPORT_INTERVAL=60` 时约每 4 秒发送一次，`REPORT_INTERVAL=30` 时约每 2 秒发送一次；服务端 ack 可通过 `nextWssReportAfterMs` 动态调整下一次 WSS 上报间隔，有前端实时订阅或资源告警缓存活跃时保持实时频率，无实时消费者时回退到 `REPORT_INTERVAL` 以降低 idle 状态 Durable Objects WebSocket 消息数。`CONNECTION_MODE=http` 时不启动 WSS，只按 `REPORT_INTERVAL` 走 `POST /update`。服务端 `/update` WSS 使用 Durable Object 标准 WebSocket API 接收 Agent 上报，让高频业务帧按 WebSocket incoming messages 口径计量；代价是 Agent 长连接存在时 DO 会保持非休眠状态并产生 duration（GB-s）。Agent 不根据服务端 D1 写入节流丢弃实时样本，持久化频率由服务端按 `server.report_interval` 控制。WSS 高频发送只刷新 CPU、内存、网卡累计流量和网速这些轻量实时字段；磁盘容量、磁盘 IO、GPU、进程数、连接数、月流量文件统计等完整指标仍按 `REPORT_INTERVAL` 或原有探测周期刷新，并在 WSS 实时包中复用最近一次缓存值。WSS 不可用时才 fallback 到 POST。普通 WSS 网络错误使用指数退避重连，最小 60 秒、最大 5 分钟；认证或配置类错误（HTTP `401`/`403`/`404`、WebSocket close code `1008`、服务端 `error` 帧）会同时暂停 WSS 和 POST fallback 120 秒，避免持续消耗服务端额度。相关日志会明确使用 `WSS connected`、`WSS ack`、`WSS error`、`WSS retry delayed`、`POST fallback delayed` 等关键字区分状态。
+
+服务端 ack 示例：
+
+```json
+{ "type": "ack", "ts": 1720000000000, "persisted": false, "nextD1WriteAfterMs": 30000, "nextWssReportAfterMs": 60000 }
+```
+
+收到 ack 后 Agent 继续下一轮采集/发送；`persisted=false` 表示服务端未执行持久化写入，Agent 不会因此重试。服务端 error 示例：
+
+```json
+{ "type": "error", "ts": 1720000000000, "error": "unauthorized", "code": 401 }
+```
+
+收到 error 后 Agent 会立即关闭当前 WSS，并暂停 WSS 和 POST fallback 120 秒后再重试。
+
+WSS 也支持服务端下发动态配置，配置内容复用旧 POST 响应里的 query-string body；Agent 侧最短每 1 分钟处理一次 WSS 配置下发，服务端不需要在每个 ack 中都携带配置。`configMd5` 可选，带上时会按旧 `X-Agent-Config-Md5` 逻辑更新本地配置版本；不带时 Agent 会按配置字段是否变化决定是否写入本地配置。
+
+```json
+{
+  "type": "config",
+  "body": "collect_interval=0&report_interval=60&reset_day=1&schema_version=4&interface=&connection_mode=auto"
+}
+```
+
+也可以把配置放在 `payload` 对象中：
+
+```json
+{
+  "type": "config",
+  "payload": {
+    "collect_interval": 0,
+    "report_interval": 60,
+    "reset_day": 1,
+    "schema_version": 4,
+    "interface": "",
+    "connection_mode": "auto"
+  }
+}
+```
 
 完整上报结构如下：
 
@@ -293,6 +343,8 @@ Agent 会按 `REPORT_INTERVAL` 向 `WORKER_URL` 发起 `POST` 请求，`Content-
 | `samples` | array | 可选，仅 `COLLECT_INTERVAL > 0` 时存在 |
 | `collect_interval` | number | 高频采样间隔，单位秒；`0` 表示不启用高频采样 |
 | `report_interval` | number | 上报间隔，单位秒 |
+| `config_schema` | string | 动态配置协议版本，当前为 `4`；WSS 建连 query、首次上报、约每 60 秒或 MD5 变化时携带 |
+| `config_md5` | string | 本地保存的远端配置 MD5；首次或为空时为 `none`，WSS 建连 query 与消息字段携带，POST 保留 `X-Agent-Config-Md5` Header |
 
 `time` 字段：
 
@@ -305,7 +357,7 @@ Agent 会按 `REPORT_INTERVAL` 向 `WORKER_URL` 发起 `POST` 请求，`Content-
 | `round_trip_ms` | number/null | 最近一次成功校准请求的往返耗时 |
 | `sample_age_ms` | number/null | 最近校准样本到本次组包的单调时钟年龄 |
 
-Agent 只使用 Worker 成功响应里的 HTTP `Date` 头做时间校准。响应头示例：`Date: Thu, 13 Aug 2026 00:23:22 GMT`。Agent 会按该格式解析为 Unix 毫秒时间戳，并结合本次请求 RTT 锚定到单调时钟。若新 `Date` 样本与当前已校准时间的差值在 20 秒内，则跳过更新；首次校准、校准过期或差值超过 20 秒时才覆盖。校准样本最长使用 24 小时。上报前会用同一锚点换算 `samples[].ts`，并校正 `metrics.boot_time`。Agent 不修改系统时间。
+Agent 只使用 Worker 成功 HTTP 响应里的 `Date` 头做时间校准，包括 POST 响应和 WSS 握手响应。响应头示例：`Date: Thu, 13 Aug 2026 00:23:22 GMT`。Agent 会按该格式解析为 Unix 毫秒时间戳，并结合本次请求 RTT 锚定到单调时钟。若新 `Date` 样本与当前已校准时间的差值在 20 秒内，则跳过更新；首次校准、校准过期或差值超过 20 秒时才覆盖。校准样本最长使用 24 小时。上报前会用同一锚点换算 `samples[].ts`，并校正 `metrics.boot_time`。Agent 不修改系统时间。
 
 `metrics` 字段：
 
@@ -362,11 +414,21 @@ Linux 下磁盘 IO 使用 `/proc/diskstats` 计算，并复用磁盘容量统计
 | `info` | number/null | GPU 使用率或平台兜底值 |
 | `id` | string | GPU 序号或平台标识 |
 
-常规指标上报会携带以下 HTTP 头：
+POST fallback 会携带以下 HTTP 头：
 
 | Header | 说明 |
 | --- | --- |
 | `Content-Type: application/json` | 请求体格式 |
+| `Accept: */*` | 接收任意响应格式 |
+| `User-Agent: cfsm` | Agent 标识 |
+| `X-Agent-Config-Schema` | 当前配置协议版本 |
+| `X-Agent-Version` | 当前 Agent 版本 |
+| `X-Agent-Config-Md5` | 本地保存的远端配置 MD5；为空时为 `none` |
+
+WSS 握手会携带标准 WebSocket Upgrade 头，并附带以下 Agent 头：
+
+| Header | 说明 |
+| --- | --- |
 | `Accept: */*` | 接收任意响应格式 |
 | `User-Agent: cfsm` | Agent 标识 |
 | `X-Agent-Config-Schema` | 当前配置协议版本 |

@@ -5,7 +5,8 @@ import { detectBillingCycle, normalizeBillingCycle, renewExpireDateIfNeeded } fr
 
 const MAX_RETRIES = 3;
 const RETRY_DELAY = 1000;
-const RESOURCE_ALERT_EVALUATE_CHUNK_SIZE = 500;
+const RESOURCE_ALERT_EVALUATE_RULE_BATCH_SIZE = 20;
+const RESOURCE_ALERT_EVALUATE_SERVER_BATCH_SIZE = 500;
 const RESOURCE_ALERT_STATE_ACTIVE = 'active';
 const RESOURCE_ALERT_STATE_RECOVERED = 'recovered';
 const RESOURCE_ALERT_STATE_KEY = 'resource_alert_state';
@@ -190,43 +191,72 @@ function getResourceAlertRuleServerIds(rule, servers) {
   return ids;
 }
 
-async function evaluateResourceAlertRule(stub, rule, serverIds) {
-  const alerts = [];
-  const evaluatedServerIds = [];
-  const evaluations = [];
-  try {
-    for (let offset = 0; offset < serverIds.length; offset += RESOURCE_ALERT_EVALUATE_CHUNK_SIZE) {
-      const chunk = serverIds.slice(offset, offset + RESOURCE_ALERT_EVALUATE_CHUNK_SIZE);
+async function evaluateResourceAlertRules(stub, ruleRequests) {
+  const resultMap = new Map();
+  const requests = [];
+
+  for (const item of Array.isArray(ruleRequests) ? ruleRequests : []) {
+    const serverIds = Array.isArray(item?.serverIds) ? item.serverIds : [];
+    for (let offset = 0; offset < serverIds.length; offset += RESOURCE_ALERT_EVALUATE_SERVER_BATCH_SIZE) {
+      requests.push({
+        rule: item.rule,
+        serverIds: serverIds.slice(offset, offset + RESOURCE_ALERT_EVALUATE_SERVER_BATCH_SIZE)
+      });
+    }
+  }
+
+  for (let offset = 0; offset < requests.length; offset += RESOURCE_ALERT_EVALUATE_RULE_BATCH_SIZE) {
+    const batch = requests.slice(offset, offset + RESOURCE_ALERT_EVALUATE_RULE_BATCH_SIZE);
+    if (batch.length === 0) continue;
+
+    try {
       const response = await stub.fetch('http://internal/evaluate-resource-alerts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          serverIds: chunk,
-          mode: rule.mode,
-          windowMinutes: Number(rule.intervalMinutes),
-          thresholds: getResourceAlertRuleThresholds(rule)
+          rules: batch.map(({ rule, serverIds }) => ({
+            ruleId: rule.id,
+            serverIds,
+            mode: rule.mode,
+            windowMinutes: Number(rule.intervalMinutes),
+            thresholds: getResourceAlertRuleThresholds(rule)
+          }))
         })
       });
 
       if (!response.ok) {
         console.warn('[ResourceAlert] DO evaluate failed:', response.status);
-        return null;
+        continue;
       }
 
       const result = await response.json();
-      if (Array.isArray(result.alerts)) alerts.push(...result.alerts);
-      if (Array.isArray(result.evaluatedServerIds)) {
-        evaluatedServerIds.push(...result.evaluatedServerIds.map(id => String(id)).filter(Boolean));
+      for (const item of Array.isArray(result?.results) ? result.results : []) {
+        const ruleId = String(item?.ruleId || '').trim();
+        if (!ruleId) continue;
+        const existing = resultMap.get(ruleId) || {
+          alerts: [],
+          evaluatedServerIds: [],
+          evaluations: []
+        };
+        existing.alerts.push(...(Array.isArray(item.alerts) ? item.alerts : []));
+        existing.evaluatedServerIds.push(...(
+          Array.isArray(item.evaluatedServerIds)
+            ? item.evaluatedServerIds.map(id => String(id)).filter(Boolean)
+            : []
+        ));
+        existing.evaluations.push(...(
+          Array.isArray(item.evaluations)
+            ? item.evaluations.filter(evaluation => evaluation && evaluation.serverId)
+            : []
+        ));
+        resultMap.set(ruleId, existing);
       }
-      if (Array.isArray(result.evaluations)) {
-        evaluations.push(...result.evaluations.filter(item => item && item.serverId));
-      }
+    } catch (e) {
+      console.warn('[ResourceAlert] DO evaluate failed:', e?.message || e);
     }
-  } catch (e) {
-    console.warn('[ResourceAlert] DO evaluate failed:', e?.message || e);
-    return null;
   }
-  return { alerts, evaluatedServerIds, evaluations };
+
+  return resultMap;
 }
 
 async function fetchWithRetry(url, options, retries = MAX_RETRIES) {
@@ -349,9 +379,13 @@ export async function sendNotification(settings, msg) {
       return "企业微信通知发送失败: " + e.message;
     }
   // Server 酱（使用 sendkey）
-  }else if(settings.tg_bot_token.includes("https://sctapi.ftqq.com/")) {
+  }else if(settings.tg_bot_token.includes("https://sctapi.ftqq.com/") || settings.tg_bot_token.indexOf("server:") == 0) {
+    let serverUrl = settings.tg_bot_token;
+    if(serverUrl.indexOf("server:") == 0) {
+      serverUrl = serverUrl.replace("server:", "");
+    }
     try {
-      await fetchWithRetry(settings.tg_bot_token, {
+      await fetchWithRetry(serverUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -519,6 +553,7 @@ export async function checkResourceAlerts(env) {
     const stub = env.METRICS_BROADCASTER.get(id);
     const activeMap = new Map();
     const evaluationMap = new Map();
+    const configuredRules = [];
     const configuredRuleServers = [];
     const evaluatedRuleServers = [];
 
@@ -551,9 +586,18 @@ export async function checkResourceAlerts(env) {
       }
       if (ruleServers.length === 0) continue;
       configuredRuleServers.push(...ruleServers);
+      configuredRules.push({ rule, serverIds, ruleServers });
+    }
 
-      const result = await evaluateResourceAlertRule(stub, rule, serverIds);
-      if (result === null) continue;
+    if (configuredRuleServers.length === 0) {
+      await clearResourceAlertState(db);
+      return;
+    }
+
+    const evaluationResults = await evaluateResourceAlertRules(stub, configuredRules);
+    for (const { rule, ruleServers } of configuredRules) {
+      const result = evaluationResults.get(String(rule.id));
+      if (!result) continue;
       const evaluatedServerIdSet = new Set(result.evaluatedServerIds);
       evaluatedRuleServers.push(...ruleServers.filter(item => evaluatedServerIdSet.has(item.serverId)));
       for (const alert of result.alerts) {
@@ -562,11 +606,6 @@ export async function checkResourceAlerts(env) {
       for (const evaluation of result.evaluations || []) {
         evaluationMap.set(getResourceAlertRuleStateKey(rule, evaluation.serverId), evaluation);
       }
-    }
-
-    if (configuredRuleServers.length === 0) {
-      await clearResourceAlertState(db);
-      return;
     }
 
     const stateRow = await db.prepare(
