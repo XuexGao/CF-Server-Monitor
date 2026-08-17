@@ -696,3 +696,113 @@ test('WSS history persistence carries pending history aggregates into next D1 wr
     Date.now = originalNow;
   }
 });
+
+test('WSS history persistence keeps samples received during a D1 flush for the next write', async () => {
+  const savedRows = [];
+  let releaseFirstRun = null;
+  let holdNextRun = true;
+  const db = {
+    prepare() {
+      return {
+        bind(...args) {
+          return {
+            async run() {
+              savedRows.push(args);
+              if (holdNextRun) {
+                holdNextRun = false;
+                return new Promise(resolve => {
+                  releaseFirstRun = () => resolve({ meta: { changes: 1 } });
+                });
+              }
+              return { meta: { changes: 1 } };
+            }
+          };
+        }
+      };
+    }
+  };
+  const broadcaster = makeBroadcaster([], { DB: db });
+  const originalNow = Date.now;
+  let now = Date.UTC(2026, 0, 1, 0, 0, 0);
+  let attachment = {
+    reportIntervalMs: 30_000,
+    lastD1WriteTs: now - 31_000
+  };
+  const ws = {
+    deserializeAttachment() {
+      return attachment;
+    },
+    serializeAttachment(value) {
+      attachment = value;
+    }
+  };
+
+  try {
+    Date.now = () => now;
+    const firstWrite = broadcaster._persistAgentHistoryIfDue(ws, attachment, {
+      serverId: 'server-1',
+      historyPartitionId: 42,
+      metrics: {
+        cpu: 10,
+        net_in_speed: 10 * 1024,
+        net_out_speed: 1024
+      },
+      regionCode: 'US',
+      timestamp: now,
+      agentVersion: 'test',
+      reportIntervalMs: 30_000
+    });
+
+    await Promise.resolve();
+    assert.equal(savedRows.length, 1);
+    assert.equal(broadcaster.agentHistoryWrites.get('server-1').flushing, true);
+
+    now += 1_000;
+    const skippedDuringFlush = await broadcaster._persistAgentHistoryIfDue(ws, attachment, {
+      serverId: 'server-1',
+      historyPartitionId: 42,
+      metrics: {
+        cpu: 12,
+        net_in_speed: 5 * 1024 * 1024,
+        net_out_speed: 1024
+      },
+      regionCode: 'US',
+      timestamp: now,
+      agentVersion: 'test',
+      reportIntervalMs: 30_000
+    });
+
+    assert.equal(skippedDuringFlush.persisted, false);
+    assert.equal(savedRows.length, 1);
+    assert.equal(
+      broadcaster.agentHistoryWrites.get('server-1').pendingHistoryAggregate.max.net_in_speed,
+      5 * 1024 * 1024
+    );
+
+    releaseFirstRun();
+    const firstResult = await firstWrite;
+    assert.equal(firstResult.persisted, true);
+    assert.equal(savedRows[0][6], 10 * 1024);
+
+    now += 31_000;
+    const secondResult = await broadcaster._persistAgentHistoryIfDue(ws, attachment, {
+      serverId: 'server-1',
+      historyPartitionId: 42,
+      metrics: {
+        cpu: 14,
+        net_in_speed: 10 * 1024,
+        net_out_speed: 2048
+      },
+      regionCode: 'US',
+      timestamp: now,
+      agentVersion: 'test',
+      reportIntervalMs: 30_000
+    });
+
+    assert.equal(secondResult.persisted, true);
+    assert.equal(savedRows.length, 2);
+    assert.equal(savedRows[1][6], 5 * 1024 * 1024);
+  } finally {
+    Date.now = originalNow;
+  }
+});

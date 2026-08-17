@@ -1174,6 +1174,16 @@ export class MetricsBroadcaster {
     const state = this.agentHistoryWrites.get(serverId) || {};
     const currentAggregate = payload.historyAggregate ||
       collectHistoryMetricAggregates([{ metrics: payload.metrics }]);
+
+    if (state.flushing) {
+      state.pendingHistoryAggregate = mergeHistoryMetricAggregates(
+        state.pendingHistoryAggregate,
+        currentAggregate
+      );
+      this.agentHistoryWrites.set(serverId, state);
+      return { persisted: false, nextD1WriteAfterMs: 0 };
+    }
+
     state.pendingHistoryAggregate = mergeHistoryMetricAggregates(
       state.pendingHistoryAggregate,
       currentAggregate
@@ -1196,14 +1206,12 @@ export class MetricsBroadcaster {
       return { persisted: false, nextD1WriteAfterMs: nextWriteTs - now };
     }
 
-    if (state.flushing) {
-      return { persisted: false, nextD1WriteAfterMs: 0 };
-    }
-
     state.flushing = true;
+    const aggregateForWrite = state.pendingHistoryAggregate;
+    delete state.pendingHistoryAggregate;
     this.agentHistoryWrites.set(serverId, state);
     try {
-      const metrics = applyHistoryMetricAggregates(payload.metrics, state.pendingHistoryAggregate);
+      const metrics = applyHistoryMetricAggregates(payload.metrics, aggregateForWrite);
       await saveMetricsHistory(
         this.env.DB,
         serverId,
@@ -1220,11 +1228,16 @@ export class MetricsBroadcaster {
         ...currentAttachment,
         lastD1WriteTs: persistedAt
       });
-      delete state.pendingHistoryAggregate;
       return {
         persisted: true,
         nextD1WriteAfterMs: intervalMs
       };
+    } catch (e) {
+      state.pendingHistoryAggregate = mergeHistoryMetricAggregates(
+        aggregateForWrite,
+        state.pendingHistoryAggregate
+      );
+      throw e;
     } finally {
       state.flushing = false;
       this.agentHistoryWrites.set(serverId, state);
