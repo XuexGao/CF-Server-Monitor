@@ -338,6 +338,13 @@
         </div>
       </div>
     </div>
+
+    <LiveConnectionTimeoutModal
+      :show="showLiveTimeoutModal"
+      :trans="trans"
+      @close="closeLiveConnection"
+      @continue="continueLiveConnection"
+    />
   </div>
 </template>
 
@@ -347,7 +354,8 @@ import { useRoute, useRouter } from 'vue-router'
 import TerminalHeader from '../components/TerminalHeader.vue'
 import Footer from '../components/Footer.vue'
 import OsIcon from '../components/OsIcon.vue'
-import { fetchServerDetail, fetchAllHistory, fetchConfig, formatBytes, isAdminLoggedIn, createLiveSocket, getFlagRegionCode, isServerOnline } from '../utils/api.js'
+import LiveConnectionTimeoutModal from '../components/LiveConnectionTimeoutModal.vue'
+import { fetchServerDetail, fetchAllHistory, fetchConfig, formatBytes, isAdminLoggedIn, createLiveSocket, getFlagRegionCode, isServerOnline, normalizeLiveSocketTimeoutMinutes } from '../utils/api.js'
 import { getTrafficUsageBytes } from '../composables/useServerCardData'
 import { getPublicAssetUrl } from '../utils/config.js'
 import Chart from 'chart.js/auto'
@@ -386,6 +394,8 @@ const currentHours = ref(REALTIME_HISTORY_HOURS)
 const lastUpdateText = ref('')
 const config = ref(null)
 const showLoginModal = ref(false)
+const showLiveTimeoutModal = ref(false)
+const frontendWsTimeoutMinutes = ref(0)
 const loading = ref(true)
 
 const trans = useTranslation()
@@ -1608,6 +1618,7 @@ const goToLogin = () => {
 }
 
 let liveSocket = null
+let liveConnectionClosedByUser = false
 
 const initChartsOnMount = async () => {
   if (isInitializingCharts || chartsReady.value) return
@@ -1636,9 +1647,23 @@ const handleVisibility = () => {
   if (document.hidden) {
     clearLatestReportReplayTimers()
     liveSocket.close()
+  } else if (showLiveTimeoutModal.value || liveConnectionClosedByUser) {
+    return
   } else {
     liveSocket.reconnect()
   }
+}
+
+const closeLiveConnection = () => {
+  showLiveTimeoutModal.value = false
+  liveConnectionClosedByUser = true
+  liveSocket?.close()
+}
+
+const continueLiveConnection = () => {
+  showLiveTimeoutModal.value = false
+  liveConnectionClosedByUser = false
+  liveSocket?.reconnect()
 }
 
 const handleLiveMessage = (msg) => {
@@ -1657,6 +1682,7 @@ const handleLiveMessage = (msg) => {
 const loadThemeOptionsFromConfig = async () => {
   try {
     const runtimeConfig = await fetchConfig(apiIndex.value)
+    frontendWsTimeoutMinutes.value = normalizeLiveSocketTimeoutMinutes(runtimeConfig?.frontend_ws_timeout_minutes)
     if (runtimeConfig && Object.prototype.hasOwnProperty.call(runtimeConfig, 'theme_options')) {
       applyMikusThemeOptions(runtimeConfig.theme_options)
     }
@@ -1677,7 +1703,11 @@ const init = async () => {
 
   liveSocket = createLiveSocket(String(serverId), {
     replay: false,
+    timeoutMinutes: frontendWsTimeoutMinutes.value,
     onMessage: handleLiveMessage,
+    onTimeout: () => {
+      showLiveTimeoutModal.value = true
+    },
     onStatus: ({ connected }) => {}
   }, apiIndex.value)
 

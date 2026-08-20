@@ -43,6 +43,10 @@
           <span class="config-label">{{ trans.reportInterval }}</span>
           <span class="config-value">{{ formatWithUnit(reportInterval, 's') }}</span>
         </div>
+        <div v-if="connectionMode === 'auto'" class="config-row">
+          <span class="config-label">{{ trans.wssReportInterval }}</span>
+          <span class="config-value">{{ formatWithUnit(wssReportInterval, 's') }}</span>
+        </div>
         <div class="config-row">
           <span class="config-label">{{ trans.connectionMode }}</span>
           <span class="config-value">{{ connectionMode === 'http' ? trans.connectionModeHttp : trans.connectionModeAuto }}</span>
@@ -116,6 +120,7 @@ defineProps({
   installGhProxy: { type: String, default: '' },
   collectInterval: { type: [Number, String], default: 0 },
   reportInterval: { type: [Number, String], default: 60 },
+  wssReportInterval: { type: [Number, String], default: 2 },
   connectionMode: { type: String, default: 'auto' },
   customCt: { type: String, default: '' },
   customCu: { type: String, default: '' },

@@ -21,7 +21,9 @@ import {
   AGENT_CONFIG_LEGACY_SCHEMA_VERSION,
   AGENT_CONFIG_SCHEMA_HEADER,
   AGENT_CONFIG_SCHEMA_VERSION,
+  DEFAULT_WSS_REPORT_INTERVAL,
   describeAgentConfig,
+  normalizeWssReportInterval,
   normalizeAgentConfigSchemaVersion,
   serializeCorrection
 } from '../utils/agentConfig.js';
@@ -44,9 +46,7 @@ const AGENT_REPORT_KIND = 'agent-report';
 const DEFAULT_AGENT_HISTORY_WRITE_INTERVAL_MS = 60 * 1000;
 const ALLOWED_AGENT_REPORT_INTERVALS = new Set([30, 60, 120, 180]);
 const AGENT_SERVER_DETAIL_TTL_MS = 120 * 1000;
-const AGENT_REALTIME_REPORT_DIVISOR = 15;
-const IDLE_AGENT_WSS_REPORT_INTERVAL_MULTIPLIER = 2;
-const RESOURCE_ALERT_AGENT_REPORT_INTERVAL_MS = 60 * 1000;
+const MIN_IDLE_AGENT_WSS_REPORT_INTERVAL_MS = 60 * 1000;
 const LATEST_REPORT_TTL_MS = 5 * 60 * 1000;
 const MAX_LATEST_REPORT_SERVERS = 1000;
 const RESOURCE_ALERT_STORAGE_KEY = 'resource_alert_windows_v1';
@@ -749,6 +749,10 @@ export class MetricsBroadcaster {
     return DEFAULT_AGENT_HISTORY_WRITE_INTERVAL_MS;
   }
 
+  _getWssReportIntervalMs(serverDetail) {
+    return normalizeWssReportInterval(serverDetail?.wss_report_interval) * 1000;
+  }
+
   async _getAgentServerDetail(serverId, forceRefresh = false) {
     const key = String(serverId || '');
     const now = Date.now();
@@ -819,6 +823,18 @@ export class MetricsBroadcaster {
       (attachment.authenticated && Number.isFinite(attachedReportIntervalMs) && attachedReportIntervalMs > 0
         ? attachedReportIntervalMs
         : this._getReportIntervalMs(serverDetail));
+    const reportedWssReportInterval = firstDefined(
+      data.wss_report_interval,
+      data.wssReportInterval
+    );
+    const reportedWssReportIntervalMs = reportedWssReportInterval === undefined
+      ? null
+      : normalizeWssReportInterval(reportedWssReportInterval) * 1000;
+    const attachedWssReportIntervalMs = Number(attachment.wssReportIntervalMs);
+    const wssReportIntervalMs = reportedWssReportIntervalMs ||
+      (attachment.authenticated && Number.isFinite(attachedWssReportIntervalMs) && attachedWssReportIntervalMs > 0
+        ? attachedWssReportIntervalMs
+        : this._getWssReportIntervalMs(serverDetail));
     const nextAttachment = {
       ...attachment,
       kind: AGENT_REPORT_KIND,
@@ -827,6 +843,7 @@ export class MetricsBroadcaster {
       historyPartitionId: serverDetail.history_partition_id,
       agentVersion,
       reportIntervalMs,
+      wssReportIntervalMs,
       configSchema: agentConfig.schema,
       configMd5: agentConfig.md5
     };
@@ -839,6 +856,7 @@ export class MetricsBroadcaster {
       regionCode: attachment.region || '',
       agentVersion,
       reportIntervalMs,
+      wssReportIntervalMs,
       agentConfig
     };
   }
@@ -933,6 +951,16 @@ export class MetricsBroadcaster {
       const clientMd5 = normalizeConfigMd5(attachment.configMd5);
       if (clientMd5 === descriptor.md5 && !hasCorrection) {
         continue;
+      }
+
+      const nextAttachment = { ...attachment };
+      if (Object.prototype.hasOwnProperty.call(descriptor.config, 'wss_report_interval')) {
+        nextAttachment.wssReportIntervalMs = descriptor.config.wss_report_interval * 1000;
+      } else {
+        delete nextAttachment.wssReportIntervalMs;
+      }
+      if (typeof ws.serializeAttachment === 'function') {
+        ws.serializeAttachment(nextAttachment);
       }
 
       this._sendWsJson(ws, {
@@ -1098,32 +1126,30 @@ export class MetricsBroadcaster {
     };
   }
 
-  _getAgentNextWssReportAfterMs(reportIntervalMs, realtimeState) {
-    const historyIntervalMs = Math.max(
+  _getAgentNextWssReportAfterMs(wssReportIntervalMs, reportIntervalMs, realtimeState) {
+    const normalizedWssReportIntervalMs = Math.max(
       1000,
-      Number(reportIntervalMs) || DEFAULT_AGENT_HISTORY_WRITE_INTERVAL_MS
+      Number(wssReportIntervalMs) || DEFAULT_WSS_REPORT_INTERVAL * 1000
     );
     const state = this._normalizeRealtimeState(realtimeState);
-    const realtimeIntervalMs = Math.max(
-      1000,
-      Math.ceil((historyIntervalMs / 1000) / AGENT_REALTIME_REPORT_DIVISOR) * 1000
+    const normalizedReportIntervalMs = Math.max(
+      MIN_IDLE_AGENT_WSS_REPORT_INTERVAL_MS,
+      Number(reportIntervalMs) || DEFAULT_AGENT_HISTORY_WRITE_INTERVAL_MS
     );
-    if (state.frontendActive) return realtimeIntervalMs;
-
-    if (state.resourceAlertActive) {
-      return Math.max(historyIntervalMs, RESOURCE_ALERT_AGENT_REPORT_INTERVAL_MS);
-    }
-
-    return realtimeIntervalMs * IDLE_AGENT_WSS_REPORT_INTERVAL_MULTIPLIER;
+    return state.frontendActive
+      ? normalizedWssReportIntervalMs
+      : normalizedReportIntervalMs;
   }
 
   async _getAgentHintReportIntervalMs(attachment) {
-    const attachedReportIntervalMs = Number(attachment?.reportIntervalMs);
+    const attachedReportIntervalMs = Number(
+      attachment?.wssReportIntervalMs ?? attachment?.reportIntervalMs
+    );
     if (attachment?.serverId) {
       try {
         const serverDetail = await this._getAgentServerDetail(attachment.serverId);
         if (serverDetail) {
-          const configuredReportIntervalMs = this._getReportIntervalMs(serverDetail);
+          const configuredReportIntervalMs = this._getWssReportIntervalMs(serverDetail);
           if (configuredReportIntervalMs) return configuredReportIntervalMs;
         }
       } catch (e) {
@@ -1133,7 +1159,7 @@ export class MetricsBroadcaster {
     if (Number.isFinite(attachedReportIntervalMs) && attachedReportIntervalMs > 0) {
       return attachedReportIntervalMs;
     }
-    return DEFAULT_AGENT_HISTORY_WRITE_INTERVAL_MS;
+    return DEFAULT_WSS_REPORT_INTERVAL * 1000;
   }
 
   async _hintAgentRealtimeIntervals(realtimeState = null) {
@@ -1154,8 +1180,12 @@ export class MetricsBroadcaster {
         continue;
       }
 
-      const reportIntervalMs = await this._getAgentHintReportIntervalMs(attachment);
-      const nextWssReportAfterMs = this._getAgentNextWssReportAfterMs(reportIntervalMs, state);
+      const wssReportIntervalMs = await this._getAgentHintReportIntervalMs(attachment);
+      const nextWssReportAfterMs = this._getAgentNextWssReportAfterMs(
+        wssReportIntervalMs,
+        attachment.reportIntervalMs,
+        state
+      );
       this._sendWsJson(ws, {
         type: 'ack',
         ts: Date.now(),
@@ -1318,7 +1348,11 @@ export class MetricsBroadcaster {
     });
 
     const configAck = await this._buildAgentConfigAck(context);
-    const nextWssReportAfterMs = this._getAgentNextWssReportAfterMs(context.reportIntervalMs, realtimeState);
+    const nextWssReportAfterMs = this._getAgentNextWssReportAfterMs(
+      context.wssReportIntervalMs,
+      context.reportIntervalMs,
+      realtimeState
+    );
     this._sendWsJson(ws, {
       type: 'ack',
       ts: Date.now(),
@@ -1352,6 +1386,7 @@ export class MetricsBroadcaster {
       region: request.headers.get('cf-ipcountry') || '',
       agentVersion: normalizeAgentVersion(request.headers.get('X-Agent-Version')),
       reportIntervalMs: DEFAULT_AGENT_HISTORY_WRITE_INTERVAL_MS,
+      wssReportIntervalMs: DEFAULT_WSS_REPORT_INTERVAL * 1000,
       lastD1WriteTs: 0,
       configSchema: normalizeConfigSchema(firstDefined(
         url.searchParams.get('config_schema'),
@@ -1375,8 +1410,6 @@ export class MetricsBroadcaster {
     if (origin && allowedOrigins.length > 0) {
       responseHeaders.set('Access-Control-Allow-Origin', origin);
       responseHeaders.set('Access-Control-Allow-Credentials', 'true');
-    } else if (allowedOrigins.length === 0) {
-      responseHeaders.set('Access-Control-Allow-Origin', '*');
     }
 
     return new Response(null, {

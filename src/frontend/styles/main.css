@@ -1595,20 +1595,6 @@ body::before {
     color: var(--accent-yellow);
 }
 
-.stat-time-row {
-    margin-top: -1px;
-    margin-bottom: 0;
-}
-
-.stat-time-value {
-    color: var(--text-secondary);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    min-width: 0;
-    max-width: 100%;
-}
-
 /* --------------------------------------------------------------------------
    14. Ping Panel
    -------------------------------------------------------------------------- */
@@ -2396,6 +2382,35 @@ body::before {
     margin-top: 20px;
     padding-top: 16px;
     border-top: 1px solid var(--border-color);
+}
+
+.live-timeout-dialog {
+    width: 520px;
+}
+
+.live-timeout-message {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+}
+
+.live-timeout-icon {
+    flex: 0 0 auto;
+    color: var(--accent-yellow);
+    font-weight: 700;
+}
+
+.live-timeout-message strong {
+    display: block;
+    color: var(--text-primary);
+    margin-bottom: 8px;
+}
+
+.live-timeout-message p {
+    color: var(--text-muted);
+    font-size: 14px;
+    line-height: 1.6;
+    margin: 0;
 }
 
 /* --------------------------------------------------------------------------

@@ -99,12 +99,6 @@
           <span v-if="sysConfig.show_tf && server.traffic_limit" class="stat-limit">/ 📦 {{ formatBytes(server.traffic_limit * 1024 * 1024 * 1024) }}</span>
         </div>
       </div>
-      <div v-if="sysConfig.show_time" class="stat-row stat-time-row">
-        <span class="stat-key">TIME</span>
-        <div class="stat-content stat-content-time">
-          <span class="stat-time-value">{{ dataTimeText }}</span>
-        </div>
-      </div>
     </div>
     <div class="server-space"></div>
     <div v-if="hasPingData" class="ping-panel">
@@ -157,7 +151,6 @@ const {
   priceText,
   expireDateTitle,
   loadAvg,
-  dataTimeText,
   isExpired,
   expireText,
   isPingValid,

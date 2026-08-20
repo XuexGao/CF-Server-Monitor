@@ -98,6 +98,7 @@ my-theme/
 - 旗帜和 OS 图标走默认皮肤静态文件，不要打包进主题：旗帜使用 `/flags/<code>.svg`，OS 图标使用 `/os-icons/<filename>`
 - 站点标题、背景图、自定义 `<head>`、自定义脚本由用户后台外观设置控制，主题不要把这些配置写死
 - 主题不可用时应让页面暴露加载错误，不要在主题内静默跳转到其他页面
+- 主题底部需要展示 `Powered by CF-Server-Monitor`，并链接到 [https://github.com/huilang-me/CF-Server-Monitor/](https://github.com/huilang-me/CF-Server-Monitor/)；建议同时输出 `/api/config` 返回的 `version`，例如 `Powered by CF-Server-Monitor v2.7.12 Beta`
 
 路由约定：
 
@@ -122,12 +123,15 @@ my-theme/
 
 ### 1.1 鉴权机制
 
-项目使用两套鉴权机制：
+项目使用以下鉴权机制：
 
 | 机制         | 使用位置            | 方式                                           |
 | ---------- | --------------- | -------------------------------------------- |
 | JWT Bearer | 非公开站点读取公开 API、查看 1 小时以上历史 | `Authorization: Bearer <token>`              |
+| WebSocket JWT | 非公开站点连接 `/api/ws` | `Authorization: Bearer <token>`、`Cookie: cfsm_auth=<token>` 或查询参数 `token` / `auth_token` / `ws_token` |
 | Turnstile  | 公开 API（当启用时）    | `X-Turnstile-Token` 或 `X-Turnstile-Verified` |
+
+浏览器原生 WebSocket 不能自定义 `Authorization` Header。第三方主题在私有站点中连接 `/api/ws` 时，同域走登录后的 `cfsm_auth` Cookie，跨域走 WebSocket URL 查询参数 `token=<jwt>`。查询参数 token 可能出现在访问日志中，请只通过 HTTPS 使用。
 
 ### 1.2 Turnstile 人机验证流程
 
@@ -150,6 +154,7 @@ my-theme/
 
 - `/api/ws`、`/api/config`（不带 Turnstile Header 时）无需验证
 - `/api/config` 带 `X-Turnstile-Token` 或 `X-Turnstile-Verified` 时会进入验证流程，并通过 `verified` / `turnstile_verified` 返回验证结果
+- `/api/ws` 不参与 Turnstile 验证，但非公开站点仍需要通过 WebSocket JWT 认证
 - `turnstile_enabled` 是全局 API 验证开关，`turnstile_login_enabled` 是内置后台登录页验证开关；第三方主题不实现登录页，管理入口跳转 `/admin#admin`
 
 ***
@@ -187,6 +192,7 @@ Headers: (可选) Authorization: Bearer <jwt>, X-Turnstile-Token / X-Turnstile-V
   },
   "verified": false,
   "turnstile_verified": null,
+  "frontend_ws_timeout_minutes": 20,
   "long_history_points": 120
 }
 ```
@@ -207,6 +213,7 @@ Headers: (可选) Authorization: Bearer <jwt>, X-Turnstile-Token / X-Turnstile-V
 | `theme_options`      | object       | 第三方主题自定义配置；未配置时为空对象 |
 | `verified`           | boolean      | 当前请求是否已验证       |
 | `turnstile_verified` | string\|null | 已验证凭证，缓存复用 1 小时 |
+| `frontend_ws_timeout_minutes` | number | 前端实时订阅连接超时分钟数，范围 `0`-`1440`；默认 `0` 表示不超时 |
 | `long_history_points` | number      | 长历史查询返回的采样点数，可选 `60`、`120`、`180`、`240` |
 
 `theme_options` 对第三方主题是只读运行时配置。需要修改主题配置时，跳转到内置后台 `/admin#admin`，不要在第三方主题内调用管理端接口。
@@ -247,8 +254,7 @@ Headers: (按需) Authorization: Bearer <jwt>, X-Turnstile-Token/Verified
   "sysConfig": {
     "show_price": true,
     "show_expire": true,
-    "show_tf": true,
-    "show_time": true
+    "show_tf": true
   }
 }
 ```
@@ -301,6 +307,7 @@ Headers: (按需) Authorization, X-Turnstile-Token/Verified
   "traffic_calc_type": "total",
   "reset_day": 1,
   "report_interval": 60,
+  "wss_report_interval": 2,
   "is_hidden": "0",
   "sort_order": 0,
   "cpu": 12.34,
@@ -466,6 +473,13 @@ Headers: Upgrade: websocket, Connection: Upgrade
 | 参数 | 必填 | 默认值 | 说明 |
 | --- | --- | --- | --- |
 | `subscribe` | 否 | `all` | `all` 订阅所有服务器，`<serverId>` 只订阅指定服务器 |
+| `token` / `auth_token` / `ws_token` | 否 | - | 非公开站点可用的 JWT 查询参数认证；公开站点不需要 |
+
+**鉴权**：
+
+- 公开站点：无需 JWT。
+- 非公开站点：连接 `/api/ws` 必须通过 WebSocket JWT 认证，支持 `Authorization: Bearer <jwt>`、`Cookie: cfsm_auth=<jwt>`、查询参数 `token` / `auth_token` / `ws_token`。
+- 浏览器主题通常不能设置 WebSocket `Authorization` Header；同域部署使用 `cfsm_auth` Cookie，跨域或纯静态主题在 WebSocket URL 上追加 `token=<jwt>`。
 
 **过滤机制**：
 
@@ -480,12 +494,29 @@ Headers: Upgrade: websocket, Connection: Upgrade
 
 当配置了多个 `apiBase` 时，前端会为每个 apiBase 创建独立的 WebSocket 连接。每个连接发送的 `ids` 应只包含该 apiBase 返回的服务器 ID，而非全部服务器 ID。每个 Worker/DO 只知道自己的服务器，传入不属于它的 ID 不会产生任何效果。
 
-**推荐流程**：
+**推荐流程（首页/列表页）**：
 
 1. 调用 `GET /api/servers` 获取服务器列表（已按登录状态过滤隐藏服务器）
 2. 提取返回的 `servers[].id` 数组
 3. 连接 WebSocket：`?subscribe=all`
 4. 建连后通过 WebSocket 通道发送 `{ type: "subscribe", scope: "all", ids }`
+
+**推荐流程（详情页）**：
+
+详情页只展示单台服务器时，应使用单服务器接口和单服务器 WebSocket 订阅，以降低后端推送量、前端渲染压力和额度消耗：
+
+- HTTP 初始数据：`GET https://example.com/api/server?id=<id>`
+- WebSocket 实时订阅：`wss://example.com/api/ws?subscribe=<id>`
+
+非公开站点同域部署时直接使用 Cookie 认证；跨域或纯静态主题无法依赖同域 Cookie 时，再使用查询参数认证：`wss://example.com/api/ws?subscribe=<id>&token=<jwt>`。
+
+详情页不要使用 `GET https://example.com/api/servers` 拉全量列表，也不要使用 `wss://example.com/api/ws?subscribe=all` 订阅全量更新后再在前端过滤。
+
+**页面可见性建议**：
+
+为实现前端展示效果并节省额度消耗，主题应监听 `document.visibilitychange`，页面进入后台或隐藏时主动关闭 WebSocket，页面重新可见时再按当前页面类型重新连接并恢复订阅。关闭连接后可保留最后一次数据用于静态展示；重新可见时建议先按当前页面补一次 REST 数据，再恢复 WebSocket 实时更新。
+
+主题还应读取 `/api/config` 的 `frontend_ws_timeout_minutes`。值为 `0` 时不按连接时长断开；值为正整数时，应在单次连接达到对应分钟数后主动关闭，并由用户明确选择是否继续连接。继续后应建立新连接并重新开始计时，不应在用户选择关闭后静默重连。
 
 **推送策略**：
 
@@ -515,7 +546,14 @@ const { servers } = await (await fetch('/api/servers')).json();
 const ids = servers.map(s => s.id);
 
 // 2. 连接 WebSocket，并通过通道消息提交订阅 ID 列表
-const ws = new WebSocket('wss://status.example.com/api/ws?subscribe=all');
+const url = new URL('wss://status.example.com/api/ws');
+url.searchParams.set('subscribe', 'all');
+const sameHost = url.host === location.host;
+if (!sameHost) {
+  const token = localStorage.getItem('jwt_token');
+  if (token) url.searchParams.set('token', token);
+}
+const ws = new WebSocket(url.toString());
 ws.onopen = () => {
   ws.send(JSON.stringify({ type: 'subscribe', scope: 'all', ids }));
 };
@@ -534,7 +572,14 @@ ws.onmessage = (ev) => {
 **示例（subscribe=serverId，实时推送）**：
 
 ```js
-const ws = new WebSocket('wss://status.example.com/api/ws?subscribe=server-001');
+const url = new URL('wss://status.example.com/api/ws');
+url.searchParams.set('subscribe', 'server-001');
+const sameHost = url.host === location.host;
+if (!sameHost) {
+  const token = localStorage.getItem('jwt_token');
+  if (token) url.searchParams.set('token', token);
+}
+const ws = new WebSocket(url.toString());
 ws.onmessage = (ev) => {
   const msg = JSON.parse(ev.data);
   if (msg.type === 'batchUpdate') {
@@ -611,6 +656,7 @@ interface Server {
   traffic_calc_type: string;
   reset_day: number;
   report_interval: number;
+  wss_report_interval: number;
   is_hidden: '0' | '1';
   sort_order: number;
   cpu: number;
@@ -673,7 +719,6 @@ interface SysConfig {
   show_price?: boolean;
   show_expire?: boolean;
   show_tf?: boolean;
-  show_time?: boolean;
   long_history_points?: number;
 }
 
@@ -690,6 +735,7 @@ interface SiteConfig {
   theme_options: Record<string, unknown>;
   verified: boolean;
   turnstile_verified: string | null;
+  frontend_ws_timeout_minutes: number;
   long_history_points: number;
 }
 

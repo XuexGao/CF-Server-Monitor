@@ -379,7 +379,6 @@ export async function handleServersAPI(request, env, sys) {
       show_price: sys.show_price === 'true',
       show_expire: sys.show_expire === 'true',
       show_tf: sys.show_tf === 'true',
-      show_time: sys.show_time === 'true',
       display_mode: sys.display_mode || 'bar'
     }
   };

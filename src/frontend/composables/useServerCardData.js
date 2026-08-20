@@ -3,14 +3,12 @@ import { formatBytes, getFlagRegionCode, isServerOnline } from '../utils/api'
 import { getPublicAssetUrl } from '../utils/config'
 import { currentLang, useTranslation } from '../utils/i18n'
 import { PING } from '../utils/constants'
-import { normalizeTimestamp, formatDateTime } from '../utils/time.js'
 import { formatBillingPrice } from '../utils/server.js'
 
 export const DEFAULT_SERVER_CARD_CONFIG = {
   show_price: true,
   show_expire: true,
   show_tf: true,
-  show_time: true,
   display_mode: 'bar'
 }
 
@@ -196,22 +194,6 @@ export function useServerCardData(props) {
   const ramUsageText = computed(() => formatMetricUsage(props.server.ram_used, props.server.ram_total))
   const diskUsageText = computed(() => formatMetricUsage(props.server.disk_used, props.server.disk_total))
 
-  const dataTimeText = computed(() => {
-    const reportTimestamp = normalizeTimestamp(props.server.report_timestamp ?? props.server.last_updated)
-    if (!isOnline.value) return formatDateTime(reportTimestamp)
-
-    const displayTimestamp = normalizeTimestamp(
-      props.server.display_timestamp ?? props.server.sample_timestamp ?? props.server.timestamp ?? reportTimestamp
-    )
-    const sampleTimestamp = normalizeTimestamp(
-      props.server.sample_timestamp ?? props.server.timestamp ?? displayTimestamp
-    )
-    const lagSeconds = displayTimestamp && sampleTimestamp
-      ? Math.max(0, Math.floor((displayTimestamp - sampleTimestamp) / 1000))
-      : 0
-    return `${formatDateTime(sampleTimestamp)}${lagSeconds > 0 ? ` (+${lagSeconds}s)` : ''}`
-  })
-
   const isExpired = computed(() => {
     const expTime = new Date(props.server.expire_date).getTime()
     return !isNaN(expTime) && expTime < currentTime.value
@@ -306,7 +288,6 @@ export function useServerCardData(props) {
     ramUsageText,
     diskUsageText,
     memoryUsageTitle,
-    dataTimeText,
     isExpired,
     expireText,
     getUsageColor,

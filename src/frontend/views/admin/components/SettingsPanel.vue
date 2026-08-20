@@ -123,11 +123,6 @@
             <input type="checkbox" id="cfg_show_tf" v-model="settings.show_tf">
             <label>{{ trans.showTf }}</label>
           </div>
-
-          <div class="form-group flex-1 checkbox-item">
-            <input type="checkbox" id="cfg_show_time" v-model="settings.show_time">
-            <label>{{ trans.showTime }}</label>
-          </div>
         </div>
 
         <div class="form-group">
@@ -137,12 +132,27 @@
           </p>
         </div>
 
-        <div class="form-group">
-          <label class="form-label">{{ trans.longHistoryPoints }}</label>
-          <select v-model="settings.long_history_points" class="form-select">
-            <option v-for="option in longHistoryPointOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
-          </select>
-          <p class="text-muted text-sm mt-1">{{ trans.longHistoryPointsTip }}</p>
+        <div class="form-row">
+          <div class="form-group flex-1">
+            <label class="form-label">{{ trans.frontendWsTimeoutMinutes }}</label>
+            <input
+              v-model.number="settings.frontend_ws_timeout_minutes"
+              type="number"
+              min="0"
+              :max="FRONTEND_WS_TIMEOUT_MINUTES_MAX"
+              step="1"
+              class="form-input"
+            >
+            <p class="text-muted text-sm mt-1">{{ trans.frontendWsTimeoutMinutesTip }}</p>
+          </div>
+
+          <div class="form-group flex-1">
+            <label class="form-label">{{ trans.longHistoryPoints }}</label>
+            <select v-model="settings.long_history_points" class="form-select">
+              <option v-for="option in longHistoryPointOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+            </select>
+            <p class="text-muted text-sm mt-1">{{ trans.longHistoryPointsTip }}</p>
+          </div>
         </div>
       </div>
 
@@ -163,9 +173,16 @@
             </select>
           </div>
 
+          <div class="form-group flex-1">
+            <label class="form-label">{{ trans.notificationChannel || 'Notification Channel' }}</label>
+            <select v-model="notificationChannel" class="form-select">
+              <option value="builtin">{{ trans.builtinNotification || 'Built-in' }}</option>
+              <option value="webhook">{{ trans.customWebhook || 'Custom Webhook' }}</option>
+            </select>
+          </div>
         </div>
 
-        <div class="form-row">
+        <div v-if="notificationChannel === 'builtin'" class="form-row">
           <div class="form-group flex-1">
             <label class="form-label">{{ trans.telegramToken }}</label>
             <div class="password-input-wrapper">
@@ -186,6 +203,89 @@
             </div>
           </div>
         </div>
+
+        <div v-else class="resource-alert-rule">
+          <div class="resource-alert-rule-title">
+            <span>{{ trans.customWebhook || 'Custom Webhook' }}</span>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group flex-1">
+              <label class="form-label">{{ trans.webhookUrl || 'Webhook URL' }}</label>
+              <div class="password-input-wrapper">
+                <input
+                  type="text"
+                  name="notification_webhook_url"
+                  autocomplete="off"
+                  data-lpignore="true"
+                  data-1p-ignore="true"
+                  data-bwignore="true"
+                  data-form-type="other"
+                  v-model="settings.notification_webhook_url"
+                  :class="['form-input', { 'secret-input-masked': !passwordVisible.notificationWebhookUrl }]"
+                  placeholder="https://example.com/webhook"
+                >
+                <button type="button" class="password-toggle" @click="$emit('toggle-password', 'notificationWebhookUrl')">
+                  {{ passwordVisible.notificationWebhookUrl ? '🙈' : '👁️' }}
+                </button>
+              </div>
+            </div>
+
+            <div class="form-group flex-1">
+              <label class="form-label">{{ trans.webhookMethod || 'Method' }}</label>
+              <select v-model="settings.notification_webhook_method" class="form-select">
+                <option value="POST">POST</option>
+                <option value="GET">GET</option>
+              </select>
+            </div>
+
+            <div v-if="settings.notification_webhook_method !== 'GET'" class="form-group flex-1">
+              <label class="form-label">{{ trans.webhookFormat || 'Body Format' }}</label>
+              <select v-model="settings.notification_webhook_format" class="form-select">
+                <option value="json">JSON</option>
+                <option value="form">x-www-form-urlencoded</option>
+                <option value="text">Text</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group flex-1">
+              <label class="form-label">{{ trans.webhookHeaders || 'Headers' }}</label>
+              <textarea
+                v-model="settings.notification_webhook_headers"
+                class="form-textarea"
+                rows="4"
+                placeholder='{"Authorization":"Bearer your-token"}'
+              ></textarea>
+            </div>
+
+            <div class="form-group flex-1">
+              <label class="form-label">
+                {{ settings.notification_webhook_method === 'GET' ? (trans.webhookParams || 'Query Params') : (trans.webhookBody || 'Body') }}
+              </label>
+              <textarea
+                v-model="settings.notification_webhook_body"
+                class="form-textarea"
+                rows="6"
+                placeholder='{"title":"{{emoji}} {{event}}","content":"{{notification}}"}'
+              ></textarea>
+            </div>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group flex-1">
+            <label class="form-label">{{ trans.notificationTemplate || 'Notification Template' }}</label>
+            <textarea
+              v-model="settings.notification_template"
+              class="form-textarea"
+              rows="5"
+              placeholder="{{emoji}}【CF Server Monitor】{{event}}\n服务器: {{client}}\n详情:\n{{message}}\n时间: {{time}}"
+            ></textarea>
+          </div>
+        </div>
+
         <div class="form-row">
           <div class="form-group flex-1">
             <button type="button" @click="$emit('send-test-notification')" class="btn btn-primary" :disabled="testNotificationLoading">{{ testNotificationLoading ? '⏳' : '📨' }} {{ trans.sendTestNotification }}</button>
@@ -492,7 +592,7 @@
 
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
-import { HISTORY } from '../../../utils/constants.js'
+import { FRONTEND_WS_TIMEOUT_MINUTES_MAX, HISTORY } from '../../../utils/constants.js'
 import { currentLang } from '../../../utils/i18n.js'
 import { PING_NODE_FIELDS, validatePingNode } from '../../../utils/pingNode.js'
 
@@ -558,6 +658,13 @@ const longHistoryPointOptions = computed(() => (
       : `${points} points`
   }))
 ))
+
+const notificationChannel = computed({
+  get: () => props.settings.notification_webhook_enabled ? 'webhook' : 'builtin',
+  set: (value) => {
+    props.settings.notification_webhook_enabled = value === 'webhook'
+  }
+})
 
 const ensureResourceAlertRules = () => {
   if (!Array.isArray(props.settings.resource_alert_rules)) {

@@ -10,13 +10,12 @@ A lightweight multi-server monitoring dashboard built on Cloudflare Workers, D1,
   <a href="README-en.md">English</a>
 </p>
 
-[![Workers](https://img.shields.io/badge/Workers-2.8.4%20Beta1-f38020?style=flat-square&logo=cloudflare&logoColor=white)](version.json)
-[![Agent](https://img.shields.io/badge/Agent-1.0.3-2563eb?style=flat-square)](https://github.com/huilang-me/cfsm-agent)
+[![Workers](https://img.shields.io/badge/Workers-2.8.4%20Beta4-f38020?style=flat-square&logo=cloudflare&logoColor=white)](version.json)
 [![GitHub Stars](https://img.shields.io/github/stars/huilang-me/CF-Server-Monitor?style=flat-square&logo=github)](https://github.com/huilang-me/CF-Server-Monitor/stargazers)
 [![GitHub Forks](https://img.shields.io/github/forks/huilang-me/CF-Server-Monitor?style=flat-square&logo=github)](https://github.com/huilang-me/CF-Server-Monitor/forks)
 [![License](https://img.shields.io/badge/License-MIT-16a34a?style=flat-square)](#license)
 
-[Live Demo](https://demo.huilang.me/) · [API Reference](API.md) · [Go Agent Guide](agent-go.md) · [Theme Development](theme-develop.md)
+[Live Demo](https://demo.huilang.me/) · [API Reference](API.md) · [Go Agent Guide](https://github.com/huilang-me/cfsm-agent) · [Theme Development](theme-develop.md)
 
 </div>
 
@@ -97,17 +96,10 @@ Core flow:
 4. The Worker verifies `API_SECRET`, writes to D1, and broadcasts realtime data through Durable Objects.
 5. The dashboard, server detail page, admin panel, and iOS widget read from the same API.
 
-## Version Notes
-
-| Component | Current version | Notes |
-| --- | --- | --- |
-| Workers | `2.8.4 Beta1` | Current repository version, see [version.json](version.json) |
-| Go Agent | `1.0.3` | Default Agent, maintained in [cfsm-agent](https://github.com/huilang-me/cfsm-agent) |
-| Shell / PowerShell Agent | Legacy version, no longer maintained | Legacy script path, only suggested as a fallback for special systems or script-only environments |
 
 Recent changes:
 
-- `2.8.4`: Added Agent WSS reporting to improve realtime push latency, added account usage for D1 / Workers / Durable Objects, and reduced idle Durable Object realtime broadcast requests when no frontend is subscribed.
+- `2.8.4`: Added Agent WSS reporting for improved real-time data push timeliness, added account Do usage display with optimized Do broadcast requests when no frontend subscription exists to reduce idle quota consumption, added custom Webhook channel in notification settings, and added frontend WSS timeout configuration.
 - `2.8.3`: Added disk IO metrics, switched the default Agent to Go, and added realtime latency / packet-loss windows.
 - `2.8.2`: Added Go Agent support.
 - `2.8.1`: Optimized long-range D1 history reads, added resource load notifications, and improved the theme store API.
@@ -265,7 +257,7 @@ npm run build:github-page
 | Category | Main options |
 | --- | --- |
 | Site | Title, background, favicon, default display mode, public access |
-| Server | Report interval, collect interval, ping nodes, network interfaces, monthly traffic, price, expiration, auto-renew |
+| Server | HTTP/WSS report intervals, collect interval, ping nodes, network interfaces, monthly traffic, price, expiration, auto-renew |
 | Security | Admin account, password, JWT Secret, Turnstile |
 | Notifications | Offline alerts, expiration reminders, resource alerts, test notification |
 | Appearance | Custom CSS, custom `<head>`, CSP allowlists, Mikus mode |
@@ -288,7 +280,11 @@ The widget shows online status, CPU, memory, disk, monthly traffic, realtime upl
 
 ## Notifications and Alerts
 
-Configure notifications in Admin -> Global Settings -> Notifications. The platform is detected from the Bot Token format.
+Configure notifications in Admin -> Global Settings -> Notifications. Notification delivery has two channel modes: built-in channels and custom Webhook. When custom Webhook is selected, the backend sends only the Webhook request and does not call the built-in channel.
+
+### Built-in Channels
+
+Built-in channels are detected from the Bot Token format.
 
 | Platform | Bot Token format | Chat ID |
 | --- | --- | --- |
@@ -302,11 +298,113 @@ Configure notifications in Admin -> Global Settings -> Notifications. The platfo
 | WxPusher | `https://wxpusher.zjiecode.com/api/send/message/[SPT_xxx]/Hello` | Empty |
 | Gotify | `https://gotify.example.com/message?token=xxx` | Empty |
 
+### Custom Webhook
+
+Custom Webhook supports `GET` and `POST`:
+
+- `POST`: supports `JSON`, `x-www-form-urlencoded`, or `Text`. The default JSON body contains only `title` and `content`.
+- `GET`: uses the same parameter editor and appends values to the URL query. Parameters may be written as a JSON object or as QueryString, for example `title={{emoji}} {{event}}&content={{notification}}`.
+- Headers may be written as a JSON object or as multiline `Header: value` text.
+- Test notification uses the current notification template before sending, so it can validate the final platform payload before saving.
+
+Default Webhook parameters:
+
+```json
+{
+  "title": "{{emoji}} {{event}}",
+  "content": "{{notification}}"
+}
+```
+
+Default notification template:
+
+```text
+{{emoji}}【CF Server Monitor】{{event}}
+服务器: {{client}}
+详情:
+{{message}}
+时间: {{time}}
+```
+
+Available template variables:
+
+| Variable | Description |
+| --- | --- |
+| `{{emoji}}` | Event icon: recovery/test uses `✅`, offline/alert uses `❌`, expiration/mixed status uses `⚠️` |
+| `{{event}}` | Event name, such as `Offline Alert` or `Resource Recovery` |
+| `{{client}}` / `{{clients}}` | Server names in this notification, joined by comma for multiple servers |
+| `{{count}}` | Number of affected servers; not shown by the default template, but available for custom templates |
+| `{{message}}` | Detailed notification list |
+| `{{time}}` | Send time |
+| `{{notification}}` | Full content after applying the notification template, usually used as Webhook `content` |
+| `{{title}}` | Fixed title `💌 Cloudflare Server Monitor` |
+
 Supported alert types:
 
 - Offline alert: notify after a node stays offline for the configured delay; send recovery notice when it returns.
 - Expiration reminder: notify daily 1 to 7 days before expiration, or disable it.
 - Resource alert: define rules for CPU, memory, disk, inbound/outbound network speed, and similar metrics.
+
+Default template output examples:
+
+```text
+❌【CF Server Monitor】节点离线告警
+服务器: server-a, server-b
+详情:
+• server-a - 2026/8/19 10:21:00
+• server-b - No report
+时间: 2026/8/19 10:25:00
+```
+
+```text
+✅【CF Server Monitor】节点恢复通知
+服务器: server-a, server-b
+详情:
+• server-a
+• server-b
+时间: 2026/8/19 10:30:00
+```
+
+```text
+⚠️【CF Server Monitor】服务器到期提醒
+服务器: vps-hk, vps-sg
+详情:
+• vps-hk - 3 days left (2026-08-22)
+• vps-sg - 1 day left (2026-08-20)
+时间: 2026/8/19 10:35:00
+```
+
+```text
+❌【CF Server Monitor】资源负载告警
+服务器: server-a, server-b
+详情:
+⚠️ **资源负载告警** (2个)
+
+• High CPU / server-a - 平均 5 分钟
+  CPU 平均 92.3% > 80%
+• High RAM / server-b - 窗口样本连续 5 分钟
+  RAM 当前 91.2% > 85%
+时间: 2026/8/19 10:40:00
+```
+
+```text
+✅【CF Server Monitor】资源负载恢复
+服务器: server-a
+详情:
+✅ **资源负载恢复** (1个)
+
+• High CPU / server-a
+  CPU 当前 42.1% < 80%
+时间: 2026/8/19 10:45:00
+```
+
+```text
+✅【CF Server Monitor】测试通知
+服务器: CF Server Monitor
+详情:
+This is a test notification from CF Server Monitor.
+时间: 2026/8/19 10:55:00
+```
 
 Send a test notification before saving.
 
@@ -317,6 +415,10 @@ Send a test notification before saving.
 - Use a random strong value and avoid characters that are likely to be escaped by shells or URLs.
 - After changing `API_SECRET`, redeploy the Worker and reinstall or update all Agents.
 - Keep the admin password separate from `API_SECRET` for long-term use.
+
+### Frontend WebSocket Timeout
+
+Admin settings can configure the frontend WSS timeout in minutes. The default `0` disables time-based disconnects; a positive value closes the built-in frontend subscription at the limit and prompts the user to close or continue.
 
 ### Turnstile
 
@@ -497,7 +599,6 @@ CF-Server-Monitor/
 │   └── utils/               # Cache, CORS, CSP, metrics, version helpers
 ├── test/                    # Local tests and mock data tools
 ├── API.md                   # REST / WebSocket API reference
-├── agent-go.md              # Go Agent guide
 ├── theme-develop.md         # Third-party theme development
 ├── wrangler.toml            # Local Wrangler configuration
 └── version.json             # Worker / Agent versions

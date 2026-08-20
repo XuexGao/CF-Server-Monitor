@@ -14,6 +14,7 @@ import {
   hasRecentFrontendRealtimeActivity,
   markFrontendRealtimeActive
 } from '../utils/realtimeBroadcastGate.js';
+import { checkWebSocketAuth } from '../middleware/auth.js';
 import {
   AGENT_CONFIG_MD5_HEADER,
   AGENT_CONFIG_SCHEMA_HEADER,
@@ -642,6 +643,14 @@ async function forwardWebSocketUpgrade(request, env, internalPath, logPrefix) {
 }
 
 export async function handleWebSocketUpgrade(request, env) {
+  const settings = await loadSiteSettings(env.DB, { forceRefresh: true });
+  if (settings?.is_public !== 'true' && !await checkWebSocketAuth(request, env, settings)) {
+    return new Response(JSON.stringify({ error: 'Unauthorized', code: 401 }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+
   const response = await forwardWebSocketUpgrade(request, env, '/ws', '[ws]');
   if (response?.status === 101) {
     markFrontendRealtimeActive();

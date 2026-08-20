@@ -1,6 +1,6 @@
 import { http, isAdminLoggedIn } from './http'
 import { getApiBases, getWsBase, hasMultipleApiBases, getTitle } from './config'
-import { DEFAULT_SITE_TITLE } from './constants'
+import { DEFAULT_SITE_TITLE, FRONTEND_WS_TIMEOUT_MINUTES_MAX } from './constants'
 import { ref } from 'vue'
 import { normalizeTimestamp } from './time.js'
 import { TIME } from './constants'
@@ -12,8 +12,17 @@ export const VERSION = ref('')
 export const LAST_WORKERS_VERSION = ref('')
 export const LAST_AGENT_VERSION = ref('')
 
+export const normalizeLiveSocketTimeoutMinutes = (value) => {
+  const minutes = Number(value)
+  return Number.isInteger(minutes) && minutes >= 0 && minutes <= FRONTEND_WS_TIMEOUT_MINUTES_MAX
+    ? minutes
+    : 0
+}
+
 export const createLiveSocket = (subscribe, handlers = {}, apiIndex = 0, serverIds = []) => {
-  const { onUpdate, onStatus, onMessage } = handlers
+  const { onUpdate, onStatus, onMessage, onTimeout } = handlers
+  const timeoutMinutes = normalizeLiveSocketTimeoutMinutes(handlers.timeoutMinutes)
+  const maxConnectionDurationMs = timeoutMinutes * 60 * 1000
   const shouldReplay = handlers.replay !== false
   const scope = (subscribe || 'all').toLowerCase()
   let ws = null
@@ -21,6 +30,7 @@ export const createLiveSocket = (subscribe, handlers = {}, apiIndex = 0, serverI
   let reconnectTimer = null
   let reconnectDelay = TIME.RECONNECT_INITIAL_DELAY_MS
   let reconnectAttempts = 0
+  let connectionLifetimeTimer = null
   const MAX_REPLAY_DELAY = 120000
   let isConnected = false
   const replayTimers = new Set()
@@ -39,6 +49,19 @@ export const createLiveSocket = (subscribe, handlers = {}, apiIndex = 0, serverI
     return getWsBase()
   }
 
+  const getJwtToken = () => {
+    try {
+      return localStorage.getItem('jwt_token') || ''
+    } catch (_) {
+      return ''
+    }
+  }
+
+  const isSameHostWebSocket = (url) => {
+    if (typeof window === 'undefined' || !window.location) return false
+    return url.host === window.location.host
+  }
+
   const setStatus = (connected, reason) => {
     isConnected = connected
     if (typeof onStatus === 'function') {
@@ -49,6 +72,12 @@ export const createLiveSocket = (subscribe, handlers = {}, apiIndex = 0, serverI
   const clearReplayTimers = () => {
     replayTimers.forEach(timer => clearTimeout(timer))
     replayTimers.clear()
+  }
+
+  const clearConnectionLifetimeTimer = () => {
+    if (!connectionLifetimeTimer) return
+    clearTimeout(connectionLifetimeTimer)
+    connectionLifetimeTimer = null
   }
 
   const normalizeReplayTimestamp = (value, fallback = Date.now()) => {
@@ -117,27 +146,53 @@ export const createLiveSocket = (subscribe, handlers = {}, apiIndex = 0, serverI
 
   const connect = () => {
     manualClose = false
+    let socket = null
     try {
-      ws = new WebSocket(`${getWsBaseByIndex(apiIndex)}/api/ws?subscribe=${encodeURIComponent(scope)}`)
+      const url = new URL(`${getWsBaseByIndex(apiIndex)}/api/ws`)
+      url.searchParams.set('subscribe', scope)
+      const token = getJwtToken()
+      if (token && !isSameHostWebSocket(url)) {
+        url.searchParams.set('token', token)
+      }
+      socket = new WebSocket(url.toString())
+      ws = socket
     } catch (e) {
       setStatus(false, 'WebSocket not supported')
       return
     }
 
-    ws.addEventListener('open', () => {
+    socket.addEventListener('open', () => {
+      if (socket !== ws || manualClose) {
+        try { socket.close() } catch (_) {}
+        return
+      }
       reconnectDelay = TIME.RECONNECT_INITIAL_DELAY_MS
       reconnectAttempts = 0
       try {
-        ws.send(JSON.stringify({
+        socket.send(JSON.stringify({
           type: 'subscribe',
           scope,
           ids: Array.isArray(serverIds) ? serverIds : []
         }))
       } catch (_) {}
       setStatus(true, 'connected')
+
+      clearConnectionLifetimeTimer()
+      if (maxConnectionDurationMs === 0) return
+      connectionLifetimeTimer = setTimeout(() => {
+        if (socket !== ws) return
+        connectionLifetimeTimer = null
+        manualClose = true
+        clearReplayTimers()
+        try { socket.close(1000, 'connection lifetime exceeded') } catch (_) {}
+        if (typeof onTimeout === 'function') {
+          onTimeout({ durationMs: maxConnectionDurationMs })
+        }
+      }, maxConnectionDurationMs)
     })
 
-    ws.addEventListener('message', (event) => {
+    socket.addEventListener('message', (event) => {
+      if (socket !== ws) return
       let msg = null
       try {
         msg = typeof event.data === 'string' ? JSON.parse(event.data) : null
@@ -150,14 +205,18 @@ export const createLiveSocket = (subscribe, handlers = {}, apiIndex = 0, serverI
       if (typeof onMessage === 'function') onMessage(msg)
     })
 
-    ws.addEventListener('close', () => {
-      setStatus(false, 'disconnected')
+    socket.addEventListener('close', (event) => {
+      if (socket !== ws) return
+      ws = null
+      clearConnectionLifetimeTimer()
+      setStatus(false, event.reason || 'disconnected')
       scheduleReconnect()
     })
 
-    ws.addEventListener('error', () => {
+    socket.addEventListener('error', () => {
+      if (socket !== ws) return
       setStatus(false, 'error')
-      try { ws.close() } catch (_) {}
+      try { socket.close() } catch (_) {}
     })
   }
 
@@ -185,15 +244,19 @@ export const createLiveSocket = (subscribe, handlers = {}, apiIndex = 0, serverI
       manualClose = true
       reconnectAttempts = TIME.MAX_RECONNECT_ATTEMPTS
       clearReplayTimers()
+      clearConnectionLifetimeTimer()
       if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null }
       if (ws) { try { ws.close() } catch (_) {} ws = null }
+      setStatus(false, 'disconnected')
     },
     reconnect() {
       manualClose = false
       reconnectAttempts = 0
       clearReplayTimers()
+      clearConnectionLifetimeTimer()
       if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null }
       if (ws) { try { ws.close() } catch (_) {} ws = null }
+      setStatus(false, 'reconnecting')
       connect()
     },
     get isConnected() {
@@ -253,7 +316,6 @@ const createEmptyMergedData = () => ({
     show_price: true,
     show_expire: true,
     show_tf: true,
-    show_time: true,
     display_mode: 'bar',
     site_title: DEFAULT_SITE_TITLE
   }
@@ -297,7 +359,6 @@ const mergeSiteResult = (mergedData, { data, error, baseUrl }, multiSite, localT
       show_price: data.sysConfig.show_price ?? mergedData.sysConfig.show_price,
       show_expire: data.sysConfig.show_expire ?? mergedData.sysConfig.show_expire,
       show_tf: data.sysConfig.show_tf ?? mergedData.sysConfig.show_tf,
-      show_time: data.sysConfig.show_time ?? mergedData.sysConfig.show_time,
       display_mode: resolveDisplayMode(data.sysConfig, mergedData.sysConfig.display_mode),
       site_title: multiSite ? localTitle : mergedData.sysConfig.site_title
     }

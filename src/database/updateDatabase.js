@@ -133,6 +133,7 @@ export async function addServerColumns(db) {
       reset_day: "INTEGER DEFAULT 1",
       collect_interval: "INTEGER DEFAULT 0",
       report_interval: "INTEGER DEFAULT 60",
+      wss_report_interval: "INTEGER DEFAULT 2",
       connection_mode: "TEXT DEFAULT 'auto'",
       auto_update: "TEXT DEFAULT '0'",
       custom_ct: "TEXT DEFAULT ''",

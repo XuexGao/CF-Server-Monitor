@@ -6,7 +6,7 @@ import './styles/light.css'
 import { currentLang, translations } from './utils/i18n'
 import { http } from './utils/http'
 import { initConfig, hasMultipleApiBases } from './utils/config'
-import { LAST_AGENT_VERSION, LAST_WORKERS_VERSION, VERSION } from './utils/api'
+import { LAST_AGENT_VERSION, LAST_WORKERS_VERSION, VERSION, normalizeLiveSocketTimeoutMinutes } from './utils/api'
 import { resolveDisplayMode } from './utils/displayMode'
 import { getMikusAssetUrl, isMikusThemeEnabled, normalizeThemeOptions, setMikusThemeClass } from './utils/themeOptions'
 import {
@@ -80,6 +80,7 @@ async function fetchConfig() {
         version: '',
         last_workers_version: '',
         last_agent_version: '',
+        frontend_ws_timeout_minutes: 0,
         theme_options: {},
         verified: false
       }
@@ -95,6 +96,7 @@ async function fetchConfig() {
         version: '',
         last_workers_version: '',
         last_agent_version: '',
+        frontend_ws_timeout_minutes: 0,
         theme_options: {},
         verified: false
       }
@@ -112,6 +114,7 @@ async function fetchConfig() {
     const siteTitle = data.site_title || ''
     const displayMode = resolveDisplayMode(data)
     const themeOptions = normalizeThemeOptions(data.theme_options)
+    const frontendWsTimeoutMinutes = normalizeLiveSocketTimeoutMinutes(data.frontend_ws_timeout_minutes)
 
     if (version) {
       VERSION.value = version
@@ -131,6 +134,7 @@ async function fetchConfig() {
       authorization,
       site_title: siteTitle,
       display_mode: displayMode,
+      frontend_ws_timeout_minutes: frontendWsTimeoutMinutes,
       theme_options: themeOptions
     }
   } catch (e) {
@@ -144,6 +148,7 @@ async function fetchConfig() {
     version: '',
     last_workers_version: '',
     last_agent_version: '',
+    frontend_ws_timeout_minutes: 0,
     theme_options: {},
     verified: false
   }
@@ -308,8 +313,9 @@ async function initApp() {
         authorization: !privateAccess.hasUnauthorizedPrivateSite,
         site_title: first.data.site_title || '',
         display_mode: resolveDisplayMode(first.data),
+        frontend_ws_timeout_minutes: normalizeLiveSocketTimeoutMinutes(first.data.frontend_ws_timeout_minutes),
         theme_options: normalizeThemeOptions(first.data.theme_options)
-      } : { turnstile_enabled: false, turnstile_login_enabled: false, turnstile_site_key: '', turnstile_api_index: 0, version: '', last_workers_version: '', last_agent_version: '', verified: false, is_public: true, authorization: false, site_title: '', display_mode: 'bar', theme_options: {} }
+      } : { turnstile_enabled: false, turnstile_login_enabled: false, turnstile_site_key: '', turnstile_api_index: 0, version: '', last_workers_version: '', last_agent_version: '', verified: false, is_public: true, authorization: false, site_title: '', display_mode: 'bar', frontend_ws_timeout_minutes: 0, theme_options: {} }
       if (sharedTurnstileSite) {
         config.turnstile_enabled = true
         config.turnstile_site_key = sharedTurnstileSite.siteKey
@@ -319,7 +325,7 @@ async function initApp() {
       LAST_WORKERS_VERSION.value = config.last_workers_version || ''
       LAST_AGENT_VERSION.value = config.last_agent_version || ''
     } catch (_) {
-      config = { turnstile_enabled: false, turnstile_login_enabled: false, turnstile_site_key: '', turnstile_api_index: 0, version: '', last_workers_version: '', last_agent_version: '', verified: false, is_public: true, authorization: false, site_title: '', display_mode: 'bar', theme_options: {} }
+      config = { turnstile_enabled: false, turnstile_login_enabled: false, turnstile_site_key: '', turnstile_api_index: 0, version: '', last_workers_version: '', last_agent_version: '', verified: false, is_public: true, authorization: false, site_title: '', display_mode: 'bar', frontend_ws_timeout_minutes: 0, theme_options: {} }
     }
   } else {
     config = await fetchConfig()

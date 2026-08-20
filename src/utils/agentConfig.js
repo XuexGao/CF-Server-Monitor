@@ -1,16 +1,19 @@
 import { md5Hash } from './common.js';
 import { isWssReportEnabled } from './settings.js';
 
-export const AGENT_CONFIG_SCHEMA_VERSION = 4;
+export const AGENT_CONFIG_SCHEMA_VERSION = 5;
 export const AGENT_CONFIG_LEGACY_SCHEMA_VERSION = 3;
+export const AGENT_CONFIG_CONNECTION_MODE_SCHEMA_VERSION = 4;
 export const AGENT_CONFIG_SCHEMA_HEADER = 'X-Agent-Config-Schema';
 export const AGENT_CONFIG_MD5_HEADER = 'X-Agent-Config-Md5';
 export const MAX_TRAFFIC_CORRECTION_GB = 1000000;
 export const CONNECTION_MODE_AUTO = 'auto';
 export const CONNECTION_MODE_HTTP = 'http';
+export const DEFAULT_WSS_REPORT_INTERVAL = 2;
 
 const ALLOWED_COLLECT_INTERVALS = new Set([0, 1, 2, 5, 10]);
 const ALLOWED_REPORT_INTERVALS = new Set([30, 60, 120, 180]);
+const ALLOWED_WSS_REPORT_INTERVALS = new Set([1, 2, 3, 4, 5]);
 const ALLOWED_CONNECTION_MODES = new Set([CONNECTION_MODE_AUTO, CONNECTION_MODE_HTTP]);
 const PING_NODE_HOST_PATTERN = /^[a-zA-Z0-9._-]+$/;
 const IPV4_PATTERN = /^(?:\d{1,3}\.){3}\d{1,3}$/;
@@ -58,6 +61,18 @@ export function validateAgentConfigInput(input) {
   );
   if (reportError) return { valid: false, error: reportError };
 
+  const wssReportInterval = input.wss_report_interval === undefined
+    ? DEFAULT_WSS_REPORT_INTERVAL
+    : input.wss_report_interval;
+  const wssReportError = validateInteger(
+    'wss_report_interval',
+    wssReportInterval,
+    null,
+    1,
+    5
+  );
+  if (wssReportError) return { valid: false, error: wssReportError };
+
   const resetError = validateInteger('reset_day', input.reset_day, null, 0, 31);
   if (resetError) return { valid: false, error: resetError };
 
@@ -82,6 +97,7 @@ export function validateAgentConfigInput(input) {
     config: {
       collect_interval: input.collect_interval,
       report_interval: input.report_interval,
+      wss_report_interval: wssReportInterval,
       reset_day: input.reset_day,
       connection_mode: connectionMode,
       schema_version: AGENT_CONFIG_SCHEMA_VERSION
@@ -92,6 +108,10 @@ export function validateAgentConfigInput(input) {
 function storedInteger(value, allowedValues, fallback) {
   const number = typeof value === 'number' ? value : Number(value);
   return Number.isInteger(number) && allowedValues.has(number) ? number : fallback;
+}
+
+export function normalizeWssReportInterval(value) {
+  return storedInteger(value, ALLOWED_WSS_REPORT_INTERVALS, DEFAULT_WSS_REPORT_INTERVAL);
 }
 
 function isValidIpv4(host) {
@@ -211,6 +231,7 @@ export function buildAgentConfig(server, settings = null, schemaVersion = AGENT_
   const version = normalizeSchemaVersion(schemaVersion);
   const collectInterval = storedInteger(server?.collect_interval, ALLOWED_COLLECT_INTERVALS, 0);
   let reportInterval = storedInteger(server?.report_interval, ALLOWED_REPORT_INTERVALS, 60);
+  const wssReportInterval = normalizeWssReportInterval(server?.wss_report_interval);
   if (collectInterval > 0 && reportInterval < collectInterval) reportInterval = 60;
 
   const resetNumber = typeof server?.reset_day === 'number'
@@ -238,9 +259,20 @@ export function buildAgentConfig(server, settings = null, schemaVersion = AGENT_
     schema_version: version
   };
 
-  if (version >= AGENT_CONFIG_SCHEMA_VERSION) {
+  if (version >= AGENT_CONFIG_CONNECTION_MODE_SCHEMA_VERSION) {
     const connectionMode = normalizeConnectionMode(server?.connection_mode) || CONNECTION_MODE_AUTO;
-    config.connection_mode = isWssReportEnabled(settings) ? connectionMode : CONNECTION_MODE_HTTP;
+    const wssEnabled = isWssReportEnabled(settings);
+    config.connection_mode = wssEnabled ? connectionMode : CONNECTION_MODE_HTTP;
+    if (
+      version >= AGENT_CONFIG_SCHEMA_VERSION &&
+      config.connection_mode === CONNECTION_MODE_AUTO &&
+      wssEnabled
+    ) {
+      config.wss_report_interval = wssReportInterval;
+      if (config.collect_interval === 0 || config.collect_interval > wssReportInterval) {
+        config.collect_interval = wssReportInterval;
+      }
+    }
   }
 
   return config;
@@ -258,6 +290,9 @@ export function serializeAgentConfig(config) {
     `&interface=${config.interface}`;
   if (Object.prototype.hasOwnProperty.call(config, 'connection_mode')) {
     serialized += `&connection_mode=${config.connection_mode}`;
+  }
+  if (Object.prototype.hasOwnProperty.call(config, 'wss_report_interval')) {
+    serialized += `&wss_report_interval=${config.wss_report_interval}`;
   }
   return serialized;
 }

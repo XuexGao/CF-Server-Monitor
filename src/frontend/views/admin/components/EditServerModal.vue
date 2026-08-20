@@ -123,13 +123,19 @@
           </select>
           <p v-if="!isWssReportEnabled" class="text-muted text-sm mt-1">{{ trans.wssReportDisabledConnectionHint }}</p>
         </div>
-        <div class="form-group flex-1">
-          <label class="form-label">{{ trans.networkInterface }}</label>
-          <input type="text" name="edit_interface" autocomplete="off" v-model.trim="editForm.interface" class="form-input" :placeholder="trans.networkInterfacePlaceholder">
+        <div v-if="isWssReportEnabled && editForm.connection_mode === 'auto'" class="form-group flex-1">
+          <label class="form-label">{{ trans.wssReportInterval }}</label>
+          <select v-model="editForm.wss_report_interval" class="form-select">
+            <option v-for="second in 5" :key="second" :value="second">{{ second }}</option>
+          </select>
         </div>
       </div>
 
       <div class="form-row">
+        <div class="form-group flex-1">
+          <label class="form-label">{{ trans.networkInterface }}</label>
+          <input type="text" name="edit_interface" autocomplete="off" v-model.trim="editForm.interface" class="form-input" :placeholder="trans.networkInterfacePlaceholder">
+        </div>
         <div class="form-group flex-1">
           <label class="form-label">{{ trans.rxCorrection }} (GB)</label>
           <input type="number" name="edit_rx_correction" autocomplete="off" v-model="editForm.rx_correction" class="form-input" placeholder="0" min="0" step="0.1">
