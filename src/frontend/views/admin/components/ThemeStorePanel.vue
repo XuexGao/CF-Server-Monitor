@@ -150,13 +150,11 @@
                 @click="previewTheme(theme)"
                 class="btn btn-sm"
                 :disabled="!getSelectedThemeUrl(theme) || previewingThemeId === theme.id"
-                :title="!getSelectedThemeUrl(theme) ? trans.themeUrlUnavailable : ''"
               >👁 {{ previewingThemeId === theme.id ? trans.saving : trans.preview }}</button>
               <button
                 @click="applyTheme(theme)"
                 class="btn btn-sm btn-primary"
                 :disabled="!getSelectedThemeUrl(theme) || applyingThemeId === theme.id"
-                :title="!getSelectedThemeUrl(theme) ? trans.themeUrlUnavailable : ''"
               >⇄ {{ applyingThemeId === theme.id ? trans.saving : trans.switchTheme }}</button>
               <a v-if="getSafeExternalUrl(theme.url)" :href="getSafeExternalUrl(theme.url)" target="_blank" rel="noopener noreferrer" class="btn btn-sm">↗ {{ trans.view }}</a>
             </div>
@@ -557,7 +555,6 @@ const isCurrentTheme = (theme) => {
 
 const previewThemeUrl = async (themeUrl, previewingId) => {
   if (!themeUrl) {
-    showThemeMessage(props.trans.themeUrlUnavailable)
     return
   }
 
@@ -685,7 +682,6 @@ const disableMikusTheme = async () => {
 const applyTheme = async (theme) => {
   const themeUrl = getSelectedThemeUrl(theme)
   if (!themeUrl) {
-    showThemeMessage(props.trans.themeUrlUnavailable)
     return
   }
   await saveThemeUrl(themeUrl, theme.id)

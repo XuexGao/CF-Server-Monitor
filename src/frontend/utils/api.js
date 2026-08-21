@@ -316,6 +316,7 @@ const createEmptyMergedData = () => ({
     show_price: true,
     show_expire: true,
     show_tf: true,
+    show_three_net_details: false,
     display_mode: 'bar',
     site_title: DEFAULT_SITE_TITLE
   }
@@ -359,6 +360,7 @@ const mergeSiteResult = (mergedData, { data, error, baseUrl }, multiSite, localT
       show_price: data.sysConfig.show_price ?? mergedData.sysConfig.show_price,
       show_expire: data.sysConfig.show_expire ?? mergedData.sysConfig.show_expire,
       show_tf: data.sysConfig.show_tf ?? mergedData.sysConfig.show_tf,
+      show_three_net_details: data.sysConfig.show_three_net_details ?? mergedData.sysConfig.show_three_net_details,
       display_mode: resolveDisplayMode(data.sysConfig, mergedData.sysConfig.display_mode),
       site_title: multiSite ? localTitle : mergedData.sysConfig.site_title
     }

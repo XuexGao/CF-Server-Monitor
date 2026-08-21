@@ -7,6 +7,10 @@ import {
   buildSparseHistoryQuery,
   shouldUseSparseHistorySampling
 } from './historySampling.js';
+import {
+  createHistoryTableSql,
+  HISTORY_INSERT_COLUMNS
+} from '../utils/historyFields.js';
 
 let dbInitialized = false;
 
@@ -83,55 +87,7 @@ export async function initDatabase(db) {
       SELECT name FROM sqlite_master WHERE type='table' AND name='metrics_history'
     `).first();
     if (!historyTableExists) {
-      await db.prepare(`
-        CREATE TABLE IF NOT EXISTS metrics_history (
-          id INTEGER PRIMARY KEY,
-          server_id TEXT NOT NULL,
-          timestamp INTEGER DEFAULT 0,
-          agent_version TEXT DEFAULT '',
-          cpu REAL DEFAULT 0,
-          load_avg TEXT DEFAULT '0',
-          net_in_speed REAL DEFAULT 0,
-          net_out_speed REAL DEFAULT 0,
-          net_rx REAL DEFAULT 0,
-          net_tx REAL DEFAULT 0,
-          processes INTEGER DEFAULT 0,
-          tcp_conn INTEGER DEFAULT 0,
-          udp_conn INTEGER DEFAULT 0,
-          ping_ct INTEGER DEFAULT 0,
-          ping_cu INTEGER DEFAULT 0,
-          ping_cm INTEGER DEFAULT 0,
-          ping_bd INTEGER DEFAULT 0,
-          loss_ct INTEGER DEFAULT NULL,
-          loss_cu INTEGER DEFAULT NULL,
-          loss_cm INTEGER DEFAULT NULL,
-          loss_bd INTEGER DEFAULT NULL,
-          ram_total REAL DEFAULT 0,
-          ram_used REAL DEFAULT 0,
-          swap_total REAL DEFAULT 0,
-          swap_used REAL DEFAULT 0,
-          disk_total REAL DEFAULT 0,
-          disk_used REAL DEFAULT 0,
-          disk_read_bps REAL,
-          disk_write_bps REAL,
-          disk_read_iops REAL,
-          disk_write_iops REAL,
-          disk_await_ms REAL,
-          disk_util REAL,
-          cpu_cores INTEGER DEFAULT 0,
-          cpu_info TEXT DEFAULT '',
-          gpu_info TEXT DEFAULT '',
-          arch TEXT DEFAULT '',
-          os TEXT DEFAULT '',
-          kernel_version TEXT DEFAULT '',
-          region TEXT DEFAULT '',
-          ip_v4 TEXT DEFAULT '0',
-          ip_v6 TEXT DEFAULT '0',
-          boot_time TEXT DEFAULT '',
-          net_rx_monthly REAL DEFAULT 0,
-          net_tx_monthly REAL DEFAULT 0
-        )
-      `).run();
+      await db.prepare(createHistoryTableSql('metrics_history')).run();
     }else{
       await ensureHistoryIndex(db);
     }
@@ -470,26 +426,9 @@ export async function saveMetricsHistory(db, serverId, historyPartitionId, metri
 
     await db.prepare(`
     INSERT INTO metrics_history (
-      id, server_id, timestamp, agent_version, cpu, load_avg,
-      net_in_speed, net_out_speed, net_rx, net_tx,
-      processes, tcp_conn, udp_conn,
-      ping_ct, ping_cu, ping_cm, ping_bd,
-      loss_ct, loss_cu, loss_cm, loss_bd,
-      ram_total, ram_used, swap_total, swap_used,
-      disk_total, disk_used,
-      disk_read_bps, disk_write_bps, disk_read_iops, disk_write_iops, disk_await_ms, disk_util,
-      cpu_cores, cpu_info, gpu_info, arch, os, kernel_version, region, ip_v4, ip_v6, boot_time,
-      net_rx_monthly, net_tx_monthly
+      ${HISTORY_INSERT_COLUMNS.join(', ')}
     ) VALUES (
-      ?, ?, ?, ?, ?,
-      ?, ?, ?, ?,
-      ?, ?, ?,
-      ?, ?, ?, ?,
-      ?, ?, ?, ?,
-      ?, ?, ?, ?,
-      ?, ?, ?,
-      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-      ?, ?
+      ${HISTORY_INSERT_COLUMNS.map(() => '?').join(', ')}
     )
   `).bind(
     historyId,

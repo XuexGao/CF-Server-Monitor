@@ -41,7 +41,10 @@
         </div>
 
         <div v-if="deleteVersion === 'go'" class="form-group flex-1 mb-3">
-          <label class="form-label">{{ trans.ghProxy }}</label>
+          <label class="form-label">
+            {{ trans.ghProxy }}
+            <HelpTooltip :text="trans.ghProxyTip" />
+          </label>
           <input
             type="text"
             list="deleteGhProxyList"
@@ -62,12 +65,8 @@
       <div class="cmd-input-wrapper mb-3" :class="{ copied: uninstallCopied }">
         <span class="cmd-prompt">{{ deleteTargetOs === 'windows' ? 'PS' : '$' }}</span>
         <input type="text" readonly :value="uninstallCommand" class="cmd-input flex-1">
-        <button @click="$emit('copy-uninstall')" class="btn btn-icon btn-green ml-2" :title="trans.copy">{{ uninstallCopied ? '✅' : '📋' }}</button>
+        <button @click="$emit('copy-uninstall')" class="btn btn-icon btn-green ml-2" :aria-label="trans.copy">{{ uninstallCopied ? '✅' : '📋' }}</button>
       </div>
-
-      <p class="text-muted mb-4">
-        <span class="warning-icon">[i]</span> {{ trans.clickToCopyCmd }}
-      </p>
 
       <div class="modal-footer flex-justify-between">
         <button @click="$emit('confirm-delete')" class="btn btn-red">{{ trans.confirmDelete }}</button>
@@ -78,6 +77,8 @@
 </template>
 
 <script setup>
+import HelpTooltip from '../../../components/HelpTooltip.vue'
+
 defineProps({
   trans: { type: Object, required: true },
   show: { type: Boolean, default: false },

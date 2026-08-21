@@ -1,9 +1,11 @@
-<template>
+﻿<template>
   <div id="tab-servers" class="tab-content" :class="{ active: activeTab === 'servers' }">
     <div class="alert alert-info alert-stack">
       <div class="alert-line">
-        <span class="alert-icon">[i]</span>
-        <span>{{ trans.clickToCopy }} <strong>📋</strong> {{ trans.installCommand }}</span>
+        <span>{{ trans.installCommand }}</span>
+        <HelpTooltip>
+          <span>{{ trans.clickToCopy }} <strong>📋</strong> {{ trans.installCommand }}</span>
+        </HelpTooltip>
       </div>
     </div>
 
@@ -14,12 +16,13 @@
         <datalist id="group-list">
           <option v-for="group in groups" :key="group" :value="group"></option>
         </datalist>
-        <button v-if="newServerGroup" @click="newServerGroup = ''" class="toolbar-select-clear" title="Clear">✕</button>
+        <button v-if="newServerGroup" @click="newServerGroup = ''" class="toolbar-select-clear" aria-label="Clear">✕</button>
       </div>
       <button @click="$emit('add-server')" class="btn btn-primary">+ {{ trans.addServer }}</button>
     </div>
 
     <div class="batch-actions">
+      <button @click="$emit('batch-edit')" class="btn btn-blue" :disabled="selectedServers.length === 0">✏️ {{ trans.batchEdit }}</button>
       <button @click="$emit('batch-delete')" class="btn btn-red">🗑 {{ trans.batchDelete }}</button>
       <button @click="$emit('toggle-select-all')" class="btn">☐ {{ trans.toggleAll }}</button>
     </div>
@@ -28,7 +31,9 @@
       <table class="terminal-table">
         <thead>
           <tr>
-            <th class="table-center-cell col-width-35">↕️</th>
+            <th class="table-center-cell col-width-35">
+              <HelpTooltip :text="trans.dragSort" />
+            </th>
             <th class="col-width-30"><input type="checkbox" id="select-all" @change="$emit('select-all', $event)" class="checkbox-accent-green"></th>
             <th>{{ trans.hostname.toUpperCase() }}</th>
             <th>IP</th>
@@ -56,7 +61,7 @@
           >
             <td
               class="drag-handle table-center-cell"
-              :title="trans.dragSort"
+              :aria-label="trans.dragSort"
               draggable="false"
               @pointerdown="handlePointerDown($event, server.id)"
               @pointermove="handlePointerMove"
@@ -152,9 +157,9 @@
             <td>
               <div class="action-group">
                 <div class="action-btns">
-                  <button @click="$emit('copy-cmd', server.id)" class="btn btn-icon btn-green" :title="trans.copy">{{ copiedServerId === server.id ? '✅' : '📋' }}</button>
-                  <button @click="$emit('edit', server)" class="btn btn-icon btn-blue" :title="trans.edit">✏️</button>
-                  <button @click="$emit('delete', server.id)" class="btn btn-icon btn-red" :title="trans.delete">🗑️</button>
+                  <button @click="$emit('copy-cmd', server.id)" class="btn btn-icon btn-green" :aria-label="trans.copy">{{ copiedServerId === server.id ? '✅' : '📋' }}</button>
+                  <button @click="$emit('edit', server)" class="btn btn-icon btn-blue" :aria-label="trans.edit">✏️</button>
+                  <button @click="$emit('delete', server.id)" class="btn btn-icon btn-red" :aria-label="trans.delete">🗑️</button>
                 </div>
               </div>
             </td>
@@ -172,6 +177,7 @@ import { getPublicAssetUrl } from '../../../utils/config'
 import { currentLang } from '../../../utils/i18n'
 import { detectBillingCycle, detectCurrencySymbol, getBillingCycleOption, isEnabledFlag, isFreePrice, normalizeCurrency, normalizePrice } from '../../../utils/server.js'
 import OsIcon from '../../../components/OsIcon.vue'
+import HelpTooltip from '../../../components/HelpTooltip.vue'
 
 const props = defineProps({
   trans: { type: Object, required: true },
@@ -191,7 +197,7 @@ const newServerName = defineModel('newServerName', { type: String, default: '' }
 const newServerGroup = defineModel('newServerGroup', { type: String, default: '' })
 
 const emit = defineEmits([
-  'add-server', 'batch-delete', 'toggle-select-all', 'select-all',
+  'add-server', 'batch-edit', 'batch-delete', 'toggle-select-all', 'select-all',
   'drag-start', 'drop', 'toggle-server', 'copy-note',
   'copy-spec', 'copy-cmd', 'edit', 'delete'
 ])

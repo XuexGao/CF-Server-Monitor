@@ -16,7 +16,10 @@
         </div>
 
         <div class="form-group flex-1">
-          <label class="form-label">{{ trans.ghProxy }}</label>
+          <label class="form-label">
+            {{ trans.ghProxy }}
+            <HelpTooltip :text="trans.ghProxyTip" />
+          </label>
           <input
             type="text"
             list="ghProxyList"
@@ -112,6 +115,8 @@
 </template>
 
 <script setup>
+import HelpTooltip from '../../../components/HelpTooltip.vue'
+
 defineProps({
   trans: { type: Object, required: true },
   show: { type: Boolean, default: false },

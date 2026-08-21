@@ -39,7 +39,6 @@
               v-if="isMultipleMode"
               v-model.number="selectedApiIndex"
               class="form-select admin-site-select"
-              :title="trans.apiEndpoint"
               :disabled="adminSiteLoading"
               @change="handleAdminApiIndexChange"
             >
@@ -51,6 +50,7 @@
                 [{{ index }}] {{ base }}
               </option>
             </select>
+            <HelpTooltip v-if="isMultipleMode" :text="trans.apiEndpoint" />
             <button @click="logout" class="btn btn-red">🚪 {{ trans.logout }}</button>
           </div>
         </div>
@@ -114,6 +114,7 @@
           :copied-note-server-id="copiedNoteServerId"
           :copied-spec-key="copiedSpecKey"
           @add-server="addServer"
+          @batch-edit="openBatchEditModal"
           @batch-delete="batchDelete"
           @toggle-select-all="toggleSelectAll"
           @select-all="handleSelectAll"
@@ -178,6 +179,19 @@
         @save="saveEdit"
         @close="closeEditModal"
         @toggle-auto-update="handleAutoUpdateToggle"
+      />
+
+      <BatchEditServersModal
+        v-model:form="batchEditForm"
+        v-model:enabled="batchEditEnabled"
+        :trans="trans"
+        :show="showBatchEditModal"
+        :selected-count="selectedServers.length"
+        :settings="settings"
+        :is-wss-report-enabled="isWssReportEnabled"
+        :saving="batchEditing"
+        @save="saveBatchEdit"
+        @close="closeBatchEditModal"
       />
 
       <div v-if="showAutoUpdateWarning" id="autoUpdateWarningModal" class="modal-overlay auto-update-warning-modal active">
@@ -347,15 +361,14 @@
                   <div class="flex-justify-between text-sm mb-1">
                     <span class="quota-label-with-help">
                       <span>{{ trans.durableObjectsRequests }}：{{ formatNumber(d1UsageResult.usage.today.durableObjectsRequests) }} / {{ formatNumber(100000) }}</span>
-                      <span class="quota-help" tabindex="0" :aria-label="formatDurableObjectsUsageTooltip(d1UsageResult.usage.today)">
-                        <span class="quota-help-dot" aria-hidden="true">?</span>
-                        <span class="quota-help-tooltip" role="tooltip">
+                      <HelpTooltip>
+                        <template #default>
                           <span v-for="row in getDurableObjectsUsageRows(d1UsageResult.usage.today)" :key="row.key" class="quota-help-row">
                             <span class="quota-help-label">{{ row.label }}</span>
                             <span class="quota-help-value">{{ row.value }}</span>
                           </span>
-                        </span>
-                      </span>
+                        </template>
+                      </HelpTooltip>
                     </span>
                     <span>{{ getUsagePercent(d1UsageResult.usage.today.durableObjectsRequests, 100000) }}%</span>
                   </div>
@@ -367,12 +380,11 @@
                   <div class="flex-justify-between text-sm mb-1">
                     <span class="quota-label-with-help">
                       <span>{{ trans.durableObjectsDuration }}：{{ formatNumber(d1UsageResult.usage.today.durableObjectsDuration, 2) }} / {{ formatNumber(13000) }}</span>
-                      <span class="quota-help" tabindex="0" :aria-label="trans.durableObjectsDurationTip">
-                        <span class="quota-help-dot" aria-hidden="true">?</span>
-                        <span class="quota-help-tooltip" role="tooltip">
+                      <HelpTooltip :text="trans.durableObjectsDurationTip">
+                        <template #default>
                           <span class="quota-help-row">{{ trans.durableObjectsDurationTip }}</span>
-                        </span>
-                      </span>
+                        </template>
+                      </HelpTooltip>
                     </span>
                     <span>{{ getUsagePercent(d1UsageResult.usage.today.durableObjectsDuration, 13000) }}%</span>
                   </div>
@@ -417,15 +429,14 @@
                   <div class="flex-justify-between text-sm mb-1">
                     <span class="quota-label-with-help">
                       <span>{{ trans.durableObjectsRequests }}：{{ formatNumber(d1UsageResult.usage.yesterday.durableObjectsRequests) }} / {{ formatNumber(100000) }}</span>
-                      <span class="quota-help" tabindex="0" :aria-label="formatDurableObjectsUsageTooltip(d1UsageResult.usage.yesterday)">
-                        <span class="quota-help-dot" aria-hidden="true">?</span>
-                        <span class="quota-help-tooltip" role="tooltip">
+                      <HelpTooltip>
+                        <template #default>
                           <span v-for="row in getDurableObjectsUsageRows(d1UsageResult.usage.yesterday)" :key="row.key" class="quota-help-row">
                             <span class="quota-help-label">{{ row.label }}</span>
                             <span class="quota-help-value">{{ row.value }}</span>
                           </span>
-                        </span>
-                      </span>
+                        </template>
+                      </HelpTooltip>
                     </span>
                     <span>{{ getUsagePercent(d1UsageResult.usage.yesterday.durableObjectsRequests, 100000) }}%</span>
                   </div>
@@ -437,12 +448,11 @@
                   <div class="flex-justify-between text-sm mb-1">
                     <span class="quota-label-with-help">
                       <span>{{ trans.durableObjectsDuration }}：{{ formatNumber(d1UsageResult.usage.yesterday.durableObjectsDuration, 2) }} / {{ formatNumber(13000) }}</span>
-                      <span class="quota-help" tabindex="0" :aria-label="trans.durableObjectsDurationTip">
-                        <span class="quota-help-dot" aria-hidden="true">?</span>
-                        <span class="quota-help-tooltip" role="tooltip">
+                      <HelpTooltip :text="trans.durableObjectsDurationTip">
+                        <template #default>
                           <span class="quota-help-row">{{ trans.durableObjectsDurationTip }}</span>
-                        </span>
-                      </span>
+                        </template>
+                      </HelpTooltip>
                     </span>
                     <span>{{ getUsagePercent(d1UsageResult.usage.yesterday.durableObjectsDuration, 13000) }}%</span>
                   </div>
@@ -542,12 +552,14 @@ import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import TerminalHeader from '../../components/TerminalHeader.vue'
 import Footer from '../../components/Footer.vue'
+import HelpTooltip from '../../components/HelpTooltip.vue'
 import AdminLogin from './components/AdminLogin.vue'
 import ServerTable from './components/ServerTable.vue'
 import SettingsPanel from './components/SettingsPanel.vue'
 import DatabasePanel from './components/DatabasePanel.vue'
 import ThemeStorePanel from './components/ThemeStorePanel.vue'
 import EditServerModal from './components/EditServerModal.vue'
+import BatchEditServersModal from './components/BatchEditServersModal.vue'
 import DeleteServerModal from './components/DeleteServerModal.vue'
 import CopyCommandModal from './components/CopyCommandModal.vue'
 import { adminApi, login, logout as apiLogout, upgradeDatabase, clearHistory, getApiBases, fetchConfig } from '../../utils/api'
@@ -772,11 +784,6 @@ const getDurableObjectsUsageRows = (usage = {}) => ([
     value: `${formatNumber(usage.durableObjectsOutboundWebSocketMessages)} · ${trans.value.billingRatioNotBilled}`
   }
 ])
-const formatDurableObjectsUsageTooltip = (usage = {}) => (
-  getDurableObjectsUsageRows(usage)
-    .map(row => `${row.label}: ${row.value}`)
-    .join('\n')
-)
 const getUsagePercent = (used, limit) => {
   if (!limit) return 0
   return Number(((Number(used || 0) / Number(limit)) * 100).toFixed(2))
@@ -836,6 +843,7 @@ const settings = ref({
   show_price: true,
   show_expire: true,
   show_tf: true,
+  show_three_net_details: false,
   wss_report_enabled: false,
   frontend_ws_timeout_minutes: 0,
   long_history_points: String(HISTORY.DEFAULT_LONG_RANGE_POINTS),
@@ -850,7 +858,7 @@ const settings = ref({
   notification_webhook_format: 'json',
   notification_webhook_headers: '',
   notification_webhook_body: '{\n  "title": "{{emoji}} {{event}}",\n  "content": "{{notification}}"\n}',
-  notification_template: '{{emoji}}【CF Server Monitor】{{event}}\n服务器: {{client}}\n详情:\n{{message}}\n时间: {{time}}',
+  notification_template: '{{emoji}}【CF Server Monitor】{{event}}\n\n{{message}}\n\n{{time}}',
   turnstile_enabled: false,
   turnstile_site_key: '',
   turnstile_secret_key: '',
@@ -901,6 +909,8 @@ const {
 } = useTurnstile()
 
 const showEditModal = ref(false)
+const showBatchEditModal = ref(false)
+const batchEditing = ref(false)
 const editForm = ref({
   id: '',
   name: '',
@@ -931,6 +941,37 @@ const editForm = ref({
   is_hidden: false,
   offline_notify_disabled: false
 })
+
+const createBatchEditDefaults = () => ({
+  server_group: '',
+  region: '',
+  tags: '',
+  price: '',
+  billing_cycle: 'month',
+  auto_renewal: false,
+  currency: '¥',
+  expire_date: '',
+  traffic_limit: '',
+  traffic_calc_type: 'total',
+  interface: '',
+  reset_day: 1,
+  collect_interval: 0,
+  report_interval: 60,
+  wss_report_interval: 2,
+  connection_mode: 'auto',
+  custom_ct: '',
+  custom_cu: '',
+  custom_cm: '',
+  custom_bd: '',
+  rx_correction: '',
+  tx_correction: '',
+  auto_update: false,
+  is_hidden: false,
+  offline_notify_disabled: false
+})
+
+const batchEditForm = ref(createBatchEditDefaults())
+const batchEditEnabled = ref(Object.fromEntries(Object.keys(createBatchEditDefaults()).map(field => [field, false])))
 
 const showDeleteModal = ref(false)
 const deleteServerId = ref('')
@@ -1216,6 +1257,7 @@ const loadSettings = async () => {
         show_price: settingsData.show_price === 'true',
         show_expire: settingsData.show_expire === 'true',
         show_tf: settingsData.show_tf === 'true',
+        show_three_net_details: settingsData.show_three_net_details === 'true' || settingsData.show_three_net_details === true,
         wss_report_enabled: settingsData.wss_report_enabled === 'true' || settingsData.wss_report_enabled === true,
         frontend_ws_timeout_minutes: normalizeFrontendWsTimeoutMinutesSetting(settingsData.frontend_ws_timeout_minutes),
         long_history_points: normalizeLongHistoryPointsSetting(settingsData.long_history_points),
@@ -1230,7 +1272,7 @@ const loadSettings = async () => {
         notification_webhook_format: ['json', 'form', 'text'].includes(String(settingsData.notification_webhook_format || '').toLowerCase()) ? String(settingsData.notification_webhook_format).toLowerCase() : 'json',
         notification_webhook_headers: settingsData.notification_webhook_headers || '',
         notification_webhook_body: settingsData.notification_webhook_body || '{\n  "title": "{{emoji}} {{event}}",\n  "content": "{{notification}}"\n}',
-        notification_template: settingsData.notification_template || '{{emoji}}【CF Server Monitor】{{event}}\n服务器: {{client}}\n详情:\n{{message}}\n时间: {{time}}',
+        notification_template: settingsData.notification_template || '{{emoji}}【CF Server Monitor】{{event}}\n\n{{message}}\n\n{{time}}',
         turnstile_enabled: settingsData.turnstile_enabled === 'true',
         turnstile_login_enabled: settingsData.turnstile_login_enabled === 'true',
         turnstile_site_key: settingsData.turnstile_site_key || '',
@@ -1373,6 +1415,7 @@ const saveSettings = async () => {
       show_price: settings.value.show_price ? 'true' : 'false',
       show_expire: settings.value.show_expire ? 'true' : 'false',
       show_tf: settings.value.show_tf ? 'true' : 'false',
+      show_three_net_details: settings.value.show_three_net_details ? 'true' : 'false',
       wss_report_enabled: settings.value.wss_report_enabled ? 'true' : 'false',
       frontend_ws_timeout_minutes: String(frontendWsTimeoutMinutes),
       long_history_points: normalizeLongHistoryPointsSetting(settings.value.long_history_points),
@@ -1633,8 +1676,7 @@ const copyUninstallCmd = async () => {
   }, 1500)
 }
 
-const openEditModal = (server) => {
-  editForm.value = {
+const createEditFormFromServer = (server) => ({
     id: server.id,
     name: server.name || '',
     server_group: server.server_group || '',
@@ -1663,7 +1705,10 @@ const openEditModal = (server) => {
     auto_update: server.auto_update === '1' || server.auto_update === 1 || server.auto_update === true,
     is_hidden: server.is_hidden === '1',
     offline_notify_disabled: server.offline_notify_disabled === '1'
-  }
+})
+
+const openEditModal = (server) => {
+  editForm.value = createEditFormFromServer(server)
   currentServerName.value = server.name || ''
   showEditModal.value = true
 }
@@ -1694,6 +1739,63 @@ const confirmAutoUpdateWarning = () => {
 const cancelAutoUpdateWarning = () => {
   autoUpdatePendingEnable.value = false
   showAutoUpdateWarning.value = false
+}
+
+const buildEditPayloadFromForm = (form) => {
+  const pingNodeValidation = getPingNodeValidation(form)
+  if (!pingNodeValidation.valid) {
+    return { error: buildPingNodeError(pingNodeValidation.field) }
+  }
+
+  const normalizedBillingCycle = normalizeBillingCycle(form.billing_cycle)
+  const normalizedAutoRenewal = form.auto_renewal ? '1' : '0'
+  const normalizedPrice = normalizePrice(form.price)
+  const normalizedCurrency = normalizeCurrency(form.currency || detectCurrencySymbol(form.price) || '¥')
+  const normalizedExpireDate = renewExpireDateIfNeeded(
+    form.expire_date,
+    normalizedBillingCycle,
+    normalizedAutoRenewal
+  ).expire_date
+
+  return {
+    payload: {
+      action: 'edit',
+      id: form.id,
+      name: form.name,
+      server_group: form.server_group,
+      region: form.region,
+      tags: form.tags,
+      note: form.note,
+      price: normalizedPrice,
+      billing_cycle: normalizedBillingCycle,
+      auto_renewal: normalizedAutoRenewal,
+      currency: normalizedCurrency,
+      expire_date: normalizedExpireDate,
+      traffic_limit: form.traffic_limit,
+      traffic_calc_type: form.traffic_calc_type,
+      interface: form.interface,
+      reset_day: form.reset_day,
+      collect_interval: form.collect_interval,
+      report_interval: form.report_interval,
+      wss_report_interval: form.wss_report_interval,
+      connection_mode: getEffectiveConnectionMode(form.connection_mode),
+      custom_ct: pingNodeValidation.values.custom_ct,
+      custom_cu: pingNodeValidation.values.custom_cu,
+      custom_cm: pingNodeValidation.values.custom_cm,
+      custom_bd: pingNodeValidation.values.custom_bd,
+      rx_correction: form.rx_correction,
+      tx_correction: form.tx_correction,
+      auto_update: form.auto_update ? '1' : '0',
+      is_hidden: form.is_hidden ? '1' : '0',
+      offline_notify_disabled: form.offline_notify_disabled ? '1' : '0'
+    },
+    normalized: {
+      price: normalizedPrice,
+      currency: normalizedCurrency,
+      billing_cycle: normalizedBillingCycle,
+      expire_date: normalizedExpireDate
+    }
+  }
 }
 
 const saveEdit = async () => {
@@ -1815,6 +1917,95 @@ const batchDelete = async () => {
     }
   } catch (e) {
     saveResult.value = { success: false, error: e.message }
+  }
+}
+
+const getSelectedServerRows = () => {
+  const selected = new Set(selectedServers.value.map(id => String(id)))
+  return servers.value.filter(server => selected.has(String(server.id)))
+}
+
+const getCommonBatchValue = (forms, field, fallback) => {
+  if (forms.length === 0) return fallback
+  const first = forms[0][field]
+  return forms.every(form => form[field] === first) ? first : fallback
+}
+
+const openBatchEditModal = () => {
+  const selected = getSelectedServerRows()
+  if (selected.length === 0) {
+    alertMessage.value = trans.value.selectServersToEdit || trans.value.selectServers
+    return
+  }
+
+  const defaults = createBatchEditDefaults()
+  const forms = selected.map(createEditFormFromServer)
+  batchEditForm.value = Object.fromEntries(
+    Object.keys(defaults).map(field => [field, getCommonBatchValue(forms, field, defaults[field])])
+  )
+  batchEditEnabled.value = Object.fromEntries(Object.keys(defaults).map(field => [field, false]))
+  showBatchEditModal.value = true
+}
+
+const closeBatchEditModal = () => {
+  if (batchEditing.value) return
+  showBatchEditModal.value = false
+}
+
+const saveBatchEdit = async () => {
+  if (batchEditing.value) return
+
+  const enabledFields = Object.keys(batchEditEnabled.value).filter(field => batchEditEnabled.value[field])
+  if (enabledFields.length === 0) {
+    alertMessage.value = trans.value.noBatchEditFields || 'Please select fields to update'
+    return
+  }
+
+  const selected = getSelectedServerRows()
+  if (selected.length === 0) {
+    alertMessage.value = trans.value.selectServersToEdit || trans.value.selectServers
+    return
+  }
+
+  if (batchEditEnabled.value.auto_update && batchEditForm.value.auto_update) {
+    const ok = confirm(trans.value.autoUpdateRiskDesc || trans.value.autoUpdateRiskTitle || 'Enable auto-update?')
+    if (!ok) return
+  }
+
+  validationError.value = null
+  batchEditing.value = true
+
+  try {
+    let updated = 0
+    for (const server of selected) {
+      const form = createEditFormFromServer(server)
+      for (const field of enabledFields) {
+        form[field] = batchEditForm.value[field]
+      }
+      const built = buildEditPayloadFromForm(form)
+      if (built.error) {
+        validationError.value = built.error
+        return
+      }
+      const result = await adminApiForSite(built.payload)
+      if (result.error) {
+        saveResult.value = { success: false, error: getMessage(result.error) || 'Fail' }
+        return
+      }
+      updated += 1
+    }
+
+    saveResult.value = {
+      success: true,
+      message: (trans.value.batchEditSuccess || 'Batch edit completed').replace('{count}', updated)
+    }
+    selectedServers.value = []
+    showBatchEditModal.value = false
+    await loadServers()
+  } catch (e) {
+    saveResult.value = { success: false, error: e.message }
+  } finally {
+    batchEditing.value = false
   }
 }
 

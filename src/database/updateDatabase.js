@@ -6,6 +6,7 @@ import {
   normalizeCurrency,
   normalizePrice
 } from '../utils/serverBilling.js';
+import { HISTORY_UPGRADE_COLUMNS } from '../utils/historyFields.js';
 
 
 export async function updateDatabase(db) {
@@ -208,31 +209,7 @@ async function cleanupServerExtraColumns(db) {
 
 export async function addHistoryColumns(db) {
   try {
-    const newHistoryCols = {
-      cpu_cores: "INTEGER DEFAULT 0",
-      cpu_info: "TEXT DEFAULT ''",
-      agent_version: "TEXT DEFAULT ''",
-      gpu_info: "TEXT DEFAULT ''",
-      arch: "TEXT DEFAULT ''",
-      os: "TEXT DEFAULT ''",
-      kernel_version: "TEXT DEFAULT ''",
-      region: "TEXT DEFAULT ''",
-      ip_v4: "TEXT DEFAULT '0'",
-      ip_v6: "TEXT DEFAULT '0'",
-      boot_time: "TEXT DEFAULT ''",
-      net_rx_monthly: "REAL DEFAULT 0",
-      net_tx_monthly: "REAL DEFAULT 0",
-      disk_read_bps: "REAL",
-      disk_write_bps: "REAL",
-      disk_read_iops: "REAL",
-      disk_write_iops: "REAL",
-      disk_await_ms: "REAL",
-      disk_util: "REAL",
-      loss_ct: "INTEGER DEFAULT NULL",
-      loss_cu: "INTEGER DEFAULT NULL",
-      loss_cm: "INTEGER DEFAULT NULL",
-      loss_bd: "INTEGER DEFAULT NULL"
-    };
+    const newHistoryCols = HISTORY_UPGRADE_COLUMNS;
 
     const tables = ['metrics_history'];
     const oldTable = await db.prepare(

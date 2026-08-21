@@ -17,7 +17,9 @@ import { markFrontendRealtimeActive } from '../utils/realtimeBroadcastGate.js';
 
 const LATEST_REPORT_ID_CHUNK_SIZE = 500;
 const LATENCY_NODE_FIELDS = ['ct', 'cu', 'cm', 'bd'];
-const LATENCY_LATEST_APPEND_THRESHOLD_MS = 2 * 60 * 1000;
+const LATENCY_WINDOW_BUCKET_MS = 2 * 60 * 1000;
+const LATENCY_WINDOW_MAX_POINTS = 30;
+const LATENCY_LATEST_APPEND_THRESHOLD_MS = LATENCY_WINDOW_BUCKET_MS;
 
 function createEmptyLatencyWindow() {
   return { ping: [], loss: [] };
@@ -153,24 +155,56 @@ function shouldAppendLatestLatencyPoint(series, timestamp, now = Date.now()) {
   return !latestTs || timestamp - latestTs > LATENCY_LATEST_APPEND_THRESHOLD_MS;
 }
 
-function appendLatestLatencyPoint(server, metrics, timestamp, now = Date.now()) {
+function buildFixedLatencySeriesWithLatest(series, timestamp, latestPoint) {
+  const endBucket = Math.floor(timestamp / LATENCY_WINDOW_BUCKET_MS) * LATENCY_WINDOW_BUCKET_MS;
+  const pointsByBucket = new Map();
+
+  for (const point of Array.isArray(series) ? series : []) {
+    if (!point || typeof point !== 'object') continue;
+    const pointTs = normalizeTimestamp(point.ts, 0);
+    if (!pointTs) continue;
+    const bucketTs = Math.floor(pointTs / LATENCY_WINDOW_BUCKET_MS) * LATENCY_WINDOW_BUCKET_MS;
+    pointsByBucket.set(bucketTs, { ...point, ts: bucketTs });
+  }
+  pointsByBucket.set(endBucket, { ts: endBucket, ...latestPoint });
+
+  const candidates = Array.from(pointsByBucket.values()).sort((a, b) => a.ts - b.ts);
+  const startBucket = endBucket -
+    (LATENCY_WINDOW_MAX_POINTS - 1) * LATENCY_WINDOW_BUCKET_MS;
+  const result = [];
+
+  for (let index = 0; index < LATENCY_WINDOW_MAX_POINTS; index++) {
+    const targetTs = startBucket + index * LATENCY_WINDOW_BUCKET_MS;
+    let nearest = candidates[0];
+    let nearestDistance = Math.abs(nearest.ts - targetTs);
+
+    for (const candidate of candidates.slice(1)) {
+      const distance = Math.abs(candidate.ts - targetTs);
+      if (distance <= nearestDistance) {
+        nearest = candidate;
+        nearestDistance = distance;
+      }
+    }
+
+    const { ts: _sourceTs, ...values } = nearest;
+    result.push({ ts: targetTs, ...values });
+  }
+
+  return result;
+}
+
+export function appendLatestLatencyPoint(server, metrics, timestamp, now = Date.now()) {
   const ts = normalizeTimestamp(timestamp ?? metrics?.timestamp, 0);
   if (!ts) return;
 
   const pingPoint = buildLatencyPointFromMetrics(metrics, 'ping');
   if (pingPoint && shouldAppendLatestLatencyPoint(server.ping, ts, now)) {
-    server.ping = [
-      ...((Array.isArray(server.ping) ? server.ping : []).slice(-29)),
-      { ts, ...pingPoint }
-    ];
+    server.ping = buildFixedLatencySeriesWithLatest(server.ping, ts, pingPoint);
   }
 
   const lossPoint = buildLatencyPointFromMetrics(metrics, 'loss');
   if (lossPoint && shouldAppendLatestLatencyPoint(server.loss, ts, now)) {
-    server.loss = [
-      ...((Array.isArray(server.loss) ? server.loss : []).slice(-29)),
-      { ts, ...lossPoint }
-    ];
+    server.loss = buildFixedLatencySeriesWithLatest(server.loss, ts, lossPoint);
   }
 }
 
@@ -379,6 +413,7 @@ export async function handleServersAPI(request, env, sys) {
       show_price: sys.show_price === 'true',
       show_expire: sys.show_expire === 'true',
       show_tf: sys.show_tf === 'true',
+      show_three_net_details: sys.show_three_net_details === 'true',
       display_mode: sys.display_mode || 'bar'
     }
   };

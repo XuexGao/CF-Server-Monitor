@@ -1,16 +1,7 @@
-const PROBE_METRIC_FIELDS = [
-  'ping_ct', 'ping_cu', 'ping_cm', 'ping_bd',
-  'loss_ct', 'loss_cu', 'loss_cm', 'loss_bd'
-];
-
-const NUMERIC_METRIC_FIELDS = [
-  'cpu', 'net_in_speed', 'net_out_speed', 'net_rx', 'net_tx',
-  'net_rx_monthly', 'net_tx_monthly', 'processes', 'tcp_conn', 'udp_conn',
-  'ram_total', 'ram_used', 'swap_total', 'swap_used',
-  'disk_total', 'disk_used', 'cpu_cores',
-  'disk_read_bps', 'disk_write_bps', 'disk_read_iops',
-  'disk_write_iops', 'disk_await_ms', 'disk_util'
-];
+import {
+  NUMERIC_METRIC_FIELDS,
+  PROBE_METRIC_FIELDS
+} from './historyFields.js';
 
 export const DISK_IO_METRIC_FIELDS = [
   'read_bps',

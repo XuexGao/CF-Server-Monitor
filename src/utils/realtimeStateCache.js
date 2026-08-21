@@ -1,4 +1,4 @@
-const REALTIME_STATE_CACHE_TTL_MS = 4 * 60 * 1000;
+const REALTIME_STATE_CACHE_TTL_MS = 2 * 60 * 1000;
 const MAX_REALTIME_STATE_CACHE_ENTRIES = 100;
 
 const realtimeStateCache = new Map();

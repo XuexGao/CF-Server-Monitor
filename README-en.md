@@ -10,7 +10,7 @@ A lightweight multi-server monitoring dashboard built on Cloudflare Workers, D1,
   <a href="README-en.md">English</a>
 </p>
 
-[![Workers](https://img.shields.io/badge/Workers-2.8.4%20Beta4-f38020?style=flat-square&logo=cloudflare&logoColor=white)](version.json)
+[![Workers](https://img.shields.io/badge/Workers-2.8.4%20Beta5-f38020?style=flat-square&logo=cloudflare&logoColor=white)](version.json)
 [![GitHub Stars](https://img.shields.io/github/stars/huilang-me/CF-Server-Monitor?style=flat-square&logo=github)](https://github.com/huilang-me/CF-Server-Monitor/stargazers)
 [![GitHub Forks](https://img.shields.io/github/forks/huilang-me/CF-Server-Monitor?style=flat-square&logo=github)](https://github.com/huilang-me/CF-Server-Monitor/forks)
 [![License](https://img.shields.io/badge/License-MIT-16a34a?style=flat-square)](#license)
@@ -320,10 +320,10 @@ Default notification template:
 
 ```text
 {{emoji}}【CF Server Monitor】{{event}}
-服务器: {{client}}
-详情:
+
 {{message}}
-时间: {{time}}
+
+{{time}}
 ```
 
 Available template variables:
@@ -335,7 +335,7 @@ Available template variables:
 | `{{client}}` / `{{clients}}` | Server names in this notification, joined by comma for multiple servers |
 | `{{count}}` | Number of affected servers; not shown by the default template, but available for custom templates |
 | `{{message}}` | Detailed notification list |
-| `{{time}}` | Send time |
+| `{{time}}` | UTC send time |
 | `{{notification}}` | Full content after applying the notification template, usually used as Webhook `content` |
 | `{{title}}` | Fixed title `💌 Cloudflare Server Monitor` |
 
@@ -344,67 +344,6 @@ Supported alert types:
 - Offline alert: notify after a node stays offline for the configured delay; send recovery notice when it returns.
 - Expiration reminder: notify daily 1 to 7 days before expiration, or disable it.
 - Resource alert: define rules for CPU, memory, disk, inbound/outbound network speed, and similar metrics.
-
-Default template output examples:
-
-```text
-❌【CF Server Monitor】节点离线告警
-服务器: server-a, server-b
-详情:
-• server-a - 2026/8/19 10:21:00
-• server-b - No report
-时间: 2026/8/19 10:25:00
-```
-
-```text
-✅【CF Server Monitor】节点恢复通知
-服务器: server-a, server-b
-详情:
-• server-a
-• server-b
-时间: 2026/8/19 10:30:00
-```
-
-```text
-⚠️【CF Server Monitor】服务器到期提醒
-服务器: vps-hk, vps-sg
-详情:
-• vps-hk - 3 days left (2026-08-22)
-• vps-sg - 1 day left (2026-08-20)
-时间: 2026/8/19 10:35:00
-```
-
-```text
-❌【CF Server Monitor】资源负载告警
-服务器: server-a, server-b
-详情:
-⚠️ **资源负载告警** (2个)
-
-• High CPU / server-a - 平均 5 分钟
-  CPU 平均 92.3% > 80%
-• High RAM / server-b - 窗口样本连续 5 分钟
-  RAM 当前 91.2% > 85%
-时间: 2026/8/19 10:40:00
-```
-
-```text
-✅【CF Server Monitor】资源负载恢复
-服务器: server-a
-详情:
-✅ **资源负载恢复** (1个)
-
-• High CPU / server-a
-  CPU 当前 42.1% < 80%
-时间: 2026/8/19 10:45:00
-```
-
-```text
-✅【CF Server Monitor】测试通知
-服务器: CF Server Monitor
-详情:
-This is a test notification from CF Server Monitor.
-时间: 2026/8/19 10:55:00
-```
 
 Send a test notification before saving.
 

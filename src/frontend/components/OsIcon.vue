@@ -4,7 +4,7 @@
     class="os-icon-img"
     :src="iconSrc"
     :alt="osName"
-    :title="osName"
+    :aria-label="osName"
     loading="lazy"
     @error="loadFailed = true"
   >

@@ -455,249 +455,278 @@ async function getD1DailyUsage(token, accountId) {
   };
 }
 
+async function handleLoginAction({ request, env, sys, data }) {
+  const { username, password } = data;
+
+  if (!username || !password) {
+    return createBadRequestResponse('missingCredentials');
+  }
+
+  const turnstileEnabled = sys && (sys.turnstile_enabled === 'true' || sys.turnstile_enabled === true);
+  const turnstileLoginEnabled = sys && (sys.turnstile_login_enabled === 'true' || sys.turnstile_login_enabled === true);
+  const turnstileSecretKey = sys && sys.turnstile_secret_key || '';
+
+  if (turnstileEnabled || turnstileLoginEnabled) {
+    const turnstileToken = request.headers.get('X-Turnstile-Token');
+    const isTurnstileVerified = await verifyTurnstileToken(turnstileToken, turnstileSecretKey);
+
+    if (!isTurnstileVerified) {
+      return createErrorResponse(new AppError('verificationFailed', 403));
+    }
+  }
+
+  const authHeader = 'Basic ' + btoa(username + ':' + password);
+  const mockRequest = {
+    headers: {
+      get: (key) => key === 'Authorization' ? authHeader : null
+    }
+  };
+
+  const credentialResult = await validateCredentials(mockRequest, env, sys);
+
+  if (!credentialResult.valid) {
+    return createUnauthorizedResponse('invalidCredentials');
+  }
+
+  if (credentialResult.needsPasswordUpgrade) {
+    try {
+      const upgradedPasswordHash = await hashPassword(password);
+      await saveSiteOptions(env.DB, { password: upgradedPasswordHash });
+      if (sys) {
+        sys.password = upgradedPasswordHash;
+      }
+    } catch (e) {
+      console.error('Password hash upgrade failed:', e);
+    }
+  }
+
+  try {
+    const token = await generateToken(env, sys);
+    return createSuccessResponse({
+      success: true,
+      token: token,
+      message: 'loginSuccessful'
+    }, {
+      'Set-Cookie': buildAuthCookie(request, token)
+    });
+  } catch (e) {
+    return createErrorResponse(e);
+  }
+}
+
+function handleLogoutAction({ request }) {
+  return createSuccessResponseWithCookies({
+    success: true
+  }, [
+    buildClearAuthCookie(request),
+    buildClearThemePreviewAuthCookie(request)
+  ]);
+}
+
+function handleClearThemePreviewAuthAction({ request }) {
+  return createSuccessResponseWithCookies({
+    success: true
+  }, [
+    buildClearThemePreviewAuthCookie(request)
+  ]);
+}
+
+const PUBLIC_ADMIN_ACTION_HANDLERS = {
+  login: handleLoginAction,
+  logout: handleLogoutAction,
+  clear_theme_preview_auth: handleClearThemePreviewAuthAction
+};
+
+async function handleGetSettingsAction({ env, sys, loadFullSettings }) {
+  const fullSettings = loadFullSettings ? await loadFullSettings() : sys;
+  const { jwt_secret, ...safeSettings } = fullSettings || {};
+  return createSuccessResponse({
+    success: true,
+    settings: safeSettings,
+    api_secret: env.API_SECRET
+  });
+}
+
+async function handleStartThemePreviewAction({ request, data }) {
+  const normalizedThemeUrl = normalizeThemeUrl(data.theme_url);
+  if (!normalizedThemeUrl) {
+    return createBadRequestResponse('invalidThemeUrl');
+  }
+  if (!await validateThemeUrlAvailable(normalizedThemeUrl)) {
+    return createBadRequestResponse('invalidThemeUrl');
+  }
+
+  const token = extractBearerToken(request);
+  if (!token) {
+    return simpleAuthResponse();
+  }
+
+  return createSuccessResponse({
+    success: true,
+    preview_url: buildThemePreviewUrl(request, normalizedThemeUrl)
+  }, {
+    'Set-Cookie': buildThemePreviewAuthCookie(request, token)
+  });
+}
+
+async function handleListAction({ env }) {
+  const servers = await getAllServers(env.DB);
+  const latestMetricsMap = await getLatestMetricsForAllServers(env.DB);
+
+  const now = Date.now();
+  const ONLINE_THRESHOLD = 300000;
+  const stats = {
+    total: servers.length,
+    online: 0,
+    offline: 0,
+    total_cpu: 0,
+    total_net_in: 0,
+    total_net_out: 0,
+    avg_cpu: 0
+  };
+
+  const serversWithStatus = servers.map(server => {
+    const latestMetrics = latestMetricsMap.get(server.id);
+    const item = { ...server, region_override: server.region || '' };
+    let isOnline = false;
+
+    if (latestMetrics) {
+      isOnline = (now - latestMetrics.timestamp) < ONLINE_THRESHOLD;
+      mergeMetricsIntoServer(item, latestMetrics);
+    } else {
+      item.last_updated = 0;
+      item.is_online = false;
+      item.cpu_cores = 0;
+      item.cpu_info = '';
+      item.arch = '';
+      item.os = '';
+      item.agent_version = '';
+      item.ip_v4 = '0';
+      item.ip_v6 = '0';
+      item.boot_time = '';
+    }
+
+    item.is_online = isOnline;
+    if (!item.region) item.region = server.region || '';
+    delete item.bandwidth;
+
+    if (isOnline) {
+      stats.online++;
+      stats.total_cpu += parseFloat(item.cpu) || 0;
+      stats.total_net_in += parseFloat(item.net_in_speed) || 0;
+      stats.total_net_out += parseFloat(item.net_out_speed) || 0;
+    } else {
+      stats.offline++;
+    }
+
+    return item;
+  });
+
+  if (stats.online > 0) {
+    stats.avg_cpu = (stats.total_cpu / stats.online).toFixed(2);
+  }
+
+  return createSuccessResponse({
+    success: true,
+    servers: serversWithStatus,
+    stats
+  });
+}
+
+async function handleD1UsageAction({ data, sys }) {
+  const hasCloudflareToken = Object.prototype.hasOwnProperty.call(data, 'cloudflare_token');
+  const hasCloudflareAccountId = Object.prototype.hasOwnProperty.call(data, 'cloudflare_account_id');
+  const cloudflareToken = hasCloudflareToken ? data.cloudflare_token : (sys?.cloudflare_token || '');
+  const cloudflareAccountId = hasCloudflareAccountId ? data.cloudflare_account_id : (sys?.cloudflare_account_id || '');
+
+  try {
+    const usage = await getD1DailyUsage(String(cloudflareToken || '').trim(), String(cloudflareAccountId || '').trim());
+    return createSuccessResponse({
+      success: true,
+      usage,
+      message: 'd1UsageQueried'
+    });
+  } catch (e) {
+    return createBadRequestResponse(e.message);
+  }
+}
+
+async function handleSendTestNotificationAction({ data }) {
+  const {
+    tg_bot_token,
+    tg_chat_id,
+    notification_webhook_enabled,
+    notification_webhook_url,
+    notification_webhook_method,
+    notification_webhook_format,
+    notification_webhook_headers,
+    notification_webhook_body,
+    notification_template
+  } = data;
+  const webhookEnabled = normalizeBooleanSetting(notification_webhook_enabled) === 'true';
+  if (webhookEnabled) {
+    if (!notification_webhook_url || String(notification_webhook_url).trim().length === 0) {
+      return createBadRequestResponse('notificationWebhookUrlRequired');
+    }
+  } else if (!tg_bot_token || tg_bot_token.trim().length === 0) {
+    return createBadRequestResponse('tgBotTokenRequired');
+  }
+  try {
+    const testMsg = '这是一条来自 CF Server Monitor 的测试消息。';
+    const result = await sendNotification({
+      tg_bot_token,
+      tg_chat_id: tg_chat_id || '',
+      notification_webhook_enabled: normalizeBooleanSetting(notification_webhook_enabled),
+      notification_webhook_url: notification_webhook_url || '',
+      notification_webhook_method: normalizeNotificationWebhookMethod(notification_webhook_method),
+      notification_webhook_format: normalizeNotificationWebhookFormat(notification_webhook_format),
+      notification_webhook_headers: normalizeNotificationWebhookHeaders(notification_webhook_headers),
+      notification_webhook_body: normalizeNotificationWebhookBody(notification_webhook_body),
+      notification_template: normalizeNotificationTemplate(notification_template)
+    }, testMsg, {
+      event: '测试通知',
+      emoji: '✅',
+      clients: ['CF Server Monitor'],
+      count: 1,
+      message: '这是一条来自 CF Server Monitor 的测试消息。'
+    });
+    if(result) {
+      console.warn('Test notification failed:', result);
+      return createBadRequestResponse('testNotificationFailed');
+    }
+    return createSuccessResponse({ success: true, message: 'testNotificationSent' });
+  } catch (e) {
+    return createBadRequestResponse('testNotificationFailed');
+  }
+}
+
+const AUTHENTICATED_ADMIN_ACTION_HANDLERS = {
+  get_settings: handleGetSettingsAction,
+  start_theme_preview: handleStartThemePreviewAction,
+  list: handleListAction,
+  d1_usage: handleD1UsageAction,
+  send_test_notification: handleSendTestNotificationAction
+};
+
 export async function handleAdminAPI(request, env, sys, loadFullSettings = null, ctx = null) {
   try {
     const data = await request.json();
 
-    if (data.action === 'login') {
-      const { username, password } = data;
-      
-      if (!username || !password) {
-        return createBadRequestResponse('missingCredentials');
-      }
-
-      const turnstileEnabled = sys && (sys.turnstile_enabled === 'true' || sys.turnstile_enabled === true);
-      const turnstileLoginEnabled = sys && (sys.turnstile_login_enabled === 'true' || sys.turnstile_login_enabled === true);
-      const turnstileSecretKey = sys && sys.turnstile_secret_key || '';
-      
-      if (turnstileEnabled || turnstileLoginEnabled) {
-        const turnstileToken = request.headers.get('X-Turnstile-Token');
-        const isTurnstileVerified = await verifyTurnstileToken(turnstileToken, turnstileSecretKey);
-        
-        if (!isTurnstileVerified) {
-          return createErrorResponse(new AppError('verificationFailed', 403));
-        }
-      }
-
-      const authHeader = 'Basic ' + btoa(username + ':' + password);
-      const mockRequest = {
-        headers: {
-          get: (key) => key === 'Authorization' ? authHeader : null
-        }
-      };
-
-      const credentialResult = await validateCredentials(mockRequest, env, sys);
-      
-      if (!credentialResult.valid) {
-        return createUnauthorizedResponse('invalidCredentials');
-      }
-
-      if (credentialResult.needsPasswordUpgrade) {
-        try {
-          const upgradedPasswordHash = await hashPassword(password);
-          await saveSiteOptions(env.DB, { password: upgradedPasswordHash });
-          if (sys) {
-            sys.password = upgradedPasswordHash;
-          }
-        } catch (e) {
-          console.error('Password hash upgrade failed:', e);
-        }
-      }
-
-      try {
-        const token = await generateToken(env, sys);
-        return createSuccessResponse({
-          success: true,
-          token: token,
-          message: 'loginSuccessful'
-        }, {
-          'Set-Cookie': buildAuthCookie(request, token)
-        });
-      } catch (e) {
-        return createErrorResponse(e);
-      }
-    }
-
-    if (data.action === 'logout') {
-      return createSuccessResponseWithCookies({
-        success: true
-      }, [
-        buildClearAuthCookie(request),
-        buildClearThemePreviewAuthCookie(request)
-      ]);
-    }
-
-    if (data.action === 'clear_theme_preview_auth') {
-      return createSuccessResponseWithCookies({
-        success: true
-      }, [
-        buildClearThemePreviewAuthCookie(request)
-      ]);
+    const publicActionHandler = PUBLIC_ADMIN_ACTION_HANDLERS[data.action];
+    if (publicActionHandler) {
+      return publicActionHandler({ request, env, sys, data, loadFullSettings, ctx });
     }
 
     if (!await checkAuth(request, env, sys)) {
       return simpleAuthResponse();
     }
 
-    if (data.action === 'get_settings') {
-      const fullSettings = loadFullSettings ? await loadFullSettings() : sys;
-      const { jwt_secret, ...safeSettings } = fullSettings || {};
-      return createSuccessResponse({
-        success: true,
-        settings: safeSettings,
-        api_secret: env.API_SECRET
-      });
+    const authenticatedActionHandler = AUTHENTICATED_ADMIN_ACTION_HANDLERS[data.action];
+    if (authenticatedActionHandler) {
+      return authenticatedActionHandler({ request, env, sys, data, loadFullSettings, ctx });
     }
-    else if (data.action === 'start_theme_preview') {
-      const normalizedThemeUrl = normalizeThemeUrl(data.theme_url);
-      if (!normalizedThemeUrl) {
-        return createBadRequestResponse('invalidThemeUrl');
-      }
-      if (!await validateThemeUrlAvailable(normalizedThemeUrl)) {
-        return createBadRequestResponse('invalidThemeUrl');
-      }
 
-      const token = extractBearerToken(request);
-      if (!token) {
-        return simpleAuthResponse();
-      }
-
-      return createSuccessResponse({
-        success: true,
-        preview_url: buildThemePreviewUrl(request, normalizedThemeUrl)
-      }, {
-        'Set-Cookie': buildThemePreviewAuthCookie(request, token)
-      });
-    }
-    else if (data.action === 'list') {
-      const servers = await getAllServers(env.DB);
-      const latestMetricsMap = await getLatestMetricsForAllServers(env.DB);
-      
-      const now = Date.now();
-      const ONLINE_THRESHOLD = 300000;
-      const stats = {
-        total: servers.length,
-        online: 0,
-        offline: 0,
-        total_cpu: 0,
-        total_net_in: 0,
-        total_net_out: 0,
-        avg_cpu: 0
-      };
-      
-      const serversWithStatus = servers.map(server => {
-        const latestMetrics = latestMetricsMap.get(server.id);
-        const item = { ...server, region_override: server.region || '' };
-        let isOnline = false;
-        
-        if (latestMetrics) {
-          isOnline = (now - latestMetrics.timestamp) < ONLINE_THRESHOLD;
-          mergeMetricsIntoServer(item, latestMetrics);
-        } else {
-          item.last_updated = 0;
-          item.is_online = false;
-          item.cpu_cores = 0;
-          item.cpu_info = '';
-          item.arch = '';
-          item.os = '';
-          item.agent_version = '';
-          item.ip_v4 = '0';
-          item.ip_v6 = '0';
-          item.boot_time = '';
-        }
-        
-        item.is_online = isOnline;
-        if (!item.region) item.region = server.region || '';
-        delete item.bandwidth;
-
-        if (isOnline) {
-          stats.online++;
-          stats.total_cpu += parseFloat(item.cpu) || 0;
-          stats.total_net_in += parseFloat(item.net_in_speed) || 0;
-          stats.total_net_out += parseFloat(item.net_out_speed) || 0;
-        } else {
-          stats.offline++;
-        }
-        
-        return item;
-      });
-      
-      if (stats.online > 0) {
-        stats.avg_cpu = (stats.total_cpu / stats.online).toFixed(2);
-      }
-
-      return createSuccessResponse({
-        success: true,
-        servers: serversWithStatus,
-        stats
-      });
-    }
-    else if (data.action === 'd1_usage') {
-      const hasCloudflareToken = Object.prototype.hasOwnProperty.call(data, 'cloudflare_token');
-      const hasCloudflareAccountId = Object.prototype.hasOwnProperty.call(data, 'cloudflare_account_id');
-      const cloudflareToken = hasCloudflareToken ? data.cloudflare_token : (sys?.cloudflare_token || '');
-      const cloudflareAccountId = hasCloudflareAccountId ? data.cloudflare_account_id : (sys?.cloudflare_account_id || '');
-
-      try {
-        const usage = await getD1DailyUsage(String(cloudflareToken || '').trim(), String(cloudflareAccountId || '').trim());
-        return createSuccessResponse({
-          success: true,
-          usage,
-          message: 'd1UsageQueried'
-        });
-      } catch (e) {
-        return createBadRequestResponse(e.message);
-      }
-    }
-    else if (data.action === 'send_test_notification') {
-      const {
-        tg_bot_token,
-        tg_chat_id,
-        notification_webhook_enabled,
-        notification_webhook_url,
-        notification_webhook_method,
-        notification_webhook_format,
-        notification_webhook_headers,
-        notification_webhook_body,
-        notification_template
-      } = data;
-      const webhookEnabled = normalizeBooleanSetting(notification_webhook_enabled) === 'true';
-      if (webhookEnabled) {
-        if (!notification_webhook_url || String(notification_webhook_url).trim().length === 0) {
-          return createBadRequestResponse('notificationWebhookUrlRequired');
-        }
-      } else if (!tg_bot_token || tg_bot_token.trim().length === 0) {
-        return createBadRequestResponse('tgBotTokenRequired');
-      }
-      try {
-        const testMsg = `✅ **测试通知**\n\n这是一条来自 CF Server Monitor 的测试消息。\n\n**时间:** ${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`;
-        const result = await sendNotification({
-          tg_bot_token,
-          tg_chat_id: tg_chat_id || '',
-          notification_webhook_enabled: normalizeBooleanSetting(notification_webhook_enabled),
-          notification_webhook_url: notification_webhook_url || '',
-          notification_webhook_method: normalizeNotificationWebhookMethod(notification_webhook_method),
-          notification_webhook_format: normalizeNotificationWebhookFormat(notification_webhook_format),
-          notification_webhook_headers: normalizeNotificationWebhookHeaders(notification_webhook_headers),
-          notification_webhook_body: normalizeNotificationWebhookBody(notification_webhook_body),
-          notification_template: normalizeNotificationTemplate(notification_template)
-        }, testMsg, {
-          event: '测试通知',
-          emoji: '✅',
-          clients: ['CF Server Monitor'],
-          count: 1,
-          message: '这是一条来自 CF Server Monitor 的测试消息。'
-        });
-        if(result) {
-          console.warn('Test notification failed:', result);
-          return createBadRequestResponse('testNotificationFailed');
-        }
-        return createSuccessResponse({ success: true, message: 'testNotificationSent' });
-      } catch (e) {
-        return createBadRequestResponse('testNotificationFailed');
-      }
-    }
-    else if (data.action === 'save_settings') {
+    if (data.action === 'save_settings') {
       const settings = data.settings || {};
       const normalizedThemeUrl = normalizeThemeUrl(settings.theme_url);
       if (normalizedThemeUrl === null) {
@@ -813,6 +842,8 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
           } else if (field === 'resource_alert_rules') {
             siteOptions[field] = normalizedResourceAlertRules;
           } else if (field === 'wss_report_enabled') {
+            siteOptions[field] = normalizeBooleanSetting(settings[field]);
+          } else if (field === 'show_three_net_details') {
             siteOptions[field] = normalizeBooleanSetting(settings[field]);
           } else if (field === 'notification_webhook_enabled') {
             siteOptions[field] = normalizeBooleanSetting(settings[field]);

@@ -10,7 +10,7 @@
   <a href="README-en.md">English</a>
 </p>
 
-[![Workers](https://img.shields.io/badge/Workers-2.8.4%20Beta4-f38020?style=flat-square&logo=cloudflare&logoColor=white)](version.json)
+[![Workers](https://img.shields.io/badge/Workers-2.8.4%20Beta5-f38020?style=flat-square&logo=cloudflare&logoColor=white)](version.json)
 [![GitHub Stars](https://img.shields.io/github/stars/huilang-me/CF-Server-Monitor?style=flat-square&logo=github)](https://github.com/huilang-me/CF-Server-Monitor/stargazers)
 [![GitHub Forks](https://img.shields.io/github/forks/huilang-me/CF-Server-Monitor?style=flat-square&logo=github)](https://github.com/huilang-me/CF-Server-Monitor/forks)
 [![License](https://img.shields.io/badge/License-MIT-16a34a?style=flat-square)](#许可证)
@@ -318,10 +318,10 @@ npm run build:github-page
 
 ```text
 {{emoji}}【CF Server Monitor】{{event}}
-服务器: {{client}}
-详情:
+
 {{message}}
-时间: {{time}}
+
+{{time}}
 ```
 
 可用模板变量：
@@ -333,7 +333,7 @@ npm run build:github-page
 | `{{client}}` / `{{clients}}` | 本次通知涉及的服务器名称，多个服务器用逗号连接 |
 | `{{count}}` | 本次通知涉及的服务器数量；默认模板不显示，但可自定义加入 |
 | `{{message}}` | 通知详情列表 |
-| `{{time}}` | 发送时间 |
+| `{{time}}` | UTC 发送时间 |
 | `{{notification}}` | 应用通知模板后的完整内容，通常用于 Webhook 的 `content` |
 | `{{title}}` | 固定标题 `💌 Cloudflare Server Monitor` |
 
@@ -342,67 +342,6 @@ npm run build:github-page
 - 离线告警：节点离线达到设定阈值后通知，恢复后发送恢复通知。
 - 到期提醒：服务器到期前 1 到 7 天内每天提醒，也可关闭。
 - 资源负载告警：按 CPU、内存、磁盘、上下行速率等指标配置规则。
-
-默认模板输出示例：
-
-```text
-❌【CF Server Monitor】节点离线告警
-服务器: server-a, server-b
-详情:
-• server-a - 2026/8/19 10:21:00
-• server-b - 无上报记录
-时间: 2026/8/19 10:25:00
-```
-
-```text
-✅【CF Server Monitor】节点恢复通知
-服务器: server-a, server-b
-详情:
-• server-a
-• server-b
-时间: 2026/8/19 10:30:00
-```
-
-```text
-⚠️【CF Server Monitor】服务器到期提醒
-服务器: vps-hk, vps-sg
-详情:
-• vps-hk - 剩余3天 (2026-08-22)
-• vps-sg - 剩余1天 (2026-08-20)
-时间: 2026/8/19 10:35:00
-```
-
-```text
-❌【CF Server Monitor】资源负载告警
-服务器: server-a, server-b
-详情:
-⚠️ **资源负载告警** (2个)
-
-• High CPU / server-a - 平均 5 分钟
-  CPU 平均 92.3% > 80%
-• High RAM / server-b - 窗口样本连续 5 分钟
-  RAM 当前 91.2% > 85%
-时间: 2026/8/19 10:40:00
-```
-
-```text
-✅【CF Server Monitor】资源负载恢复
-服务器: server-a
-详情:
-✅ **资源负载恢复** (1个)
-
-• High CPU / server-a
-  CPU 当前 42.1% < 80%
-时间: 2026/8/19 10:45:00
-```
-
-```text
-✅【CF Server Monitor】测试通知
-服务器: CF Server Monitor
-详情:
-这是一条来自 CF Server Monitor 的测试消息。
-时间: 2026/8/19 10:55:00
-```
 
 配置后请先点击发送测试通知，再保存配置。
 

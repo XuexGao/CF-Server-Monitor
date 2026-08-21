@@ -12,13 +12,13 @@
           class="lang-btn" 
           :class="{ active: currentLang === 'en' }"
           @click="setLang('en')"
-          title="English"
+          aria-label="English"
         >EN</button>
         <button 
           class="lang-btn" 
           :class="{ active: currentLang === 'zh' }"
           @click="setLang('zh')"
-          title="中文"
+          aria-label="中文"
         >中</button>
       </div>
       <div class="theme-toggle-wrapper">
@@ -27,19 +27,19 @@
             class="theme-btn" 
             :class="{ active: currentTheme === 'auto' }"
             @click="setTheme('auto')"
-            title="Auto - Follow System"
+            aria-label="Auto - Follow System"
           >🌙☀</button>
           <button 
             class="theme-btn" 
             :class="{ active: currentTheme === 'dark' }"
             @click="setTheme('dark')"
-            title="Dark Mode"
+            aria-label="Dark Mode"
           >🌙</button>
           <button 
             class="theme-btn" 
             :class="{ active: currentTheme === 'light' }"
             @click="setTheme('light')"
-            title="Light Mode"
+            aria-label="Light Mode"
           >☀</button>
         </div>
       </div>
