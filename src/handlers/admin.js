@@ -1,7 +1,7 @@
 import { buildAuthCookie, buildClearAuthCookie, checkAuth, simpleAuthResponse, validateCredentials, generateToken } from '../middleware/auth.js';
 import { getLatestMetricsForAllServers } from '../database/schema.js';
 import { getAllServers, clearServersListCache } from '../utils/cache.js';
-import { clearAppearanceSettingsCache, isWssReportEnabled, normalizeBooleanSetting, normalizeDisplayMode, normalizeExpireReminder, normalizeFrontendWsTimeoutMinutes, normalizeLongHistoryPoints, normalizeNotificationTemplate, normalizeNotificationWebhookBody, normalizeNotificationWebhookFormat, normalizeNotificationWebhookHeaders, normalizeNotificationWebhookMethod, normalizeResourceAlertRules, normalizeTgNotify, saveSiteOptions, SITE_FIELDS, APPEARANCE_FIELDS } from '../utils/settings.js';
+import { clearAppearanceSettingsCache, isWssReportConfigured, isWssReportEnabled, normalizeBooleanSetting, normalizeDisplayMode, normalizeExpireNotificationTime, normalizeExpireReminder, normalizeFrontendWsTimeoutMinutes, normalizeLongHistoryPoints, normalizeNotificationTemplate, normalizeNotificationTimezone, normalizeNotificationWebhookBody, normalizeNotificationWebhookFormat, normalizeNotificationWebhookHeaders, normalizeNotificationWebhookMethod, normalizeResourceAlertRules, normalizeTgNotify, normalizeWssReportHours, saveSiteOptions, SITE_FIELDS, APPEARANCE_FIELDS } from '../utils/settings.js';
 import { mergeMetricsIntoServer } from '../utils/metrics.js';
 import { verifyTurnstileToken, hashPassword } from '../utils/common.js';
 import { AppError, createSuccessResponse, createBadRequestResponse, createUnauthorizedResponse, createErrorResponse } from '../utils/errors.js';
@@ -661,7 +661,9 @@ async function handleSendTestNotificationAction({ data }) {
     notification_webhook_format,
     notification_webhook_headers,
     notification_webhook_body,
-    notification_template
+    notification_template,
+    notification_timezone,
+    expire_notification_time
   } = data;
   const webhookEnabled = normalizeBooleanSetting(notification_webhook_enabled) === 'true';
   if (webhookEnabled) {
@@ -682,7 +684,9 @@ async function handleSendTestNotificationAction({ data }) {
       notification_webhook_format: normalizeNotificationWebhookFormat(notification_webhook_format),
       notification_webhook_headers: normalizeNotificationWebhookHeaders(notification_webhook_headers),
       notification_webhook_body: normalizeNotificationWebhookBody(notification_webhook_body),
-      notification_template: normalizeNotificationTemplate(notification_template)
+      notification_template: normalizeNotificationTemplate(notification_template),
+      notification_timezone: normalizeNotificationTimezone(notification_timezone),
+      expire_notification_time: normalizeExpireNotificationTime(expire_notification_time)
     }, testMsg, {
       event: '测试通知',
       emoji: '✅',
@@ -821,8 +825,6 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
       }
 
       const siteOptions = {};
-      const shouldCloseAgentWssReports = settings.wss_report_enabled !== undefined &&
-        normalizeBooleanSetting(settings.wss_report_enabled) === 'false';
       for (const field of SITE_FIELDS) {
         if (settings[field] !== undefined) {
           if (field === 'password') {
@@ -843,8 +845,14 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
             siteOptions[field] = normalizedResourceAlertRules;
           } else if (field === 'wss_report_enabled') {
             siteOptions[field] = normalizeBooleanSetting(settings[field]);
+          } else if (field === 'wss_report_hours') {
+            siteOptions[field] = normalizeWssReportHours(settings[field]);
           } else if (field === 'show_three_net_details') {
             siteOptions[field] = normalizeBooleanSetting(settings[field]);
+          } else if (field === 'notification_timezone') {
+            siteOptions[field] = normalizeNotificationTimezone(settings[field]);
+          } else if (field === 'expire_notification_time') {
+            siteOptions[field] = normalizeExpireNotificationTime(settings[field]);
           } else if (field === 'notification_webhook_enabled') {
             siteOptions[field] = normalizeBooleanSetting(settings[field]);
           } else if (field === 'notification_webhook_method') {
@@ -865,13 +873,17 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
         }
       }
       await saveSiteOptions(env.DB, siteOptions);
+      const shouldCloseAgentWssReports = !isWssReportEnabled({ ...sys, ...siteOptions });
       // Keep existing states on rule edits so threshold increases can emit recovery notifications.
       // checkResourceAlerts prunes states for removed rules or servers on the next evaluation.
       if (hasResourceAlertRulesInput && !resourceAlertEnabled) {
         await clearResourceAlertState(env.DB);
       }
       Object.assign(sys, shouldSaveAppearanceOptions ? appearanceOptions : {}, siteOptions);
-      if (shouldCloseAgentWssReports) {
+      if (shouldCloseAgentWssReports && (
+        settings.wss_report_enabled !== undefined ||
+        settings.wss_report_hours !== undefined
+      )) {
         scheduleAgentReportModeChanged(env, ctx);
       }
       return createSuccessResponse({
@@ -956,7 +968,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
       if (!id || !isValidUUID(id)) {
         return createBadRequestResponse('invalidServerId');
       }
-      const effectiveConnectionMode = isWssReportEnabled(sys) ? connection_mode : 'http';
+      const effectiveConnectionMode = isWssReportConfigured(sys) ? connection_mode : 'http';
       const agentConfigResult = validateAgentConfigInput({
         collect_interval,
         report_interval,

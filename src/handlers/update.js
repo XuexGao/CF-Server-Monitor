@@ -8,7 +8,7 @@ import {
 } from '../utils/metrics.js';
 import { createErrorResponse, createUnauthorizedResponse, createNotFoundResponse, createBadRequestResponse } from '../utils/errors.js';
 import { ensureServerOptimization } from '../database/indexOptimization.js';
-import { getResourceAlertConfig, isWssReportEnabled, loadSiteSettings, normalizeBooleanSetting } from '../utils/settings.js';
+import { getResourceAlertConfig, getWssReportScheduleState, isWssReportConfigured, loadSiteSettings, normalizeBooleanSetting } from '../utils/settings.js';
 import { cacheLatestReportUpdate } from '../utils/latestReportCache.js';
 import {
   hasRecentFrontendRealtimeActivity,
@@ -50,6 +50,9 @@ const FRONTEND_SUBSCRIBER_CHECK_INTERVAL_MS = 5 * 60 * 1000;
 const DISK_IO_COLUMN_TO_FIELD = Object.freeze(Object.fromEntries(
   DISK_IO_METRIC_FIELDS.map(field => [DISK_IO_FIELD_TO_COLUMN[field], field])
 ));
+const AGENT_WSS_MODE_HEADER = 'X-Agent-Wss-Mode';
+const AGENT_WSS_REASON_HEADER = 'X-Agent-Wss-Reason';
+const AGENT_WSS_SCHEDULE_INACTIVE = 'wss_schedule_inactive';
 let batchQueue = new Map();
 let flushingPromise = null;
 let flushTimer = null;
@@ -374,6 +377,30 @@ async function getBatchFlushDelayMs(env, now = Date.now()) {
   return REALTIME_BATCH_WINDOW_MS;
 }
 
+function buildAgentWssStateHeaders(settings = {}, now = Date.now()) {
+  const state = getWssReportScheduleState(settings, now);
+  return {
+    [AGENT_WSS_MODE_HEADER]: state.mode,
+    [AGENT_WSS_REASON_HEADER]: state.reason
+  };
+}
+
+function createAgentWssScheduleInactiveResponse(settings = {}) {
+  return new Response(JSON.stringify({
+    error: 'Agent WSS report outside active hours',
+    code: 409,
+    text: AGENT_WSS_SCHEDULE_INACTIVE,
+    connection_mode: 'http'
+  }), {
+    status: 409,
+    headers: {
+      'Cache-Control': 'no-store',
+      'Content-Type': 'application/json',
+      ...buildAgentWssStateHeaders(settings)
+    }
+  });
+}
+
 async function _flushBatch(env) {
   if (batchQueue.size === 0) return;
 
@@ -553,6 +580,7 @@ export async function handleUpdate(request, env, ctx) {
 
     try {
       const settings = await loadSiteSettings(env.DB);
+      const wssStateHeaders = buildAgentWssStateHeaders(settings);
       const descriptor = await describeAgentConfig(serverDetail, settings, clientConfigSchema);
       const clientConfigMd5 = (request.headers.get(AGENT_CONFIG_MD5_HEADER) || '').trim().toLowerCase();
       const hasCorrection = descriptor.correction !== null;
@@ -560,7 +588,8 @@ export async function handleUpdate(request, env, ctx) {
       const responseHeaders = {
         'Cache-Control': 'no-store',
         [AGENT_CONFIG_SCHEMA_HEADER]: String(clientConfigSchema),
-        [AGENT_CONFIG_MD5_HEADER]: descriptor.md5
+        [AGENT_CONFIG_MD5_HEADER]: descriptor.md5,
+        ...wssStateHeaders
       };
 
       if (!md5Changed && !hasCorrection) {
@@ -653,11 +682,15 @@ export async function handleWebSocketUpgrade(request, env) {
 
 export async function handleUpdateWebSocketUpgrade(request, env) {
   const settings = await loadSiteSettings(env.DB);
-  if (!isWssReportEnabled(settings)) {
+  if (!isWssReportConfigured(settings)) {
     return new Response(JSON.stringify({ error: 'Agent WSS report disabled', code: 403 }), {
       status: 403,
       headers: { 'Content-Type': 'application/json' }
     });
+  }
+  const scheduleState = getWssReportScheduleState(settings);
+  if (!scheduleState.active) {
+    return createAgentWssScheduleInactiveResponse(settings);
   }
   return forwardWebSocketUpgrade(request, env, '/update', '[update-ws]');
 }

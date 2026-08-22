@@ -10,7 +10,7 @@
   <a href="README-en.md">English</a>
 </p>
 
-[![Workers](https://img.shields.io/badge/Workers-2.8.4%20Beta5-f38020?style=flat-square&logo=cloudflare&logoColor=white)](version.json)
+[![Workers](https://img.shields.io/badge/Workers-2.8.4%20Beta7-f38020?style=flat-square&logo=cloudflare&logoColor=white)](version.json)
 [![GitHub Stars](https://img.shields.io/github/stars/huilang-me/CF-Server-Monitor?style=flat-square&logo=github)](https://github.com/huilang-me/CF-Server-Monitor/stargazers)
 [![GitHub Forks](https://img.shields.io/github/forks/huilang-me/CF-Server-Monitor?style=flat-square&logo=github)](https://github.com/huilang-me/CF-Server-Monitor/forks)
 [![License](https://img.shields.io/badge/License-MIT-16a34a?style=flat-square)](#许可证)
@@ -97,7 +97,7 @@ flowchart LR
 
 近期变化：
 
-- `2.8.4`：新增 Agent WSS 上报，提升实时数据推送及时性；新增账户Do用量展示，优化无前端订阅时的 Do 实时广播请求，降低空闲额度消耗。通知设置新增自定义 Webhook 渠道, 新增前端wss超时配置。
+- `2.8.4`：新增 Agent WSS 上报和 WSS 开启时段，提升实时数据推送及时性，并允许非目标时段自动改用 POST 降低 Do 时长消耗；该能力要求 Agent 升级到 `v1.0.10+`。新增账户Do用量展示，优化无前端订阅时的 Do 实时广播请求，降低空闲额度消耗。通知设置新增自定义 Webhook 渠道, 新增前端wss超时配置。
 - `2.8.3`：新增磁盘 IO 统计，默认 Agent 切换为 Go 版本，新增服务器延迟与丢包率实时窗口。
 - `2.8.2`：引入 Go Agent 支持。
 - `2.8.1`：优化长时间历史查询 D1 读行，增加资源负载通知和主题商店接口优化。
@@ -333,14 +333,14 @@ npm run build:github-page
 | `{{client}}` / `{{clients}}` | 本次通知涉及的服务器名称，多个服务器用逗号连接 |
 | `{{count}}` | 本次通知涉及的服务器数量；默认模板不显示，但可自定义加入 |
 | `{{message}}` | 通知详情列表 |
-| `{{time}}` | UTC 发送时间 |
+| `{{time}}` | 按通知时区格式化的发送时间 |
 | `{{notification}}` | 应用通知模板后的完整内容，通常用于 Webhook 的 `content` |
 | `{{title}}` | 固定标题 `💌 Cloudflare Server Monitor` |
 
 支持的告警类型：
 
 - 离线告警：节点离线达到设定阈值后通知，恢复后发送恢复通知。
-- 到期提醒：服务器到期前 1 到 7 天内每天提醒，也可关闭。
+- 到期提醒：服务器到期前 1 到 7 天内，按通知时区和到期通知时间每天提醒，也可关闭。
 - 资源负载告警：按 CPU、内存、磁盘、上下行速率等指标配置规则。
 
 配置后请先点击发送测试通知，再保存配置。
@@ -461,8 +461,8 @@ Go 版本和旧 Shell / PowerShell 版本卸载脚本只清理各自安装的服
 
 | Cron          | 说明                         |
 | ------------- | -------------------------- |
-| `*/1 * * * *` | 每分钟检测离线节点并发送告警             |
-| `0 * * * *`   | 每小时执行合并任务，包括月表轮换、旧表清理、到期检测 |
+| `*/1 * * * *` | 每分钟检测离线节点、资源告警 |
+| `0 * * * *`   | 每小时执行合并任务，包括月表轮换、旧表清理，并按通知时区/到期通知小时执行到期检测 |
 
 ## 本地开发
 

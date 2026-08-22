@@ -429,12 +429,8 @@ export default {
         await weeklyCleanup(env.DB);
         debug('[Cron] 每周数据清理任务完成');
       }
-      
-      if (hour === 12) {
-        debug('[Cron] 开始执行服务器到期检测');
-        await checkExpiringServers(env.DB);
-        debug('[Cron] 服务器到期检测完成');
-      }
+      debug('[Cron] 检查是否到达服务器到期检测时间');
+      await checkExpiringServers(env.DB, { scheduled: true, now: now.getTime() });
     }else if(env.DEBUG == 1){
       if (cron === '0 0 * * 0') {
         debug('[Cron DEBUG] 开始执行每周数据清理任务（表轮换）');

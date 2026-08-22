@@ -15,7 +15,7 @@
 import { saveMetricsHistory } from '../database/schema.js';
 import { ensureServerOptimization } from '../database/indexOptimization.js';
 import { getServerDetail, clearServerDetailCache } from '../utils/cache.js';
-import { isWssReportEnabled, loadSiteSettings } from '../utils/settings.js';
+import { getWssReportScheduleState, loadSiteSettings } from '../utils/settings.js';
 import {
   AGENT_CONFIG_MD5_HEADER,
   AGENT_CONFIG_LEGACY_SCHEMA_VERSION,
@@ -42,7 +42,11 @@ const MAX_SUBSCRIBE_IDS = 500;
 const MAX_SERVER_ID_LENGTH = 64;
 const SERVER_ID_PATTERN = /^[A-Za-z0-9._:-]+$/;
 const WS_POLICY_VIOLATION = 1008;
+const WS_TRY_AGAIN_LATER = 1013;
 const AGENT_REPORT_KIND = 'agent-report';
+const AGENT_WSS_MODE_HEADER = 'X-Agent-Wss-Mode';
+const AGENT_WSS_REASON_HEADER = 'X-Agent-Wss-Reason';
+const AGENT_WSS_SCHEDULE_INACTIVE = 'wss_schedule_inactive';
 const DEFAULT_AGENT_HISTORY_WRITE_INTERVAL_MS = 60 * 1000;
 const ALLOWED_AGENT_REPORT_INTERVALS = new Set([30, 60, 120, 180]);
 const AGENT_SERVER_DETAIL_TTL_MS = 120 * 1000;
@@ -656,16 +660,55 @@ export class MetricsBroadcaster {
     return ws;
   }
 
-  _closeWsWithError(ws, message, code = 400) {
+  _closeWsWithError(ws, message, code = 400, extra = {}, closeCode = WS_POLICY_VIOLATION, closeReason = message) {
     this._sendWsJson(ws, {
       type: 'error',
       ts: Date.now(),
       error: message,
-      code
+      code,
+      ...extra
     });
     try {
-      ws.close(WS_POLICY_VIOLATION, message);
+      ws.close(closeCode, closeReason);
     } catch (_) {}
+  }
+
+  _closeWsForInactiveAgentSchedule(ws) {
+    this._closeWsWithError(
+      ws,
+      'Agent WSS report outside active hours',
+      409,
+      {
+        text: AGENT_WSS_SCHEDULE_INACTIVE,
+        connection_mode: 'http'
+      },
+      WS_TRY_AGAIN_LATER,
+      AGENT_WSS_SCHEDULE_INACTIVE
+    );
+  }
+
+  _createAgentWssUnavailableResponse(scheduleState) {
+    if (!scheduleState?.configured) {
+      return new Response(JSON.stringify({ error: 'Agent WSS report disabled', code: 403 }), {
+        status: 403,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+
+    return new Response(JSON.stringify({
+      error: 'Agent WSS report outside active hours',
+      code: 409,
+      text: AGENT_WSS_SCHEDULE_INACTIVE,
+      connection_mode: 'http'
+    }), {
+      status: 409,
+      headers: {
+        'Cache-Control': 'no-store',
+        'Content-Type': 'application/json',
+        [AGENT_WSS_MODE_HEADER]: scheduleState.mode,
+        [AGENT_WSS_REASON_HEADER]: scheduleState.reason
+      }
+    });
   }
 
   _decodeWsMessage(message) {
@@ -1005,6 +1048,55 @@ export class MetricsBroadcaster {
     return { matched, closed };
   }
 
+  _closeInactiveAgentReportWebSockets() {
+    let matched = 0;
+    let closed = 0;
+
+    for (const ws of this._getAgentReportWebSockets()) {
+      const attachment = ws.deserializeAttachment() || {};
+      if (attachment.kind !== AGENT_REPORT_KIND) continue;
+      matched += 1;
+
+      try {
+        this._closeWsForInactiveAgentSchedule(ws);
+        closed += 1;
+      } catch (_) {}
+    }
+
+    return { matched, closed };
+  }
+
+  _nextUtcHourAlarmTime() {
+    const nextHour = new Date();
+    nextHour.setUTCMinutes(60, 0, 0);
+    return nextHour.getTime();
+  }
+
+  async _scheduleAgentWssHourAlarm() {
+    if (!this.state?.storage || typeof this.state.storage.setAlarm !== 'function') return;
+    try {
+      await this.state.storage.setAlarm(this._nextUtcHourAlarmTime());
+    } catch (e) {
+      console.warn('[update-ws] Failed to schedule WSS hour alarm:', e?.message || e);
+    }
+  }
+
+  async alarm() {
+    const settings = await loadSiteSettings(this.env.DB, { forceRefresh: true });
+    const scheduleState = getWssReportScheduleState(settings);
+    if (!scheduleState.configured) {
+      this._closeAgentReportWebSockets();
+      return;
+    }
+    if (!scheduleState.active) {
+      this._closeInactiveAgentReportWebSockets();
+      return;
+    }
+    if (this._getAgentReportWebSockets().length > 0) {
+      await this._scheduleAgentWssHourAlarm();
+    }
+  }
+
   async _handleAgentConfigChanged(request) {
     let body = null;
     try {
@@ -1018,13 +1110,15 @@ export class MetricsBroadcaster {
 
     if (body?.agentReportModeChanged === true) {
       const settings = await loadSiteSettings(this.env.DB, { forceRefresh: true });
-      const wssReportEnabled = isWssReportEnabled(settings);
-      const result = wssReportEnabled
+      const scheduleState = getWssReportScheduleState(settings);
+      const result = scheduleState.active
         ? { matched: 0, closed: 0 }
-        : this._closeAgentReportWebSockets();
+        : (scheduleState.configured
+            ? this._closeInactiveAgentReportWebSockets()
+            : this._closeAgentReportWebSockets());
       return new Response(JSON.stringify({
         ok: true,
-        wssReportEnabled,
+        wssReportEnabled: scheduleState.active,
         ...result
       }), {
         headers: {
@@ -1285,6 +1379,24 @@ export class MetricsBroadcaster {
 
     if (msg?.type === 'pong') return;
 
+    const scheduleCheckAfter = Number(attachment.wssScheduleCheckAfter);
+    if (Number.isFinite(scheduleCheckAfter) && Date.now() >= scheduleCheckAfter) {
+      const settings = await loadSiteSettings(this.env.DB);
+      const scheduleState = getWssReportScheduleState(settings);
+      if (!scheduleState.configured) {
+        this._closeWsWithError(ws, 'Agent WSS report disabled', 403);
+        return;
+      }
+      if (!scheduleState.active) {
+        this._closeWsForInactiveAgentSchedule(ws);
+        return;
+      }
+      const nextHour = new Date();
+      nextHour.setUTCMinutes(60, 0, 0);
+      attachment = { ...attachment, wssScheduleCheckAfter: nextHour.getTime() };
+      ws.serializeAttachment(attachment);
+    }
+
     const data = this._normalizeAgentReportData(msg);
     if (!data) {
       this._closeWsWithError(ws, 'Invalid report payload', 400);
@@ -1375,7 +1487,15 @@ export class MetricsBroadcaster {
       return new Response('Forbidden', { status: 403 });
     }
 
+    const settings = await loadSiteSettings(this.env.DB, { forceRefresh: true });
+    const scheduleState = getWssReportScheduleState(settings);
+    if (!scheduleState.active) {
+      return this._createAgentWssUnavailableResponse(scheduleState);
+    }
+
     // @ts-ignore - Cloudflare Workers runtime provides WebSocketPair
+    const nextHour = new Date();
+    nextHour.setUTCMinutes(60, 0, 0);
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair);
     const agentSocket = this._acceptStandardAgentWebSocket(server, {
@@ -1387,6 +1507,7 @@ export class MetricsBroadcaster {
       agentVersion: normalizeAgentVersion(request.headers.get('X-Agent-Version')),
       reportIntervalMs: DEFAULT_AGENT_HISTORY_WRITE_INTERVAL_MS,
       wssReportIntervalMs: DEFAULT_WSS_REPORT_INTERVAL * 1000,
+      wssScheduleCheckAfter: nextHour.getTime(),
       lastD1WriteTs: 0,
       configSchema: normalizeConfigSchema(firstDefined(
         url.searchParams.get('config_schema'),
@@ -1405,6 +1526,7 @@ export class MetricsBroadcaster {
       ts: Date.now(),
       protocol: 'update'
     });
+    await this._scheduleAgentWssHourAlarm();
 
     const responseHeaders = new Headers();
     if (origin && allowedOrigins.length > 0) {

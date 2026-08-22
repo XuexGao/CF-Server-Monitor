@@ -1250,6 +1250,8 @@ Header：`X-Turnstile-Token: <token>`（当 `site_options.turnstile_enabled` 或
     "tg_notify": "0",
     "tg_bot_token": "",
     "tg_chat_id": "",
+    "notification_timezone": "UTC",
+    "expire_notification_time": "12",
     "turnstile_enabled": "false",
     "turnstile_login_enabled": "false",
     "turnstile_site_key": "",
@@ -1271,7 +1273,7 @@ Header：`X-Turnstile-Token: <token>`（当 `site_options.turnstile_enabled` 或
 **字段分类**：
 
 - `APPEARANCE_FIELDS`（写入 `appearance_options` JSON）：`site_title`、`custom_bg`、`custom_head`、`custom_script`、`csp_static`、`csp_api`、`display_mode`、`theme_options`
-- `SITE_FIELDS`（写入 `site_options` JSON）：`is_public`、`show_price`、`show_expire`、`show_tf`、`frontend_ws_timeout_minutes`、`long_history_points`、通知、Turnstile、账号、Cloudflare、Ping 节点、`expire_reminder`、`theme_url`、历史优化字段等站点级配置
+- `SITE_FIELDS`（写入 `site_options` JSON）：`is_public`、`show_price`、`show_expire`、`show_tf`、`wss_report_enabled`、`wss_report_hours`、`frontend_ws_timeout_minutes`、`long_history_points`、通知、Turnstile、账号、Cloudflare、Ping 节点、`expire_reminder`、`notification_timezone`、`expire_notification_time`、`theme_url`、历史优化字段等站点级配置。`wss_report_hours` 是允许 Agent WSS 上报的 UTC 小时数组（`0-23`）；缺失时默认全天，空数组表示所有时段均关闭
 - 任何未列出的字段会被忽略
 
 **特殊处理**：
@@ -1281,6 +1283,8 @@ Header：`X-Turnstile-Token: <token>`（当 `site_options.turnstile_enabled` 或
 - Ping 节点字段：仅校验本次请求中出现的 `custom_ct/custom_cu/custom_cm/custom_bd` 字段，因此只保存 `theme_url` 不会触发 Ping 节点格式校验
 - Turnstile：本次请求把 `turnstile_enabled` 或 `turnstile_login_enabled` 设为 `true` 时，必须同时提供非空 `turnstile_site_key` 与 `turnstile_secret_key`
 - 通知：规范化后的 `tg_notify` 非 `0`，或 `expire_reminder` 为 `1`-`7` 时，必须提供非空 `tg_bot_token`
+- `notification_timezone`：通知输出时间和到期提醒计划使用的 IANA 时区；缺失或非法值回退为 `UTC`
+- `expire_notification_time`：到期提醒每天在通知时区内执行的小时，取值 `0`-`23`；缺失或非法值回退为 `12`
 - `appearance_options` / `theme_options`：必须是非数组对象；`display_mode` 规范为 `bar` / `ring` / `table`
 - `frontend_ws_timeout_minutes`：规范为 `0`-`1440` 的整数分钟；缺失或非法值回退为 `0`，即前端连接不超时
 - `csp_static` / `csp_api`：逗号分隔，只保留不带凭据、路径、查询或 fragment 的 HTTPS origin，非法项会被静默过滤
@@ -1773,6 +1777,8 @@ UUID 缺失或格式非法时返回 `400 { "error": "invalidServerId", "code": 4
   custom_cm: string,             // 移动 host[:port]
   custom_bd: string,             // BGP host[:port]
   expire_reminder: '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7',
+  notification_timezone: string, // IANA timezone；默认 UTC
+  expire_notification_time: string, // '0'-'23'；默认 12
   history_id_optimized: 'true' | 'false',
   servers_optimized: 'true' | 'false'
 }
@@ -1804,17 +1810,17 @@ Worker 同时注册了 cron 触发器（`scheduled` handler），可在 `wrangle
 
 | Cron          | 行为              | 备注                                                             |
 | ------------- | --------------- | -------------------------------------------------------------- |
-| `*/1 * * * *` | 每分钟：检测离线节点      | `checkOfflineNodes`（通知）                                        |
+| `*/1 * * * *` | 每分钟：检测离线节点、资源告警 | `checkOfflineNodes`、`checkResourceAlerts`（通知） |
 | `0 * * * *`   | 每小时：根据 UTC 日期分支 | 见下表                                                            |
 | <br />        | 每周日 0 点：表轮换    | `weeklyCleanup`（删除旧表、重命名 metrics\_history → metrics\_history\_old、创建新表） |
-| <br />        | 每天 12 点：服务器到期检测 | `checkExpiringServers`                                         |
+| <br />        | 每小时按通知时区/到期通知小时判断是否执行到期检测 | `checkExpiringServers` |
 
 每周日 00:00–00:04 UTC 的表轮换窗口内，分钟任务会跳过离线节点检测。
 
 DEBUG 模式（`env.DEBUG=1`）下额外提供：
 
 - `0 0 * * 0` → weeklyCleanup
-- `0 12 * * *` → checkExpiringServers
+- `0 12 * * *` → checkExpiringServers（DEBUG 手动路径；常规定时在每小时任务里按 `notification_timezone` + `expire_notification_time` 执行）
 
 ***
 

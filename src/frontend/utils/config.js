@@ -1,6 +1,7 @@
 let apiBases = []
 let wsBase = null
 let title = ''
+let configuredApiBase = false
 
 const stripTrailingSlash = (s) => String(s || '').replace(/\/+$/, '')
 
@@ -25,6 +26,7 @@ const setApiBases = (values) => {
 }
 
 export const initConfig = async () => {
+  configuredApiBase = false
   setApiBases([window.location.origin])
 
   // GitHub Pages/static builds inject runtime config through meta tags.
@@ -32,6 +34,7 @@ export const initConfig = async () => {
   if (metaApiBase) {
     const bases = metaApiBase.split(',').map(s => s.trim()).filter(Boolean)
     if (bases.length > 0) {
+      configuredApiBase = true
       setApiBases(bases)
     }
   }
@@ -57,6 +60,8 @@ export const hasMultipleApiBases = () => {
   return getApiBases().length > 1
 }
 
+export const hasConfiguredApiBase = () => configuredApiBase
+
 export const getTitle = () => title
 
 export const getPublicAssetUrl = (assetPath) => {
@@ -64,4 +69,4 @@ export const getPublicAssetUrl = (assetPath) => {
   return cleanPath ? `./${cleanPath}` : './'
 }
 
-export default { initConfig, getApiBases, getWsBase, hasMultipleApiBases, getTitle, getPublicAssetUrl }
+export default { initConfig, getApiBases, getWsBase, hasMultipleApiBases, hasConfiguredApiBase, getTitle, getPublicAssetUrl }

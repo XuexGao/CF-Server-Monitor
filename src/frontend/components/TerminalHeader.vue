@@ -57,7 +57,7 @@ import { useRoute } from 'vue-router'
 import { t, setLanguage, getLanguage } from '../utils/i18n'
 import { useTheme } from '../composables/useTheme'
 import { DEFAULT_SITE_TITLE } from '../utils/constants'
-import { hasMultipleApiBases } from '../utils/config'
+import { hasConfiguredApiBase } from '../utils/config'
 
 defineProps({
   title: {
@@ -70,7 +70,7 @@ const { currentTheme, setTheme } = useTheme()
 const currentLang = ref('en')
 const route = useRoute()
 const isAdminPage = ref(route.path === '/admin')
-const adminHref = computed(() => hasMultipleApiBases() ? '/#/admin' : '/admin#/admin')
+const adminHref = computed(() => hasConfiguredApiBase() ? '/#/admin' : '/admin#/admin')
 
 const setLang = (lang) => {
   setLanguage(lang)

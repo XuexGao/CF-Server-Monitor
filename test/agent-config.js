@@ -14,6 +14,7 @@ import {
   validatePingNode
 } from '../src/utils/agentConfig.js';
 import { md5Hash } from '../src/utils/common.js';
+import { isWssReportEnabled, normalizeWssReportHours } from '../src/utils/settings.js';
 
 const server = {
   collect_interval: 1,
@@ -27,6 +28,7 @@ const expectedLegacy = 'collect_interval=1&report_interval=60&reset_day=15&schem
 const config = buildAgentConfig(server);
 assert.equal(serializeAgentConfig(config), expected);
 assert.equal(serializeAgentConfig(buildAgentConfig(server, { wss_report_enabled: 'true' })), expectedWssEnabled);
+assert.equal(serializeAgentConfig(buildAgentConfig(server, { wss_report_enabled: 'true', wss_report_hours: [] })), expectedWssEnabled);
 assert.equal(serializeAgentConfig(buildAgentConfig(server, null, AGENT_CONFIG_LEGACY_SCHEMA_VERSION)), expectedLegacy);
 
 const descriptor = await describeAgentConfig(server);
@@ -99,6 +101,21 @@ assert.equal(buildAgentConfig({ connection_mode: 'http' }, { wss_report_enabled:
 assert.equal(Object.prototype.hasOwnProperty.call(
   buildAgentConfig({ connection_mode: 'http' }, { wss_report_enabled: 'true' }),
   'wss_report_interval'
+), false);
+assert.deepEqual(normalizeWssReportHours(undefined), Array.from({ length: 24 }, (_, hour) => hour));
+assert.deepEqual(normalizeWssReportHours('[23, 2, 2, 99, "4"]'), [2, 4, 23]);
+assert.deepEqual(normalizeWssReportHours([]), []);
+assert.equal(isWssReportEnabled(
+  { wss_report_enabled: 'true', wss_report_hours: [8, 9] },
+  new Date('2026-08-20T08:30:00Z')
+), true);
+assert.equal(isWssReportEnabled(
+  { wss_report_enabled: 'true', wss_report_hours: [8, 9] },
+  new Date('2026-08-20T10:00:00Z')
+), false);
+assert.equal(isWssReportEnabled(
+  { wss_report_enabled: 'false', wss_report_hours: [8] },
+  new Date('2026-08-20T08:30:00Z')
 ), false);
 assert.equal(validateAgentConfigInput({ ...server, connection_mode: 'http' }).config.connection_mode, 'http');
 assert.equal(validateAgentConfigInput({ ...server, connection_mode: 'bad' }).valid, false);

@@ -7,8 +7,10 @@ import {
   getResourceAlertRuleThresholds,
   getTgNotifyMinutes,
   loadSiteSettings,
+  normalizeExpireNotificationTime,
   normalizeBooleanSetting,
   normalizeNotificationTemplate,
+  normalizeNotificationTimezone,
   normalizeNotificationWebhookBody,
   normalizeNotificationWebhookFormat,
   normalizeNotificationWebhookHeaders,
@@ -25,19 +27,77 @@ const RESOURCE_ALERT_STATE_ACTIVE = 'active';
 const RESOURCE_ALERT_STATE_RECOVERED = 'recovered';
 const RESOURCE_ALERT_STATE_KEY = 'resource_alert_state';
 const RESOURCE_ALERT_NOTIFICATION_SOFT_LIMIT = 3200;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
-function formatUtcTime(timestamp = Date.now()) {
+function getZonedDateParts(timestamp = Date.now(), timezone = 'UTC') {
   const date = new Date(timestamp);
-  if (Number.isNaN(date.getTime())) return '无效时间';
-  const pad = value => String(value).padStart(2, '0');
-  return `${date.getUTCFullYear()}/${date.getUTCMonth() + 1}/${date.getUTCDate()} ` +
-    `${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}:${pad(date.getUTCSeconds())} UTC`;
+  if (Number.isNaN(date.getTime())) return null;
+  const timeZone = normalizeNotificationTimezone(timezone);
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    hour12: false,
+    hourCycle: 'h23',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit'
+  });
+  const parts = Object.fromEntries(
+    formatter.formatToParts(date).map(part => [part.type, part.value])
+  );
+  return {
+    year: parts.year,
+    month: parts.month,
+    day: parts.day,
+    hour: parts.hour,
+    minute: parts.minute,
+    second: parts.second
+  };
 }
 
-function formatLastReportTime(timestamp) {
+function formatNotificationTime(timestamp = Date.now(), settings = {}) {
+  const parts = getZonedDateParts(timestamp, settings?.notification_timezone);
+  if (!parts) return '无效时间';
+  const pad = value => String(value).padStart(2, '0');
+  return `${Number(parts.year)}/${Number(parts.month)}/${Number(parts.day)} ` +
+    `${pad(parts.hour)}:${pad(parts.minute)}:${pad(parts.second)}`;
+}
+
+function formatLastReportTime(timestamp, settings = {}) {
   if (!timestamp) return '无上报记录';
 
-  return formatUtcTime(timestamp);
+  return formatNotificationTime(timestamp, settings);
+}
+
+function isExpireNotificationTimeDue(settings = {}, timestamp = Date.now()) {
+  const parts = getZonedDateParts(timestamp, settings.notification_timezone);
+  if (!parts) return false;
+  return Number(parts.hour) === Number(normalizeExpireNotificationTime(settings.expire_notification_time));
+}
+
+function getZonedDateSerial(timestamp, timezone) {
+  const parts = getZonedDateParts(timestamp, timezone);
+  if (!parts) return NaN;
+  return Math.floor(Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day)) / DAY_MS);
+}
+
+function parseDateSerial(dateString) {
+  const match = String(dateString || '').trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return NaN;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month - 1 ||
+    date.getUTCDate() !== day
+  ) {
+    return NaN;
+  }
+  return Math.floor(date.getTime() / DAY_MS);
 }
 
 function formatMegabitsPerSecond(value) {
@@ -181,8 +241,8 @@ function getResourceAlertRuleIntervalMs(rule) {
   return Math.max(5, normalizedMinutes) * 60 * 1000;
 }
 
-function formatCurrentTime() {
-  return formatUtcTime();
+function formatCurrentTime(settings = {}) {
+  return formatNotificationTime(Date.now(), settings);
 }
 
 function getResourceAlertRuleStateKey(rule, serverId) {
@@ -438,8 +498,8 @@ function inferNotificationEmoji(event) {
   return 'ℹ️';
 }
 
-function buildNotificationContext(msg, context = {}) {
-  const now = formatCurrentTime();
+function buildNotificationContext(settings, msg, context = {}) {
+  const now = formatCurrentTime(settings);
   const clients = normalizeNotificationClients(context);
   const count = Number.isFinite(Number(context.count)) && Number(context.count) > 0
     ? Number(context.count)
@@ -569,7 +629,7 @@ function hasNotificationTarget(settings) {
 }
 
 export async function sendNotification(settings, msg, notificationContext = {}) {
-  const context = buildNotificationContext(msg, notificationContext);
+  const context = buildNotificationContext(settings || {}, msg, notificationContext);
   const formattedMsg = formatNotificationMessage(settings || {}, msg, context);
   context.notification = formattedMsg;
   const title = context.title;
@@ -812,7 +872,7 @@ export async function checkOfflineNodes(db) {
 
     if (offlineNodes.length > 0) {
       const nodeList = offlineNodes
-        .map(n => `${n.name}  最后上报: ${formatLastReportTime(n.lastReportTime)}`)
+        .map(n => `${n.name}  最后上报: ${formatLastReportTime(n.lastReportTime, siteSettings)}`)
         .join('\n');
       const msg = nodeList;
       await sendNotification(siteSettings, msg, {
@@ -1022,16 +1082,21 @@ export async function checkResourceAlerts(env) {
   }
 }
 
-export async function checkExpiringServers(db) {
+export async function checkExpiringServers(db, options = {}) {
   const siteSettings = await loadSiteSettings(db);
+  const now = Number(options?.now || Date.now());
+
+  if (options?.scheduled && !isExpireNotificationTimeDue(siteSettings, now)) {
+    return false;
+  }
 
   try {
     const allServers = await getAllServers(db);
-    const now = Date.now();
     const expiringServers = [];
     const reminderDays = getExpireReminderDays(siteSettings.expire_reminder);
     const shouldNotify = reminderDays > 0 && hasNotificationTarget(siteSettings);
     let hasRenewedServers = false;
+    const currentDateSerial = getZonedDateSerial(now, siteSettings.notification_timezone);
 
     for (const s of allServers) {
       if (!s.expire_date) continue;
@@ -1050,11 +1115,10 @@ export async function checkExpiringServers(db) {
 
       if (!shouldNotify) continue;
 
-      const expTime = new Date(s.expire_date).getTime();
-      if (isNaN(expTime)) continue;
+      const expireDateSerial = parseDateSerial(s.expire_date);
+      if (!Number.isFinite(expireDateSerial) || !Number.isFinite(currentDateSerial)) continue;
 
-      const diff = expTime - now;
-      const days = Math.ceil(diff / (1000 * 3600 * 24));
+      const days = expireDateSerial - currentDateSerial;
 
       debug(`[Cron] 检测到服务器 ${s.name} 到期日期 ${s.expire_date}，剩余天数 ${days} 天`);
 
@@ -1079,7 +1143,9 @@ export async function checkExpiringServers(db) {
         message: serverList
       });
     }
+    return true;
   } catch (e) {
     console.error('到期检测失败:', e);
+    return false;
   }
 }
