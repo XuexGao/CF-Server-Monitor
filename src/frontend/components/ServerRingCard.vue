@@ -112,47 +112,27 @@
           <div v-else class="server-card-limit-fill" style="background-image: linear-gradient(to right, #00d4aa, #4da6ff, #ffb870, #f85149);">></div>
         </div>
       </div>
-      <div v-if="sysConfig.show_three_net_details && hasThreeNetDetails" class="three-net-panel three-net-panel-ring">
-        <div class="three-net-columns">
-          <div class="three-net-column" aria-label="Ping">
-            <div class="three-net-row" v-for="row in threeNetDetails" :key="'ping-' + row.key">
-              <div class="three-net-head">
-                <span class="three-net-name">{{ row.label }}</span>
-                <strong class="three-net-value" :style="{ color: getPingColor(row.latestPing) }">{{ formatPingValue(row.latestPing) }}</strong>
-              </div>
-              <div class="three-net-buckets">
-                <span v-for="(point, index) in row.points" :key="index" class="three-net-bucket" :data-tooltip="point.pingTooltip">
-                  <span class="three-net-bucket-fill" :style="{ height: point.pingHeight + '%', background: point.pingColor, opacity: point.pingOpacity }"></span>
-                </span>
-              </div>
-            </div>
-          </div>
-          <div class="three-net-column" aria-label="Loss">
-            <div class="three-net-row" v-for="row in threeNetDetails" :key="'loss-' + row.key">
-              <div class="three-net-head three-net-head-loss">
-                <strong class="three-net-value" :style="{ color: getLossColor(row.averageLoss) }">{{ formatLossValue(row.averageLoss) }}</strong>
-              </div>
-              <div class="three-net-buckets">
-                <span v-for="(point, index) in row.points" :key="index" class="three-net-bucket" :data-tooltip="point.lossTooltip">
-                  <span class="three-net-bucket-fill" :style="{ height: point.lossHeight + '%', background: point.lossColor, opacity: point.lossOpacity }"></span>
-                </span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-      <div v-else-if="hasPingData" class="server-card-ping-row">
-        <span class="server-card-ping-chip" v-for="p in pingList" :key="p.label">
-          <span class="server-card-ping-label">{{ p.label }}</span>
-          <span class="server-card-ping-val" :style="{ color: getPingColor(p.value) }">{{ isPingValid(p.value) ? p.value + 'ms' : trans.timeout }}</span>
-        </span>
-      </div>
+      <ServerLatencyPanel
+        variant="ring"
+        :show-three-net-details="sysConfig.show_three_net_details"
+        :has-three-net-details="hasThreeNetDetails"
+        :three-net-details="threeNetDetails"
+        :has-ping-data="hasPingData"
+        :ping-list="pingList"
+        :timeout-text="trans.timeout"
+        :get-ping-color="getPingColor"
+        :get-loss-color="getLossColor"
+        :format-ping-value="formatPingValue"
+        :format-loss-value="formatLossValue"
+        :is-ping-valid="isPingValid"
+      />
     </div>
   </router-link>
 </template>
 
 <script setup>
 import OsIcon from './OsIcon.vue'
+import ServerLatencyPanel from './ServerLatencyPanel.vue'
 import { DEFAULT_SERVER_CARD_CONFIG, useServerCardData } from '../composables/useServerCardData'
 
 const props = defineProps({

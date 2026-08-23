@@ -1,7 +1,8 @@
 const REMOTE_VERSION_URL = 'https://raw.githubusercontent.com/huilang-me/CF-Server-Monitor/refs/heads/main/version.json';
 const AGENT_RELEASE_URL = 'https://api.github.com/repos/huilang-me/cfsm-agent/releases/latest';
-const REMOTE_VERSION_TTL = 5 * 60 * 1000;
+const REMOTE_VERSION_TTL = 10 * 60 * 1000;
 const REMOTE_VERSION_FAILURE_TTL = 30 * 1000;
+const REMOTE_VERSION_FETCH_TIMEOUT_MS = 2000;
 
 let cachedRemoteVersion = null;
 let cachedRemoteVersionAt = 0;
@@ -30,8 +31,8 @@ export async function getRemoteVersion() {
 async function fetchRemoteVersion(now) {
   try {
     const [versionRes, releaseRes] = await Promise.allSettled([
-      fetch(REMOTE_VERSION_URL, { headers: { Accept: 'application/json' } }),
-      fetch(AGENT_RELEASE_URL, { headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'CF-Server-Monitor' } })
+      fetchWithTimeout(REMOTE_VERSION_URL, { headers: { Accept: 'application/json' } }),
+      fetchWithTimeout(AGENT_RELEASE_URL, { headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'CF-Server-Monitor' } })
     ]);
 
     let workers;
@@ -65,5 +66,15 @@ async function fetchRemoteVersion(now) {
   } catch (_) {
     cachedRemoteVersionFailureAt = Date.now();
     return cachedRemoteVersion;
+  }
+}
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = REMOTE_VERSION_FETCH_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
   }
 }

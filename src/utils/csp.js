@@ -94,8 +94,40 @@ export function injectApiBase(html, apiBases) {
   );
 }
 
-export function buildBackgroundStyle(url) {
-  if (!url) return '';
-  const safe = String(url).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '\\"');
-  return `<style>body{background-image:url('${safe}') !important;background-size:cover !important;background-attachment:fixed !important;background-position:center !important;}</style>`;
+function escapeCssUrl(value) {
+  return String(value).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '\\"');
+}
+
+function buildBodyBackgroundRule(safeUrl) {
+  return `body{background-image:url('${safeUrl}') !important;background-size:cover !important;background-attachment:fixed !important;background-position:center !important;background-repeat:no-repeat !important;}`;
+}
+
+function buildIosFixedBackgroundRules(safeUrl) {
+  return `body{position:relative;min-height:100vh;background-image:none !important;background-color:transparent !important;background-attachment:scroll !important;}body::after{content:"";position:fixed;inset:0;width:100%;height:100vh;height:100dvh;pointer-events:none;z-index:-1;background-image:url('${safeUrl}') !important;background-size:cover !important;background-position:center !important;background-repeat:no-repeat !important;}html{background-color:var(--bg-primary,#0d1117) !important;}`;
+}
+
+export function buildBackgroundStyle(url, mobileUrl = '') {
+  const desktop = String(url || '').trim();
+  const mobile = String(mobileUrl || '').trim();
+  if (!desktop && !mobile) return '';
+
+  const rules = [];
+  const iosRules = [];
+  if (desktop) {
+    const safe = escapeCssUrl(desktop);
+    rules.push(buildBodyBackgroundRule(safe));
+    iosRules.push(buildIosFixedBackgroundRules(safe));
+  }
+  if (mobile) {
+    const safeMobile = escapeCssUrl(mobile);
+    rules.push(`@media (max-width: 767px){${buildBodyBackgroundRule(safeMobile)}}`);
+    const mobileIosRules = desktop
+      ? `@media (max-width: 767px){body::after{background-image:url('${safeMobile}') !important;}}`
+      : `@media (max-width: 767px){${buildIosFixedBackgroundRules(safeMobile)}}`;
+    iosRules.push(mobileIosRules);
+  }
+  if (iosRules.length > 0) {
+    rules.push(`@supports (-webkit-touch-callout: none){${iosRules.join('')}}`);
+  }
+  return `<style>${rules.join('')}</style>`;
 }

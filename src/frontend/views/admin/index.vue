@@ -145,6 +145,7 @@
           @toggle-admin-password-change="toggleAdminPasswordChange"
           @save-settings="saveSettings"
           @upload-bg="uploadBg"
+          @upload-bg-mobile="uploadBgMobile"
           @upload-favicon="uploadFavicon"
           @send-test-notification="sendTestNotification"
           @query-d1-usage="queryD1Usage"
@@ -883,6 +884,7 @@ const newServerGroup = ref('')
 const settings = ref({
   site_title: '',
   custom_bg: '',
+  custom_bg_mobile: '',
   favicon: '',
   custom_head: '',
   custom_script: '',
@@ -1300,6 +1302,7 @@ const loadSettings = async () => {
       settings.value = {
         site_title: settingsData.site_title || '',
         custom_bg: settingsData.custom_bg || '',
+        custom_bg_mobile: settingsData.custom_bg_mobile || '',
         favicon: settingsData.favicon || '',
         custom_head: settingsData.custom_head || '',
         custom_script: settingsData.custom_script || '',
@@ -1469,6 +1472,7 @@ const saveSettings = async () => {
     settings: {
       site_title: settings.value.site_title,
       custom_bg: settings.value.custom_bg,
+      custom_bg_mobile: settings.value.custom_bg_mobile,
       favicon: settings.value.favicon,
       custom_head: settings.value.custom_head,
       custom_script: settings.value.custom_script,
@@ -2156,6 +2160,8 @@ const uploadImageSetting = (e, field) => {
 }
 
 const uploadBg = (e) => uploadImageSetting(e, 'custom_bg')
+
+const uploadBgMobile = (e) => uploadImageSetting(e, 'custom_bg_mobile')
 
 const uploadFavicon = (e) => uploadImageSetting(e, 'favicon')
 

@@ -16,6 +16,33 @@ let dbInitialized = false;
 
 const LOSS_AGG_COLUMNS = new Set(['loss_ct', 'loss_cu', 'loss_cm', 'loss_bd']);
 const DEFAULT_HISTORY_MAX_POINTS = 160;
+export const DASHBOARD_LATENCY_HISTORY_POINTS = 30;
+const DASHBOARD_LATENCY_HISTORY_HOURS = 1;
+const DASHBOARD_LATENCY_HISTORY_CACHE_TTL = 2 * 60 * 1000;
+const DASHBOARD_LATENCY_HISTORY_CACHE_MAX = 1000;
+const DASHBOARD_LATENCY_HISTORY_QUERY_CONCURRENCY = 20;
+const LATENCY_NODE_FIELDS = ['ct', 'cu', 'cm', 'bd'];
+const DASHBOARD_LATENCY_COLUMNS = LATENCY_NODE_FIELDS
+  .flatMap(field => [`ping_${field}`, `loss_${field}`]);
+const dashboardLatencyHistoryCache = new Map();
+
+function pruneDashboardLatencyHistoryCache(now = Date.now()) {
+  for (const [serverId, entry] of dashboardLatencyHistoryCache) {
+    if (!entry || now - entry.cachedAt > DASHBOARD_LATENCY_HISTORY_CACHE_TTL) {
+      dashboardLatencyHistoryCache.delete(serverId);
+    }
+  }
+
+  while (dashboardLatencyHistoryCache.size > DASHBOARD_LATENCY_HISTORY_CACHE_MAX) {
+    const oldestServerId = dashboardLatencyHistoryCache.keys().next().value;
+    if (oldestServerId === undefined) break;
+    dashboardLatencyHistoryCache.delete(oldestServerId);
+  }
+}
+
+export function clearDashboardLatencyHistoryCache() {
+  dashboardLatencyHistoryCache.clear();
+}
 
 export async function initDatabase(db) {
   if (dbInitialized) return;
@@ -116,6 +143,7 @@ export async function clearHistory(db) {
     await saveSiteOptions(db, { history_id_optimized: 'true' });
 
     await clearAllCaches(db);
+    clearDashboardLatencyHistoryCache();
     
     debug('✅ 数据库重建完成');
     
@@ -349,6 +377,153 @@ export async function getMetricsHistory(
   setMetricsHistoryCache(serverId, hours, columns, result, configuredLongHistoryPoints);
 
   debug(`[History] FINAL: ${result.length}, interval: ${intervalMs}ms`);
+
+  return result;
+}
+
+function normalizeLatencyHistoryValue(value, metricType) {
+  if (isDisabledProbeMetric(value)) return false;
+  if (value === null || value === undefined || value === '') return null;
+
+  const number = Number(value);
+  if (!Number.isFinite(number)) return null;
+
+  if (metricType === 'loss') {
+    return Math.max(0, Math.min(100, Math.round(number)));
+  }
+  return number > 0 ? Math.round(number) : null;
+}
+
+function buildLatencyHistoryPoint(row, metricType) {
+  const timestamp = Number(row?.timestamp);
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return null;
+
+  const point = { ts: timestamp };
+  for (const field of LATENCY_NODE_FIELDS) {
+    const column = `${metricType}_${field}`;
+    if (!Object.prototype.hasOwnProperty.call(row, column)) continue;
+    const value = normalizeLatencyHistoryValue(row[column], metricType);
+    if (value !== null) point[field] = value;
+  }
+
+  return Object.keys(point).length > 1 ? point : null;
+}
+
+function normalizeDashboardLatencyRows(rows) {
+  const ping = [];
+  const loss = [];
+
+  for (const row of rows || []) {
+    const pingPoint = buildLatencyHistoryPoint(row, 'ping');
+    if (pingPoint) ping.push(pingPoint);
+
+    const lossPoint = buildLatencyHistoryPoint(row, 'loss');
+    if (lossPoint) loss.push(lossPoint);
+  }
+
+  ping.sort((a, b) => a.ts - b.ts);
+  loss.sort((a, b) => a.ts - b.ts);
+  return { ping, loss };
+}
+
+export async function getDashboardLatencyHistory(db, servers, options = {}) {
+  const serverList = Array.isArray(servers) ? servers : [];
+  const serverIds = serverList.map(server => String(server?.id || '').trim()).filter(Boolean);
+  if (serverIds.length === 0) return new Map();
+
+  const now = Number.isFinite(Number(options.now)) ? Number(options.now) : Date.now();
+  const useCache = options.cache !== false;
+  const result = new Map();
+  const serversToFetch = [];
+
+  if (useCache) {
+    pruneDashboardLatencyHistoryCache(now);
+  }
+
+  for (const server of serverList) {
+    const serverId = String(server?.id || '').trim();
+    if (!serverId) continue;
+
+    const cached = dashboardLatencyHistoryCache.get(serverId);
+    if (useCache && cached && now - cached.cachedAt < DASHBOARD_LATENCY_HISTORY_CACHE_TTL) {
+      result.set(serverId, cached.window);
+      continue;
+    }
+    serversToFetch.push(server);
+  }
+
+  if (serversToFetch.length === 0) return result;
+
+  const points = Number.isInteger(options.points) && options.points > 0
+    ? options.points
+    : DASHBOARD_LATENCY_HISTORY_POINTS;
+  const queryEnd = Math.floor(now / 1000) * 1000 + 1000;
+  const cutoff = now - DASHBOARD_LATENCY_HISTORY_HOURS * 60 * 60 * 1000;
+  const columns = DASHBOARD_LATENCY_COLUMNS.join(', ');
+
+  const nowDate = new Date(now);
+  const day = nowDate.getUTCDay();
+  const thisSunday = new Date(Date.UTC(nowDate.getUTCFullYear(), nowDate.getUTCMonth(), nowDate.getUTCDate() - day));
+  const oldTableExists = cutoff < thisSunday.getTime() && !!await db.prepare(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='metrics_history_old'`
+  ).first();
+
+  const fetchServerLatency = async server => {
+    const serverId = String(server?.id || '').trim();
+    if (!serverId) return;
+
+    try {
+      const historyInfo = await getServerHistoryInfo(db, serverId, server);
+      if (!historyInfo.partitionId) {
+        result.set(serverId, { ping: [], loss: [] });
+        return;
+      }
+
+      const queryStart = Math.max(cutoff, historyInfo.startTimestamp);
+      if (queryStart >= queryEnd) {
+        result.set(serverId, { ping: [], loss: [] });
+        return;
+      }
+
+      const intervalMs = Math.max(10_000, Math.ceil((queryEnd - queryStart) / points));
+      const idPrefix = getHistoryIdRange(historyInfo.partitionId).startId;
+      const sparseQuery = buildSparseHistoryQuery({
+        columns,
+        queryStart,
+        queryEnd,
+        firstRangeEnd: Math.min(queryEnd, queryStart + intervalMs),
+        intervalMs,
+        idPrefix,
+        oldTableExists,
+        tableBoundary: thisSunday.getTime()
+      });
+
+      const rawResult = await db.prepare(sparseQuery.sql).bind(...sparseQuery.bindValues).all();
+      const rows = rawResult.results
+        .filter(row => row.sample_json)
+        .map(row => JSON.parse(row.sample_json));
+      const window = normalizeDashboardLatencyRows(rows);
+      result.set(serverId, window);
+      if (useCache) {
+        dashboardLatencyHistoryCache.set(serverId, { cachedAt: now, window });
+      }
+    } catch (e) {
+      debug('[DashboardLatency] query failed:', serverId, e?.message || e);
+      const empty = { ping: [], loss: [] };
+      result.set(serverId, empty);
+      if (useCache) {
+        dashboardLatencyHistoryCache.set(serverId, { cachedAt: now, window: empty });
+      }
+    }
+  };
+
+  for (let offset = 0; offset < serversToFetch.length; offset += DASHBOARD_LATENCY_HISTORY_QUERY_CONCURRENCY) {
+    await Promise.all(
+      serversToFetch
+        .slice(offset, offset + DASHBOARD_LATENCY_HISTORY_QUERY_CONCURRENCY)
+        .map(fetchServerLatency)
+    );
+  }
 
   return result;
 }

@@ -41,6 +41,7 @@ function envPlugin() {
   const apiBaseRaw = env.API_BASE || ''
   const cspApiRaw = env.CSP_API || ''
   const backgroundImage = env.BACKGROUND_IMAGE || ''
+  const mobileBackgroundImage = env.BACKGROUND_IMAGE_MOBILE || ''
   const title = env.TITLE || ''
 
   // API_BASE 与 CSP_API 合并，写入运行时 apiBase meta。
@@ -55,8 +56,8 @@ function envPlugin() {
       html = stripCspMeta(html)
       html = injectTitle(html, title)
       html = injectApiBase(html, rawApiDomains)
-      if (backgroundImage) {
-        const bgStyle = buildBackgroundStyle(backgroundImage)
+      if (backgroundImage || mobileBackgroundImage) {
+        const bgStyle = buildBackgroundStyle(backgroundImage, mobileBackgroundImage)
         html = html.replace('</head>', `${bgStyle}\n</head>`)
       }
       return html

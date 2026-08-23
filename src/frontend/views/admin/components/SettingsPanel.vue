@@ -38,6 +38,23 @@
 
           <div class="form-group">
             <label class="form-label">
+              {{ trans.mobileBgImage }}
+              <HelpTooltip :text="trans.remoteImageTip" />
+            </label>
+            <div class="flex" style="gap:8px;">
+              <input type="text" v-model="settings.custom_bg_mobile" class="form-input flex-1" placeholder="https://...">
+              <div class="upload-btn-wrapper">
+                <button class="btn btn-margin-0">📁 {{ trans.upload }}</button>
+                <input type="file" accept="image/*" @change="$emit('upload-bg-mobile', $event)">
+              </div>
+            </div>
+            <img v-if="settings.custom_bg_mobile" :src="settings.custom_bg_mobile" class="bg-preview">
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">
               {{ trans.favicon }}
               <HelpTooltip :text="trans.remoteImageTip" />
             </label>
@@ -672,7 +689,7 @@ const props = defineProps({
 
 defineEmits([
   'toggle-password', 'toggle-admin-password-change',
-  'save-settings', 'upload-bg', 'upload-favicon',
+  'save-settings', 'upload-bg', 'upload-bg-mobile', 'upload-favicon',
   'send-test-notification', 'query-d1-usage'
 ])
 

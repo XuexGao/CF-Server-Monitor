@@ -106,8 +106,8 @@ function injectAppearanceSettings(html, settings) {
     }
   }
 
-  if (settings.custom_bg) {
-    modifiedHtml = insertBeforeHeadClose(modifiedHtml, buildBackgroundStyle(settings.custom_bg));
+  if (settings.custom_bg || settings.custom_bg_mobile) {
+    modifiedHtml = insertBeforeHeadClose(modifiedHtml, buildBackgroundStyle(settings.custom_bg, settings.custom_bg_mobile));
   }
 
   return {

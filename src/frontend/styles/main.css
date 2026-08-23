@@ -1584,6 +1584,7 @@ body::before {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 18px;
+    overflow: visible;
 }
 
 .three-net-column {
@@ -1683,7 +1684,7 @@ body::before {
     left: 50%;
     pointer-events: none;
     opacity: 0;
-    transform: translate(-50%, 3px) scale(.98);
+    transform: translate(calc(-50% + var(--three-net-tooltip-shift, 0px)), 3px) scale(.98);
     transition:
         opacity .22s cubic-bezier(.2, .8, .2, 1),
         transform .22s cubic-bezier(.2, .8, .2, 1);
@@ -1716,17 +1717,17 @@ body::before {
     border-right: 1px solid color-mix(in srgb, var(--border-color) 72%, transparent);
     border-bottom: 1px solid color-mix(in srgb, var(--border-color) 72%, transparent);
     background: color-mix(in srgb, var(--bg-primary) 94%, black);
-    transform: translate(-50%, 3px) rotate(45deg) scale(.98);
+    transform: translate(calc(-50% + var(--three-net-tooltip-shift, 0px)), 3px) rotate(45deg) scale(.98);
 }
 
 .three-net-bucket:hover::before,
 .three-net-bucket:hover::after {
     opacity: 1;
-    transform: translate(-50%, 0) scale(1);
+    transform: translate(calc(-50% + var(--three-net-tooltip-shift, 0px)), 0) scale(1);
 }
 
 .three-net-bucket:hover::after {
-    transform: translate(-50%, 0) rotate(45deg) scale(1);
+    transform: translate(calc(-50% + var(--three-net-tooltip-shift, 0px)), 0) rotate(45deg) scale(1);
 }
 
 .net-indicator {
@@ -4711,6 +4712,12 @@ body.mikus-theme .mikus-stats-mascot-img {
     }
 
     .help-tooltip-panel::before {
+        display: none;
+    }
+
+    .three-net-bucket::before,
+    .three-net-bucket::after {
+        content: none;
         display: none;
     }
 

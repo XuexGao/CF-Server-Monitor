@@ -643,7 +643,7 @@ test('batch push latestReportOnly keeps latest report updates without subscriber
   const latestResponse = await broadcaster.fetch(new Request('http://internal/latest-report-updates', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ serverIds: ['server-1'], includeLatencyWindows: false })
+    body: JSON.stringify({ serverIds: ['server-1'] })
   }));
   const latest = await latestResponse.json();
 
