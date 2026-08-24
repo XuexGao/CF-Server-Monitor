@@ -16,7 +16,7 @@ let dbInitialized = false;
 
 const LOSS_AGG_COLUMNS = new Set(['loss_ct', 'loss_cu', 'loss_cm', 'loss_bd']);
 const DEFAULT_HISTORY_MAX_POINTS = 160;
-export const DASHBOARD_LATENCY_HISTORY_POINTS = 30;
+export const DASHBOARD_LATENCY_HISTORY_POINTS = 20;
 const DASHBOARD_LATENCY_HISTORY_HOURS = 1;
 const DASHBOARD_LATENCY_HISTORY_CACHE_TTL = 2 * 60 * 1000;
 const DASHBOARD_LATENCY_HISTORY_CACHE_MAX = 1000;

@@ -34,7 +34,7 @@ function latencyRow(partitionId, timestamp, value) {
   return `(${buildHistoryId(partitionId, timestamp)}, ${timestamp}, ${value}, ${value + 1}, ${value + 2}, ${value + 3}, ${value % 10}, ${(value + 1) % 10}, ${(value + 2) % 10}, ${(value + 3) % 10})`;
 }
 
-test('dashboard latency history samples one hour from D1 into at most 30 real points', async () => {
+test('dashboard latency history samples one hour from D1 into at most 20 real points', async () => {
   const miniflare = createMiniflare();
 
   try {
@@ -67,9 +67,9 @@ test('dashboard latency history samples one hour from D1 into at most 30 real po
     });
 
     const window = history.get('server-1');
-    assert.equal(window.ping.length, 30);
-    assert.equal(window.loss.length, 30);
-    assert.equal(new Set(window.ping.map(point => point.ts)).size, 30);
+    assert.equal(window.ping.length, 20);
+    assert.equal(window.loss.length, 20);
+    assert.equal(new Set(window.ping.map(point => point.ts)).size, 20);
     assert.equal(window.ping.every(point => point.ct >= 20), true);
     assert.equal(window.loss.every(point => point.ct >= 0 && point.ct <= 100), true);
   } finally {
