@@ -72,7 +72,7 @@
         <img class="mikus-stats-mascot-img" :src="mikusAsset('QWQ.webp')" alt="">
       </div>
       <div class="stat-item">
-        <div class="stat-label">{{ trans.totalServers }}</div>
+        <div class="stat-label">{{ trans.servers }}</div>
         <div class="stat-main-value stat-main-value-sm stat-sub-info">
           <span class="stat-online-color">{{ trans.online }}:{{ stats.online }}</span> |
           <span class="stat-offline-color">{{ trans.offline }}:{{ stats.offline }}</span>
@@ -89,9 +89,8 @@
           <span class="stat-net-up-color">↑ {{ formatBytes(stats.globalSpeedOut) }}/s</span>
         </div>
       </div>
-      <button
+      <div
         v-if="sysConfig.show_price"
-        type="button"
         class="stat-item stat-action-item"
         @click="financeModalOpen = true"
       >
@@ -100,7 +99,7 @@
           {{ formattedRemainingValue.symbol }}{{ formattedRemainingValue.value }}
           <span class="finance-currency-code">{{ formattedRemainingValue.currency }}</span>
         </div>
-      </button>
+      </div>
     </div>
 
     <div id="view-card" class="view-panel" :class="{ active: isCardView }">

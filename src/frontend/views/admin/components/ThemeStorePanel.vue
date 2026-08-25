@@ -801,6 +801,9 @@ watch(
   font-size: 12px;
   color: var(--text-secondary);
   line-height: 1.5;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  word-break: break-word;
 }
 
 .theme-custom-form {

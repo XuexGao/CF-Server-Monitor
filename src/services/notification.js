@@ -18,15 +18,17 @@ import {
   debug
 } from '../utils/settings.js';
 import { detectBillingCycle, normalizeBillingCycle, renewExpireDateIfNeeded } from '../utils/serverBilling.js';
+import {
+  NOTIFICATION_MAX_RETRIES,
+  NOTIFICATION_RETRY_DELAY_MS,
+  RESOURCE_ALERT_EVALUATE_RULE_BATCH_SIZE,
+  RESOURCE_ALERT_EVALUATE_SERVER_BATCH_SIZE,
+  RESOURCE_ALERT_NOTIFICATION_SOFT_LIMIT
+} from '../utils/config.js';
 
-const MAX_RETRIES = 3;
-const RETRY_DELAY = 1000;
-const RESOURCE_ALERT_EVALUATE_RULE_BATCH_SIZE = 20;
-const RESOURCE_ALERT_EVALUATE_SERVER_BATCH_SIZE = 500;
 const RESOURCE_ALERT_STATE_ACTIVE = 'active';
 const RESOURCE_ALERT_STATE_RECOVERED = 'recovered';
 const RESOURCE_ALERT_STATE_KEY = 'resource_alert_state';
-const RESOURCE_ALERT_NOTIFICATION_SOFT_LIMIT = 3200;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 function getZonedDateParts(timestamp = Date.now(), timezone = 'UTC') {
@@ -435,18 +437,18 @@ async function evaluateResourceAlertRules(stub, ruleRequests) {
   return resultMap;
 }
 
-async function fetchWithRetry(url, options, retries = MAX_RETRIES) {
+async function fetchWithRetry(url, options, retries = NOTIFICATION_MAX_RETRIES) {
   for (let i = 0; i < retries; i++) {
     try {
       const response = await fetch(url, options);
       if (response.ok) return response;
       
       if (i < retries - 1) {
-        await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
+        await new Promise(resolve => setTimeout(resolve, NOTIFICATION_RETRY_DELAY_MS));
       }
     } catch (e) {
       if (i < retries - 1) {
-        await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
+        await new Promise(resolve => setTimeout(resolve, NOTIFICATION_RETRY_DELAY_MS));
       } else {
         throw e;
       }

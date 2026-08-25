@@ -305,6 +305,7 @@ async function initApp() {
         turnstile_login_enabled: isTurnstileValueEnabled(first.data.turnstile_login_enabled),
         turnstile_site_key: sharedTurnstileSite?.siteKey || first.data.turnstile_site_key || '',
         turnstile_api_index: sharedTurnstileSite?.index || 0,
+        site_configs: results.map(result => (!result.error && result.data) ? result.data : null),
         version: first.data.version || '',
         last_workers_version: first.data.last_workers_version || '',
         last_agent_version: first.data.last_agent_version || '',

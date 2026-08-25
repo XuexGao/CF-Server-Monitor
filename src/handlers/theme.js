@@ -1,5 +1,7 @@
-const THEMES_URL = 'https://raw.githubusercontent.com/huilang-me/CFSM-Theme-Store/refs/heads/main/themes.json'
-const CACHE_TTL = 300
+import {
+  THEME_STORE_CACHE_TTL_SECONDS,
+  THEME_STORE_URL
+} from '../utils/config.js'
 
 let cachedThemeStore = null
 let cacheTime = 0
@@ -20,12 +22,12 @@ const normalizeThemeStore = (data) => {
 
 export async function handleTheme() {
   const now = Math.floor(Date.now() / 1000)
-  if (cachedThemeStore && (now - cacheTime) < CACHE_TTL) {
+  if (cachedThemeStore && (now - cacheTime) < THEME_STORE_CACHE_TTL_SECONDS) {
     return { ok: true, themeStore: cachedThemeStore, cached: true }
   }
 
   try {
-    const res = await fetch(THEMES_URL, {
+    const res = await fetch(THEME_STORE_URL, {
       headers: { 'User-Agent': 'CFSM-Theme-Store' }
     })
 

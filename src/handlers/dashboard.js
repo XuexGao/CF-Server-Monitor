@@ -10,8 +10,7 @@ import {
   getWorkerLatestReportUpdates
 } from '../utils/latestReportCache.js';
 import { markFrontendRealtimeActive } from '../utils/realtimeBroadcastGate.js';
-
-const LATEST_REPORT_ID_CHUNK_SIZE = 500;
+import { DASHBOARD_LATEST_REPORT_ID_CHUNK_SIZE } from '../utils/config.js';
 
 function createEmptyLatencyWindow() {
   return { ping: [], loss: [] };
@@ -86,8 +85,8 @@ async function getDurableRealtimeState(env, serverIds) {
     const stub = env.METRICS_BROADCASTER.get(id);
     const updates = [];
 
-    for (let offset = 0; offset < serverIds.length; offset += LATEST_REPORT_ID_CHUNK_SIZE) {
-      const chunk = serverIds.slice(offset, offset + LATEST_REPORT_ID_CHUNK_SIZE);
+    for (let offset = 0; offset < serverIds.length; offset += DASHBOARD_LATEST_REPORT_ID_CHUNK_SIZE) {
+      const chunk = serverIds.slice(offset, offset + DASHBOARD_LATEST_REPORT_ID_CHUNK_SIZE);
       const response = await stub.fetch('http://internal/latest-report-updates', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

@@ -11,16 +11,18 @@ import {
   createHistoryTableSql,
   HISTORY_INSERT_COLUMNS
 } from '../utils/historyFields.js';
+import {
+  DASHBOARD_LATENCY_WINDOW_CACHE_MAX_SERVERS,
+  DASHBOARD_LATENCY_WINDOW_CACHE_TTL_MS,
+  DASHBOARD_LATENCY_WINDOW_HOURS,
+  DASHBOARD_LATENCY_WINDOW_POINTS,
+  DASHBOARD_LATENCY_WINDOW_QUERY_CONCURRENCY
+} from '../utils/config.js';
 
 let dbInitialized = false;
 
 const LOSS_AGG_COLUMNS = new Set(['loss_ct', 'loss_cu', 'loss_cm', 'loss_bd']);
 const DEFAULT_HISTORY_MAX_POINTS = 160;
-export const DASHBOARD_LATENCY_HISTORY_POINTS = 20;
-const DASHBOARD_LATENCY_HISTORY_HOURS = 1;
-const DASHBOARD_LATENCY_HISTORY_CACHE_TTL = 2 * 60 * 1000;
-const DASHBOARD_LATENCY_HISTORY_CACHE_MAX = 1000;
-const DASHBOARD_LATENCY_HISTORY_QUERY_CONCURRENCY = 20;
 const LATENCY_NODE_FIELDS = ['ct', 'cu', 'cm', 'bd'];
 const DASHBOARD_LATENCY_COLUMNS = LATENCY_NODE_FIELDS
   .flatMap(field => [`ping_${field}`, `loss_${field}`]);
@@ -28,12 +30,12 @@ const dashboardLatencyHistoryCache = new Map();
 
 function pruneDashboardLatencyHistoryCache(now = Date.now()) {
   for (const [serverId, entry] of dashboardLatencyHistoryCache) {
-    if (!entry || now - entry.cachedAt > DASHBOARD_LATENCY_HISTORY_CACHE_TTL) {
+    if (!entry || now - entry.cachedAt > DASHBOARD_LATENCY_WINDOW_CACHE_TTL_MS) {
       dashboardLatencyHistoryCache.delete(serverId);
     }
   }
 
-  while (dashboardLatencyHistoryCache.size > DASHBOARD_LATENCY_HISTORY_CACHE_MAX) {
+  while (dashboardLatencyHistoryCache.size > DASHBOARD_LATENCY_WINDOW_CACHE_MAX_SERVERS) {
     const oldestServerId = dashboardLatencyHistoryCache.keys().next().value;
     if (oldestServerId === undefined) break;
     dashboardLatencyHistoryCache.delete(oldestServerId);
@@ -445,7 +447,7 @@ export async function getDashboardLatencyHistory(db, servers, options = {}) {
     if (!serverId) continue;
 
     const cached = dashboardLatencyHistoryCache.get(serverId);
-    if (useCache && cached && now - cached.cachedAt < DASHBOARD_LATENCY_HISTORY_CACHE_TTL) {
+    if (useCache && cached && now - cached.cachedAt < DASHBOARD_LATENCY_WINDOW_CACHE_TTL_MS) {
       result.set(serverId, cached.window);
       continue;
     }
@@ -456,9 +458,9 @@ export async function getDashboardLatencyHistory(db, servers, options = {}) {
 
   const points = Number.isInteger(options.points) && options.points > 0
     ? options.points
-    : DASHBOARD_LATENCY_HISTORY_POINTS;
+    : DASHBOARD_LATENCY_WINDOW_POINTS;
   const queryEnd = Math.floor(now / 1000) * 1000 + 1000;
-  const cutoff = now - DASHBOARD_LATENCY_HISTORY_HOURS * 60 * 60 * 1000;
+  const cutoff = now - DASHBOARD_LATENCY_WINDOW_HOURS * 60 * 60 * 1000;
   const columns = DASHBOARD_LATENCY_COLUMNS.join(', ');
 
   const nowDate = new Date(now);
@@ -517,10 +519,10 @@ export async function getDashboardLatencyHistory(db, servers, options = {}) {
     }
   };
 
-  for (let offset = 0; offset < serversToFetch.length; offset += DASHBOARD_LATENCY_HISTORY_QUERY_CONCURRENCY) {
+  for (let offset = 0; offset < serversToFetch.length; offset += DASHBOARD_LATENCY_WINDOW_QUERY_CONCURRENCY) {
     await Promise.all(
       serversToFetch
-        .slice(offset, offset + DASHBOARD_LATENCY_HISTORY_QUERY_CONCURRENCY)
+        .slice(offset, offset + DASHBOARD_LATENCY_WINDOW_QUERY_CONCURRENCY)
         .map(fetchServerLatency)
     );
   }

@@ -1,4 +1,9 @@
-import { loadSettings, DEFAULT_SITE_TITLE } from '../utils/settings.js';
+import { loadSettings } from '../utils/settings.js';
+import {
+  DEFAULT_SITE_TITLE,
+  THEME_ASSET_CACHE_TTL_SECONDS,
+  THEME_COMMIT_CACHE_TTL_SECONDS
+} from '../utils/config.js';
 import {
   parseCspOrigins,
   buildApiDomainsWithWs,
@@ -8,8 +13,6 @@ import {
 } from '../utils/csp.js';
 import { checkAuth } from '../middleware/auth.js';
 
-const THEME_CACHE_TTL = 3600;
-const THEME_COMMIT_CACHE_TTL = 86400;
 const IMMUTABLE_ASSET_CACHE_CONTROL = 'public, max-age=31536000, immutable';
 const PREVIEW_COOKIE = 'cfsm_theme_preview';
 const PREVIEW_AUTH_COOKIE = 'cfsm_theme_preview_auth';
@@ -192,14 +195,14 @@ function isCommitRef(ref) {
 }
 
 function getThemeWorkerCacheTtl(parsedTheme) {
-  return isCommitRef(parsedTheme.ref) ? THEME_COMMIT_CACHE_TTL : THEME_CACHE_TTL;
+  return isCommitRef(parsedTheme.ref) ? THEME_COMMIT_CACHE_TTL_SECONDS : THEME_ASSET_CACHE_TTL_SECONDS;
 }
 
 function getThemeAssetBrowserCacheControl(parsedTheme) {
   if (isCommitRef(parsedTheme.ref)) {
     return IMMUTABLE_ASSET_CACHE_CONTROL;
   }
-  return `public, max-age=${THEME_CACHE_TTL}`;
+  return `public, max-age=${THEME_ASSET_CACHE_TTL_SECONDS}`;
 }
 
 function getCookie(request, name) {
@@ -225,7 +228,7 @@ function getPreviewThemeUrlFromCookie(request) {
 
 function buildPreviewCookie(request, themeUrl) {
   const secure = new URL(request.url).protocol === 'https:' ? '; Secure' : '';
-  return `${PREVIEW_COOKIE}=${encodeURIComponent(themeUrl)}; Max-Age=${THEME_CACHE_TTL}; Path=/; SameSite=Lax${secure}`;
+  return `${PREVIEW_COOKIE}=${encodeURIComponent(themeUrl)}; Max-Age=${THEME_ASSET_CACHE_TTL_SECONDS}; Path=/; SameSite=Lax${secure}`;
 }
 
 function buildClearPreviewCookie(request) {
@@ -292,7 +295,7 @@ function stripBrowserCacheHeaders(response) {
   });
 }
 
-async function fetchWithCache(rawUrl, contentType, workerCacheUrl, workerCacheTtl = THEME_CACHE_TTL) {
+async function fetchWithCache(rawUrl, contentType, workerCacheUrl, workerCacheTtl = THEME_ASSET_CACHE_TTL_SECONDS) {
   const cacheKey = new Request(workerCacheUrl || rawUrl, { method: 'GET' });
   const cache = typeof caches !== 'undefined' ? caches.default : null;
 

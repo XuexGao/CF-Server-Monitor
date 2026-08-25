@@ -37,6 +37,13 @@ import {
   normalizeMetricSamples,
   toBroadcastSamples
 } from '../handlers/update.js';
+import {
+  AGENT_DEFAULT_HISTORY_WRITE_INTERVAL_MS,
+  AGENT_MIN_IDLE_WSS_REPORT_INTERVAL_MS,
+  AGENT_SERVER_DETAIL_TTL_MS,
+  LATEST_REPORT_CACHE_MAX_SERVERS,
+  LATEST_REPORT_CACHE_TTL_MS
+} from '../utils/config.js';
 
 const MAX_SUBSCRIBE_IDS = 500;
 const MAX_SERVER_ID_LENGTH = 64;
@@ -47,12 +54,7 @@ const AGENT_REPORT_KIND = 'agent-report';
 const AGENT_WSS_MODE_HEADER = 'X-Agent-Wss-Mode';
 const AGENT_WSS_REASON_HEADER = 'X-Agent-Wss-Reason';
 const AGENT_WSS_SCHEDULE_INACTIVE = 'wss_schedule_inactive';
-const DEFAULT_AGENT_HISTORY_WRITE_INTERVAL_MS = 60 * 1000;
 const ALLOWED_AGENT_REPORT_INTERVALS = new Set([30, 60, 120, 180]);
-const AGENT_SERVER_DETAIL_TTL_MS = 120 * 1000;
-const MIN_IDLE_AGENT_WSS_REPORT_INTERVAL_MS = 60 * 1000;
-const LATEST_REPORT_TTL_MS = 5 * 60 * 1000;
-const MAX_LATEST_REPORT_SERVERS = 1000;
 const RESOURCE_ALERT_STORAGE_KEY = 'resource_alert_windows_v1';
 const RESOURCE_ALERT_BUCKET_MS = 60 * 1000;
 const RESOURCE_ALERT_MAX_BUCKETS = 10;
@@ -620,7 +622,7 @@ export class MetricsBroadcaster {
     if (reportIntervalMs) {
       return reportIntervalMs;
     }
-    return DEFAULT_AGENT_HISTORY_WRITE_INTERVAL_MS;
+    return AGENT_DEFAULT_HISTORY_WRITE_INTERVAL_MS;
   }
 
   _getWssReportIntervalMs(serverDetail) {
@@ -1057,8 +1059,8 @@ export class MetricsBroadcaster {
     );
     const state = this._normalizeRealtimeState(realtimeState);
     const normalizedReportIntervalMs = Math.max(
-      MIN_IDLE_AGENT_WSS_REPORT_INTERVAL_MS,
-      Number(reportIntervalMs) || DEFAULT_AGENT_HISTORY_WRITE_INTERVAL_MS
+      AGENT_MIN_IDLE_WSS_REPORT_INTERVAL_MS,
+      Number(reportIntervalMs) || AGENT_DEFAULT_HISTORY_WRITE_INTERVAL_MS
     );
     return state.frontendActive
       ? normalizedWssReportIntervalMs
@@ -1146,7 +1148,7 @@ export class MetricsBroadcaster {
       1000,
       Number(payload.reportIntervalMs) ||
       Number(attachment.reportIntervalMs) ||
-      DEFAULT_AGENT_HISTORY_WRITE_INTERVAL_MS
+      AGENT_DEFAULT_HISTORY_WRITE_INTERVAL_MS
     );
     const lastWriteTs = Math.max(
       Number(state.lastD1WriteTs) || 0,
@@ -1335,7 +1337,7 @@ export class MetricsBroadcaster {
       historyPartitionId: 0,
       region: request.headers.get('cf-ipcountry') || '',
       agentVersion: normalizeAgentVersion(request.headers.get('X-Agent-Version')),
-      reportIntervalMs: DEFAULT_AGENT_HISTORY_WRITE_INTERVAL_MS,
+      reportIntervalMs: AGENT_DEFAULT_HISTORY_WRITE_INTERVAL_MS,
       wssReportIntervalMs: DEFAULT_WSS_REPORT_INTERVAL * 1000,
       wssScheduleCheckAfter: nextHour.getTime(),
       lastD1WriteTs: 0,
@@ -1629,7 +1631,7 @@ export class MetricsBroadcaster {
 
   _pruneLatestReportUpdates(now = Date.now()) {
     for (const [serverId, update] of this.latestReportUpdates) {
-      if (!update || now - update.reportTs > LATEST_REPORT_TTL_MS) {
+      if (!update || now - update.reportTs > LATEST_REPORT_CACHE_TTL_MS) {
         this.latestReportUpdates.delete(serverId);
       }
     }
@@ -1650,7 +1652,7 @@ export class MetricsBroadcaster {
       }));
     }
 
-    while (this.latestReportUpdates.size > MAX_LATEST_REPORT_SERVERS) {
+    while (this.latestReportUpdates.size > LATEST_REPORT_CACHE_MAX_SERVERS) {
       const oldestServerId = this.latestReportUpdates.keys().next().value;
       if (oldestServerId === undefined) break;
       this.latestReportUpdates.delete(oldestServerId);

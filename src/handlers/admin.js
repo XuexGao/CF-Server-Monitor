@@ -11,10 +11,10 @@ import { getNextServerHistoryPartitionId, HISTORY_MAX_PARTITION_ID } from '../da
 import { isValidTrafficCorrection, normalizeConnectionMode, normalizeWssReportInterval, validateAgentConfigInput, validatePingNode, validateNetworkInterfaces } from '../utils/agentConfig.js';
 import { scheduleAgentConfigChanged, scheduleAgentReportModeChanged } from '../utils/agentConfigNotify.js';
 import { detectBillingCycle, detectCurrencySymbol, normalizeBillingCycle, normalizeCurrency, normalizePrice, renewExpireDateIfNeeded } from '../utils/serverBilling.js';
+import { THEME_PREVIEW_AUTH_TTL_SECONDS } from '../utils/config.js';
 
 const PING_NODE_FIELDS = ['custom_ct', 'custom_cu', 'custom_cm', 'custom_bd'];
 const THEME_PREVIEW_AUTH_COOKIE = 'cfsm_theme_preview_auth';
-const THEME_PREVIEW_AUTH_TTL = 600;
 const DURABLE_OBJECTS_WEBSOCKET_MESSAGE_BILLING_RATIO = 20;
 
 function toUsageNumber(value) {
@@ -144,7 +144,7 @@ function buildThemePreviewUrl(request, themeUrl) {
 
 function buildThemePreviewAuthCookie(request, token) {
   const secure = new URL(request.url).protocol === 'https:' ? '; Secure' : '';
-  return `${THEME_PREVIEW_AUTH_COOKIE}=${encodeURIComponent(token)}; Max-Age=${THEME_PREVIEW_AUTH_TTL}; Path=/; HttpOnly; SameSite=Lax${secure}`;
+  return `${THEME_PREVIEW_AUTH_COOKIE}=${encodeURIComponent(token)}; Max-Age=${THEME_PREVIEW_AUTH_TTL_SECONDS}; Path=/; HttpOnly; SameSite=Lax${secure}`;
 }
 
 function buildClearThemePreviewAuthCookie(request) {

@@ -22,12 +22,16 @@ const metricsHistoryCache = new Map();
 const serverDetailCache = new Map();
 
 export function getCacheDuration(hours) {
-  if (hours >= 120) {
+  if (hours >= 48) {
+    return 20 * 60 * 1000;
+  }else if (hours >= 24) {
+    return 15 * 60 * 1000;
+  }else if (hours >= 12) {
     return 10 * 60 * 1000;
-  } else if (hours >= 60) {
+  } else if (hours >= 6) {
     return 5 * 60 * 1000;
-  } else if (hours >= 30) {
-    return 3 * 60 * 1000;
+  } else if (hours >= 1) {
+    return 2 * 60 * 1000;
   } else {
     return 1 * 60 * 1000;
   }

@@ -28,6 +28,12 @@ import {
   BROADCAST_DELETE_FIELDS,
   HISTORY_METRIC_AGGREGATION_POLICY
 } from '../utils/historyFields.js';
+import {
+  UPDATE_FRONTEND_SUBSCRIBER_CHECK_INTERVAL_MS,
+  UPDATE_MAX_BATCH_SAMPLES,
+  UPDATE_REALTIME_BATCH_WINDOW_MS,
+  UPDATE_RESOURCE_ALERT_BATCH_WINDOW_MS
+} from '../utils/config.js';
 
 // 将最新一次上报打包成前端可直接消费的 "当前状态" 对象
 // 与 /api/server 和 /api/servers 返回的字段保持一致，便于页面直接合并
@@ -43,10 +49,6 @@ function buildPayloadForBroadcast(id, metrics = {}, extra = {}) {
 }
 
 // 批量推送：前端实时使用短窗口；仅资源告警缓存时使用较长窗口降低 DO 请求。
-const REALTIME_BATCH_WINDOW_MS = 5 * 1000;
-const RESOURCE_ALERT_BATCH_WINDOW_MS = 25 * 1000;
-const MAX_BATCH_SAMPLES = 300;
-const FRONTEND_SUBSCRIBER_CHECK_INTERVAL_MS = 5 * 60 * 1000;
 const DISK_IO_COLUMN_TO_FIELD = Object.freeze(Object.fromEntries(
   DISK_IO_METRIC_FIELDS.map(field => [DISK_IO_FIELD_TO_COLUMN[field], field])
 ));
@@ -105,7 +107,7 @@ export function normalizeMetricSamples(data) {
   }
 
   samples.sort((a, b) => a.ts - b.ts);
-  return samples.slice(-MAX_BATCH_SAMPLES);
+  return samples.slice(-UPDATE_MAX_BATCH_SAMPLES);
 }
 
 export function getReportMetrics(data, latestSample) {
@@ -290,12 +292,12 @@ function queueBroadcastSamples(serverId, samples) {
   const merged = existing && Array.isArray(existing.samples)
     ? existing.samples.concat(samples)
     : samples;
-  batchQueue.set(serverId, { samples: merged.slice(-MAX_BATCH_SAMPLES) });
+  batchQueue.set(serverId, { samples: merged.slice(-UPDATE_MAX_BATCH_SAMPLES) });
 }
 
 async function getCachedFrontendSubscriberCount(env) {
   const now = Date.now();
-  if (now - frontendSubscriberSnapshot.checkedAt < FRONTEND_SUBSCRIBER_CHECK_INTERVAL_MS) {
+  if (now - frontendSubscriberSnapshot.checkedAt < UPDATE_FRONTEND_SUBSCRIBER_CHECK_INTERVAL_MS) {
     return frontendSubscriberSnapshot.count;
   }
 
@@ -363,18 +365,18 @@ async function getRealtimeBatchIntent(env) {
 }
 
 async function getBatchFlushDelayMs(env, now = Date.now()) {
-  if (hasRecentFrontendRealtimeActivity(now)) return REALTIME_BATCH_WINDOW_MS;
+  if (hasRecentFrontendRealtimeActivity(now)) return UPDATE_REALTIME_BATCH_WINDOW_MS;
 
   try {
     const settings = await loadSiteSettings(env.DB);
     if (hasResourceAlertNotificationTarget(settings) && getResourceAlertConfig(settings).enabled) {
-      return RESOURCE_ALERT_BATCH_WINDOW_MS;
+      return UPDATE_RESOURCE_ALERT_BATCH_WINDOW_MS;
     }
   } catch (e) {
     console.warn('[broadcast] failed to load batch delay settings:', e?.message || e);
   }
 
-  return REALTIME_BATCH_WINDOW_MS;
+  return UPDATE_REALTIME_BATCH_WINDOW_MS;
 }
 
 function buildAgentWssStateHeaders(settings = {}, now = Date.now()) {
@@ -446,10 +448,10 @@ function _ensureBatchFlush(env) {
   if (flushingPromise) {
     if (
       hasRecentFrontendRealtimeActivity(now) &&
-      flushDueAt > now + REALTIME_BATCH_WINDOW_MS
+      flushDueAt > now + UPDATE_REALTIME_BATCH_WINDOW_MS
     ) {
       if (flushTimer) clearTimeout(flushTimer);
-      flushDueAt = now + REALTIME_BATCH_WINDOW_MS;
+      flushDueAt = now + UPDATE_REALTIME_BATCH_WINDOW_MS;
       flushTimer = setTimeout(() => {
         const resolve = resolveFlushingPromise;
         flushTimer = null;
@@ -459,14 +461,14 @@ function _ensureBatchFlush(env) {
           flushingPromise = null;
           if (resolve) resolve();
         });
-      }, REALTIME_BATCH_WINDOW_MS);
+      }, UPDATE_REALTIME_BATCH_WINDOW_MS);
     }
     return flushingPromise;
   }
 
   flushingPromise = getBatchFlushDelayMs(env, now).then(delayMs => new Promise(resolve => {
     resolveFlushingPromise = resolve;
-    const normalizedDelayMs = Math.max(0, Number(delayMs) || REALTIME_BATCH_WINDOW_MS);
+    const normalizedDelayMs = Math.max(0, Number(delayMs) || UPDATE_REALTIME_BATCH_WINDOW_MS);
     flushDueAt = Date.now() + normalizedDelayMs;
     flushTimer = setTimeout(() => {
       const currentResolve = resolveFlushingPromise;

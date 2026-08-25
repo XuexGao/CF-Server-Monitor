@@ -349,7 +349,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, watch, nextTick, h } from 'vue'
+import { ref, computed, inject, onMounted, onUnmounted, watch, nextTick, h } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import TerminalHeader from '../components/TerminalHeader.vue'
 import Footer from '../components/Footer.vue'
@@ -370,6 +370,7 @@ import { applyMikusThemeOptions } from '../utils/themeOptions.js'
 
 const route = useRoute()
 const router = useRouter()
+const appConfig = inject('appConfig', null)
 
 let serverId = route.params.id
 if (!serverId) {
@@ -1053,14 +1054,15 @@ const updateChartsTheme = () => {
 const { onThemeChange } = useTheme()
 onThemeChange(updateChartsTheme)
 
-// ≤1h: gap超过5分钟断线; >1h: 按后端采样点数计算，最低5分钟基础阈值
+// ≤1h: gap超过5分钟断线; >1h: 按 long_history_points 计算采样间隔，允许点落在桶内不同位置造成的正常漂移
 const getHistoryGapBreakMs = (hours = currentHours.value) => {
   if (hours <= 1) return 5 * 60 * 1000
   const configuredPoints = Number(config.value?.long_history_points)
   const samplePoints = HISTORY.LONG_RANGE_POINT_OPTIONS.includes(configuredPoints)
     ? configuredPoints
     : HISTORY.DEFAULT_LONG_RANGE_POINTS
-  return Math.max(5 * 60 * 1000, Math.ceil(hours * 60 * 60 * 1000 / samplePoints))
+  const expectedIntervalMs = Math.ceil(hours * 60 * 60 * 1000 / samplePoints)
+  return Math.max(5 * 60 * 1000, expectedIntervalMs * 1.9)
 }
 
 const shouldBreakGap = (prevPoint, nextPoint) => {
@@ -1070,8 +1072,7 @@ const shouldBreakGap = (prevPoint, nextPoint) => {
   if (!Number.isFinite(prevTime) || !Number.isFinite(nextTime)) return false
   const gap = nextTime - prevTime
   const breakThreshold = getHistoryGapBreakMs()
-  if (currentHours.value <= 1) return gap > breakThreshold
-  return gap > breakThreshold * 1.1
+  return gap > breakThreshold
 }
 
 const applyGapBreak = (data) => {
@@ -1120,12 +1121,6 @@ const getLastDatasetTimestamp = (data) => {
   return 0
 }
 
-const sampleData = (dataPoints) => {
-  if (!dataPoints || dataPoints.length <= CHART.MAX_DATA_POINTS) return dataPoints
-  const step = Math.ceil(dataPoints.length / CHART.MAX_DATA_POINTS)
-  return dataPoints.filter((_, i) => i % step === 0)
-}
-
 const updateChartDataset = (chart, datasetIndex, dataPoints, yAccessor) => {
   if (!chart) return
 
@@ -1134,9 +1129,7 @@ const updateChartDataset = (chart, datasetIndex, dataPoints, yAccessor) => {
 
   let processedData = []
   if (dataPoints && dataPoints.length > 0) {
-    const sampledData = sampleData(dataPoints)
-
-    processedData = sampledData.map(d => {
+    processedData = dataPoints.map(d => {
       return createChartPoint(new Date(d.timestamp).getTime(), yAccessor(d))
     })
 
@@ -1165,9 +1158,7 @@ const updateLoadChart = (chart, dataPoints) => {
 
   let processedData = []
   if (dataPoints && dataPoints.length > 0) {
-    const sampledData = sampleData(dataPoints)
-
-    processedData = sampledData.map(d => {
+    processedData = dataPoints.map(d => {
       const loadVal = d.load_avg || '0 0 0'
       const loads = parseLoadAvg(loadVal)
       return { 
@@ -1679,9 +1670,17 @@ const handleLiveMessage = (msg) => {
   }
 }
 
+const getInjectedRuntimeConfig = () => {
+  if (!appConfig) return null
+  if (Array.isArray(appConfig.site_configs) && appConfig.site_configs[apiIndex.value]) {
+    return appConfig.site_configs[apiIndex.value]
+  }
+  return apiIndex.value === 0 ? appConfig : null
+}
+
 const loadThemeOptionsFromConfig = async () => {
   try {
-    const runtimeConfig = await fetchConfig(apiIndex.value)
+    const runtimeConfig = getInjectedRuntimeConfig() || await fetchConfig(apiIndex.value)
     frontendWsTimeoutMinutes.value = normalizeLiveSocketTimeoutMinutes(runtimeConfig?.frontend_ws_timeout_minutes)
     if (runtimeConfig && Object.prototype.hasOwnProperty.call(runtimeConfig, 'theme_options')) {
       applyMikusThemeOptions(runtimeConfig.theme_options)

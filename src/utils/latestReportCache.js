@@ -1,5 +1,7 @@
-const LATEST_REPORT_TTL_MS = 5 * 60 * 1000;
-const MAX_LATEST_REPORT_SERVERS = 1000;
+import {
+  LATEST_REPORT_CACHE_MAX_SERVERS,
+  LATEST_REPORT_CACHE_TTL_MS
+} from './config.js';
 
 // 普通 Worker isolate 内的尽力而为缓存；不同 isolate 之间不共享。
 const latestReportUpdates = new Map();
@@ -27,7 +29,7 @@ function getLatestSampleTimestamp(samples) {
 
 function pruneLatestReportUpdates(now = Date.now()) {
   for (const [serverId, update] of latestReportUpdates) {
-    if (!update || now - update.reportTs > LATEST_REPORT_TTL_MS) {
+    if (!update || now - update.reportTs > LATEST_REPORT_CACHE_TTL_MS) {
       latestReportUpdates.delete(serverId);
     }
   }
@@ -38,7 +40,7 @@ export function cacheLatestReportUpdate(serverId, samples, reportTs = Date.now()
 
   const now = Date.now();
   const normalizedReportTs = normalizeTimestamp(reportTs, now);
-  if (now - normalizedReportTs > LATEST_REPORT_TTL_MS) return;
+  if (now - normalizedReportTs > LATEST_REPORT_CACHE_TTL_MS) return;
 
   pruneLatestReportUpdates(now);
   const normalizedServerId = String(serverId);
@@ -62,7 +64,7 @@ export function cacheLatestReportUpdate(serverId, samples, reportTs = Date.now()
     samples
   });
 
-  while (latestReportUpdates.size > MAX_LATEST_REPORT_SERVERS) {
+  while (latestReportUpdates.size > LATEST_REPORT_CACHE_MAX_SERVERS) {
     const oldestServerId = latestReportUpdates.keys().next().value;
     if (oldestServerId === undefined) break;
     latestReportUpdates.delete(oldestServerId);
