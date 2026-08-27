@@ -9,7 +9,8 @@ import {
   buildApiDomainsWithWs,
   buildCspHeader,
   buildBackgroundStyle,
-  stripCspMeta
+  stripCspMeta,
+  injectApiBase
 } from '../utils/csp.js';
 import { checkAuth } from '../middleware/auth.js';
 
@@ -84,16 +85,26 @@ function injectFavicon(html, favicon) {
   return insertBeforeHeadClose(withoutExistingIcons, `<link rel="icon" href="${safeFavicon}">`);
 }
 
-function injectAppearanceSettings(html, settings) {
+function getEnvApiBases(env) {
+  return parseCspOrigins(env?.API_BASE || '');
+}
+
+function injectAppearanceSettings(html, settings, env = {}) {
   let modifiedHtml = stripCspMeta(html);
 
   modifiedHtml = injectTitle(modifiedHtml, settings.site_title || DEFAULT_SITE_TITLE);
   modifiedHtml = injectFavicon(modifiedHtml, settings.favicon);
 
+  const envApiBases = getEnvApiBases(env);
+  modifiedHtml = injectApiBase(modifiedHtml, envApiBases);
+
   const cspStatic = settings.csp_static || '';
   const cspApi = settings.csp_api || '';
   const staticDomains = parseCspOrigins(cspStatic);
-  const rawApiDomains = parseCspOrigins(cspApi);
+  const rawApiDomains = [
+    ...envApiBases,
+    ...parseCspOrigins(cspApi)
+  ];
   const apiDomains = buildApiDomainsWithWs(rawApiDomains);
   const csp = buildCspHeader({ staticDomains, apiDomains });
 
@@ -388,8 +399,8 @@ async function loadThemeIndex(themeUrl) {
   return normalizeThemeAssetUrls(await response.text());
 }
 
-function buildHtmlResponse(html, settings, request, previewThemeUrl = '') {
-  const rendered = injectAppearanceSettings(html, settings);
+function buildHtmlResponse(html, settings, request, env = {}, previewThemeUrl = '') {
+  const rendered = injectAppearanceSettings(html, settings, env);
   const headers = new Headers({
     'Content-Type': 'text/html;charset=UTF-8',
     'X-Content-Type-Options': 'nosniff',
@@ -488,7 +499,7 @@ export async function serveFrontend(request, env, settings = null) {
   if (!shouldUseBuiltinFrontend(path) && effectiveThemeUrl) {
     const themeHtml = await loadThemeIndex(effectiveThemeUrl);
     if (themeHtml) {
-      return buildHtmlResponse(themeHtml, settings, request, previewThemeUrl);
+      return buildHtmlResponse(themeHtml, settings, request, env, previewThemeUrl);
     }
     return buildThemeIndexErrorResponse();
   }
@@ -497,7 +508,7 @@ export async function serveFrontend(request, env, settings = null) {
   const html = files['dashboard.html'];
 
   if (html) {
-    return buildHtmlResponse(html, settings, request);
+    return buildHtmlResponse(html, settings, request, env);
   }
 
   return new Response('Frontend not available. Please build the frontend first with `npm run build:frontend`.', {

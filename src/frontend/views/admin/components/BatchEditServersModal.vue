@@ -23,10 +23,9 @@
         <div class="batch-edit-section">
           <div class="section-subtitle">{{ trans.billing || 'Billing' }}</div>
           <BatchEditField :enabled="enabled.currency" :label="trans.currency" @toggle="toggleField('currency', $event)">
-            <input type="text" v-model="form.currency" class="form-input" list="batch-currency-list" :disabled="!enabled.currency" placeholder="e.g. $, ¥, €">
-            <datalist id="batch-currency-list">
-              <option v-for="item in currencyOptions" :key="item.symbol" :value="item.symbol">{{ currencyLabel(item) }}</option>
-            </datalist>
+            <select v-model="form.currency" class="form-select" :disabled="!enabled.currency">
+              <option v-for="item in currencySelectOptions" :key="item.symbol" :value="item.symbol">{{ currencyLabel(item) }}</option>
+            </select>
           </BatchEditField>
           <BatchEditField :enabled="enabled.price" :label="trans.price" @toggle="toggleField('price', $event)">
             <input type="text" v-model="form.price" class="form-input" :disabled="!enabled.price" placeholder="40.00">
@@ -178,6 +177,16 @@ defineEmits(['save', 'close'])
 
 const billingCycleOptions = BILLING_CYCLES
 const currencyOptions = CURRENCY_OPTIONS
+const currencySelectOptions = computed(() => {
+  const currentCurrency = String(form.value.currency || '').trim()
+  if (!currentCurrency || currencyOptions.some(item => item.symbol === currentCurrency)) {
+    return currencyOptions
+  }
+  return [
+    { symbol: currentCurrency, nameZh: currentCurrency, nameEn: currentCurrency },
+    ...currencyOptions
+  ]
+})
 
 const cycleLabel = (item) => currentLang.value === 'zh' ? item.labelZh : item.labelEn
 const currencyLabel = (item) => currentLang.value === 'zh'

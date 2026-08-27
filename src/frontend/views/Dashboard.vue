@@ -51,19 +51,67 @@
           </div>
         </div>
       </div>
-      <div class="filter-bar" id="ajax-filters">
-        <span
-          v-for="(count, code) in filterOptions"
-          :key="code"
-          class="filter-tag"
-          :class="{ active: currentFilter === code, 'filter-tag-unknown': code === 'unknown' }"
-          :data-filter="code"
-          @click="setFilter(code)"
-        >
-          <span v-if="code === 'unknown'" class="filter-tag-icon">🏳️</span>
-          <img v-else-if="code !== 'all'" :src="getPublicAssetUrl('flags/' + getFlagRegionCode(code) + '.svg')" :alt="code">
-          {{ code === 'all' ? '[' + trans.all + ']' : code === 'unknown' ? 'UNKNOWN' : code.toUpperCase() }} {{ count }}
-        </span>
+      <div class="filter-wrap" ref="filterWrap">
+        <div class="filter-bar" id="ajax-filters">
+          <button
+            v-for="item in visibleFilterOptions"
+            :key="item.code"
+            type="button"
+            class="filter-tag"
+            :class="{ active: currentFilter === item.code, 'filter-tag-unknown': item.code === 'unknown' }"
+            :data-filter="item.code"
+            @click="setFilter(item.code)"
+          >
+            <span v-if="item.code === 'unknown'" class="filter-tag-icon">🏳️</span>
+            <img v-else-if="item.flagCode" :src="getPublicAssetUrl('flags/' + item.flagCode + '.svg')" :alt="item.code">
+            <span class="filter-tag-label">{{ item.label }}</span>
+            <span class="filter-tag-count">{{ item.count }}</span>
+          </button>
+          <div v-if="overflowFilterOptions.length > 0" class="filter-more" :class="{ active: isOverflowFilterActive }">
+            <button
+              type="button"
+              class="filter-tag filter-more-btn"
+              :class="{ active: isOverflowFilterActive }"
+              @click.stop="toggleFilterMore"
+            >
+              <span class="filter-tag-label">{{ filterMoreLabel }}</span>
+              <span class="filter-tag-count">{{ overflowFilterOptions.length }}</span>
+            </button>
+            <div v-if="filterMoreOpen" class="filter-more-menu">
+              <button
+                v-for="item in overflowFilterOptions"
+                :key="item.code"
+                type="button"
+                class="filter-tag filter-more-item"
+                :class="{ active: currentFilter === item.code, 'filter-tag-unknown': item.code === 'unknown' }"
+                :data-filter="item.code"
+                @click="setFilter(item.code)"
+              >
+                <span v-if="item.code === 'unknown'" class="filter-tag-icon">🏳️</span>
+                <img v-else-if="item.flagCode" :src="getPublicAssetUrl('flags/' + item.flagCode + '.svg')" :alt="item.code">
+                <span class="filter-tag-label">{{ item.label }}</span>
+                <span class="filter-tag-count">{{ item.count }}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+        <div ref="filterMeasure" class="filter-measure" aria-hidden="true">
+          <button
+            v-for="item in filterOptionEntries"
+            :key="item.code"
+            type="button"
+            class="filter-tag filter-measure-tag"
+          >
+            <span v-if="item.code === 'unknown'" class="filter-tag-icon">🏳️</span>
+            <img v-else-if="item.flagCode" :src="getPublicAssetUrl('flags/' + item.flagCode + '.svg')" :alt="item.code">
+            <span class="filter-tag-label">{{ item.label }}</span>
+            <span class="filter-tag-count">{{ item.count }}</span>
+          </button>
+          <button ref="filterMoreMeasure" type="button" class="filter-tag filter-more-btn">
+            <span class="filter-tag-label">{{ filterMoreLabel }}</span>
+            <span class="filter-tag-count">{{ filterOptionEntries.length }}</span>
+          </button>
+        </div>
       </div>
     </div>
 
@@ -316,7 +364,7 @@
 </template>
 
 <script setup>
-import { ref, computed, inject, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, inject, nextTick, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import TerminalHeader from '../components/TerminalHeader.vue'
 import ServerBarCard from '../components/ServerBarCard.vue'
@@ -363,6 +411,11 @@ const sysConfig = ref({
 const regionStats = ref({})
 const currentView = ref('bar')
 const currentFilter = ref('all')
+const filterWrap = ref(null)
+const filterMeasure = ref(null)
+const filterMoreMeasure = ref(null)
+const filterVisibleCount = ref(Number.POSITIVE_INFINITY)
+const filterMoreOpen = ref(false)
 const mapInitialized = ref(false)
 const liveConnected = ref(false)
 const isLoading = ref(true)
@@ -458,10 +511,118 @@ const filterOptions = computed(() => {
     if (lower === 'xx') continue
     normalizedStats[lower] = regionStats.value[code]
   }
-  const opts = { all: stats.value.total, ...normalizedStats }
+  const sortedRegionStats = Object.fromEntries(
+    Object.entries(normalizedStats).sort(([codeA, countA], [codeB, countB]) => {
+      if (countB !== countA) return countB - countA
+      return codeA.localeCompare(codeB)
+    })
+  )
+  const opts = { ...sortedRegionStats }
   if (unknownStats.value > 0) opts.unknown = unknownStats.value
   return opts
 })
+
+const getFilterLabel = (code) => {
+  if (code === 'unknown') return '?'
+  return code.toUpperCase()
+}
+
+const filterOptionEntries = computed(() => Object.entries(filterOptions.value).map(([code, count]) => ({
+  code,
+  count,
+  label: getFilterLabel(code),
+  flagCode: code !== 'all' && code !== 'unknown' ? getFlagRegionCode(code) : ''
+})))
+
+const filterMoreLabel = computed(() => currentLang.value === 'zh' ? '更多' : 'MORE')
+const visibleFilterOptions = computed(() => filterOptionEntries.value.slice(0, filterVisibleCount.value))
+const overflowFilterOptions = computed(() => filterOptionEntries.value.slice(filterVisibleCount.value))
+const isOverflowFilterActive = computed(() => overflowFilterOptions.value.some(item => item.code === currentFilter.value))
+
+let filterResizeObserver = null
+let filterMeasureTimer = null
+
+const getFilterMaxRows = () => window.matchMedia('(max-width: 768px)').matches ? 2 : 1
+
+const getWrappedRowCount = (widths, wrapWidth, gap) => {
+  if (widths.length === 0) return 0
+
+  let rows = 1
+  let rowWidth = 0
+
+  for (const width of widths) {
+    const nextWidth = rowWidth > 0 ? rowWidth + gap + width : width
+    if (nextWidth <= wrapWidth || rowWidth === 0) {
+      rowWidth = nextWidth
+    } else {
+      rows += 1
+      rowWidth = width
+    }
+  }
+
+  return rows
+}
+
+const updateFilterVisibleCount = () => {
+  const entries = filterOptionEntries.value
+  const wrapEl = filterWrap.value
+  const measureEl = filterMeasure.value
+  if (!wrapEl || !measureEl || entries.length === 0) {
+    filterVisibleCount.value = entries.length
+    return
+  }
+
+  const wrapWidth = wrapEl.clientWidth
+  const itemEls = Array.from(measureEl.querySelectorAll('.filter-measure-tag'))
+  if (wrapWidth <= 0 || itemEls.length === 0) return
+
+  const gap = Number.parseFloat(window.getComputedStyle(measureEl).columnGap) || 0
+  const itemWidths = itemEls.map(el => el.offsetWidth)
+  const maxRows = getFilterMaxRows()
+
+  if (getWrappedRowCount(itemWidths, wrapWidth, gap) <= maxRows) {
+    filterVisibleCount.value = entries.length
+    filterMoreOpen.value = false
+    return
+  }
+
+  const moreWidth = filterMoreMeasure.value?.offsetWidth || 70
+  let visibleCount = 0
+
+  for (let index = 0; index < itemWidths.length; index += 1) {
+    const nextVisibleCount = index + 1
+    const testWidths = [...itemWidths.slice(0, nextVisibleCount), moreWidth]
+    if (getWrappedRowCount(testWidths, wrapWidth, gap) > maxRows) break
+    visibleCount = nextVisibleCount
+  }
+
+  filterVisibleCount.value = Math.max(1, Math.min(visibleCount, entries.length - 1))
+}
+
+const scheduleFilterMeasurement = () => {
+  if (filterMeasureTimer) clearTimeout(filterMeasureTimer)
+  filterMeasureTimer = setTimeout(async () => {
+    filterMeasureTimer = null
+    await nextTick()
+    updateFilterVisibleCount()
+  }, 0)
+}
+
+const toggleFilterMore = () => {
+  filterMoreOpen.value = !filterMoreOpen.value
+}
+
+const closeFilterMoreOnOutsideClick = (event) => {
+  if (!filterWrap.value?.contains(event.target)) filterMoreOpen.value = false
+}
+
+watch(
+  () => filterOptionEntries.value.map(item => `${item.code}:${item.count}:${item.label}`).join('|'),
+  scheduleFilterMeasurement,
+  { flush: 'post' }
+)
+
+watch(filterMoreLabel, scheduleFilterMeasurement, { flush: 'post' })
 
 const filteredServers = computed(() => {
   if (currentFilter.value === 'all') return servers.value
@@ -499,7 +660,9 @@ const switchView = (viewName) => {
 }
 
 const setFilter = (code) => {
-  currentFilter.value = code.toLowerCase()
+  const nextFilter = code.toLowerCase()
+  currentFilter.value = currentFilter.value === nextFilter ? 'all' : nextFilter
+  filterMoreOpen.value = false
 }
 
 const getStatusColor = (server) => {
@@ -1126,6 +1289,15 @@ onMounted(async () => {
     localStorage.setItem(STORAGE.VIEW_PREFERENCE, savedView)
   }
   await refreshData()
+  await nextTick()
+  scheduleFilterMeasurement()
+  if (window.ResizeObserver && filterWrap.value) {
+    filterResizeObserver = new ResizeObserver(scheduleFilterMeasurement)
+    filterResizeObserver.observe(filterWrap.value)
+  } else {
+    window.addEventListener('resize', scheduleFilterMeasurement)
+  }
+  document.addEventListener('click', closeFilterMoreOnOutsideClick)
   startLiveSocket()
   document.addEventListener('visibilitychange', handleVisibility)
 
@@ -1150,6 +1322,10 @@ onMounted(async () => {
 
 onUnmounted(() => {
   document.removeEventListener('visibilitychange', handleVisibility)
+  document.removeEventListener('click', closeFilterMoreOnOutsideClick)
+  window.removeEventListener('resize', scheduleFilterMeasurement)
+  if (filterMeasureTimer) clearTimeout(filterMeasureTimer)
+  if (filterResizeObserver) filterResizeObserver.disconnect()
   if (timeUpdateInterval) clearInterval(timeUpdateInterval)
   stopLiveSockets()
   if (themeObserver) themeObserver.disconnect()

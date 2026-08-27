@@ -12,10 +12,17 @@
     <div class="toolbar">
       <input type="text" v-model="newServerName" class="toolbar-input" :placeholder="'> ' + trans.serverName + '...'">
       <div class="toolbar-select-wrapper">
-        <input type="text" v-model="newServerGroup" list="group-list" class="toolbar-select" :placeholder="trans.default || 'Default'">
-        <datalist id="group-list">
-          <option v-for="group in groups" :key="group" :value="group"></option>
-        </datalist>
+        <select v-model="selectedServerGroup" class="toolbar-select">
+          <option v-for="group in serverGroupOptions" :key="group.value" :value="group.value">{{ group.label }}</option>
+          <option :value="CUSTOM_SERVER_GROUP_VALUE">{{ trans.custom || 'Custom' }}</option>
+        </select>
+        <input
+          v-if="showCustomServerGroup"
+          type="text"
+          v-model="newServerGroup"
+          class="toolbar-select toolbar-custom-input"
+          :placeholder="trans.default || 'Default'"
+        >
         <button v-if="newServerGroup" @click="newServerGroup = ''" class="toolbar-select-clear" aria-label="Clear">✕</button>
       </div>
       <button @click="$emit('add-server')" class="btn btn-primary">+ {{ trans.addServer }}</button>
@@ -171,7 +178,7 @@
 </template>
 
 <script setup>
-import { onBeforeUnmount } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { getFlagRegionCode, formatBytes } from '../../../utils/api'
 import { getPublicAssetUrl } from '../../../utils/config'
 import { currentLang } from '../../../utils/i18n'
@@ -203,7 +210,56 @@ const emit = defineEmits([
 ])
 
 const POINTER_DRAG_THRESHOLD = 6
+const CUSTOM_SERVER_GROUP_VALUE = '__custom__'
 let pointerDragState = null
+
+const serverGroupOptions = computed(() => {
+  const defaultLabel = props.trans.default || 'Default'
+  const seen = new Set(['', defaultLabel])
+  const options = [{ value: '', label: defaultLabel }]
+  for (const group of props.groups) {
+    const value = String(group || '').trim()
+    if (!value || seen.has(value)) continue
+    seen.add(value)
+    options.push({ value, label: value })
+  }
+  return options
+})
+
+const manualCustomServerGroup = ref(false)
+const isKnownServerGroup = (value) => serverGroupOptions.value.some(group => group.value === String(value || '').trim())
+
+const selectedServerGroup = computed({
+  get: () => {
+    const currentGroup = String(newServerGroup.value || '').trim()
+    if (manualCustomServerGroup.value || (!isKnownServerGroup(currentGroup) && currentGroup)) {
+      return CUSTOM_SERVER_GROUP_VALUE
+    }
+    return currentGroup
+  },
+  set: (value) => {
+    if (value === CUSTOM_SERVER_GROUP_VALUE) {
+      manualCustomServerGroup.value = true
+      if (isKnownServerGroup(newServerGroup.value)) {
+        newServerGroup.value = ''
+      }
+      return
+    }
+    manualCustomServerGroup.value = false
+    newServerGroup.value = value
+  }
+})
+
+const showCustomServerGroup = computed(() => selectedServerGroup.value === CUSTOM_SERVER_GROUP_VALUE)
+
+watch(
+  newServerGroup,
+  (value) => {
+    if (!String(value || '').trim() || isKnownServerGroup(value)) {
+      manualCustomServerGroup.value = false
+    }
+  }
+)
 
 const emitDragStart = (event, serverId) => {
   emit('drag-start', event, serverId)

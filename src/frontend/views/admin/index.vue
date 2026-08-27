@@ -549,7 +549,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch, nextTick } from 'vue'
+import { ref, computed, onMounted, watch, nextTick, inject } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import TerminalHeader from '../../components/TerminalHeader.vue'
 import Footer from '../../components/Footer.vue'
@@ -577,6 +577,8 @@ import { detectBillingCycle, detectCurrencySymbol, normalizeBillingCycle, normal
 const trans = useTranslation()
 const route = useRoute()
 const router = useRouter()
+const appConfig = inject('appConfig', {})
+let startupConfigConsumed = false
 const AGENT_RELEASE_URL = 'https://api.github.com/repos/huilang-me/cfsm-agent/releases/latest'
 const AGENT_RELEASE_FAILURE_TTL = 30 * 1000
 
@@ -1282,9 +1284,18 @@ const handleAdminApiIndexChange = async () => {
   await switchAdminSite()
 }
 
+const getStartupConfigForCurrentSite = () => {
+  if (startupConfigConsumed) return null
+  if (selectedApiIndex.value !== 0) return null
+  if (!appConfig || typeof appConfig !== 'object' || Object.keys(appConfig).length === 0) return null
+  startupConfigConsumed = true
+  return appConfig
+}
+
 const loadLatestAgentVersion = async () => {
   try {
-    const config = await fetchConfig(selectedApiIndex.value)
+    const startupConfig = getStartupConfigForCurrentSite()
+    const config = startupConfig || await fetchConfig(selectedApiIndex.value)
     const configVersion = normalizeVersion(config?.last_agent_version)
     latestAgentVersion.value = configVersion || await fetchLatestAgentReleaseVersion()
   } catch (e) {

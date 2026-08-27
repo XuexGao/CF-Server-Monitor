@@ -20,20 +20,18 @@
             {{ trans.ghProxy }}
             <HelpTooltip :text="trans.ghProxyTip" />
           </label>
+          <select v-model="selectedGhProxy" class="form-select">
+            <option v-for="option in ghProxyOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+            <option :value="CUSTOM_GH_PROXY_VALUE">{{ trans.custom || 'Custom' }}</option>
+          </select>
           <input
+            v-if="showCustomGhProxy"
             type="text"
-            list="ghProxyList"
             :value="installGhProxy"
-            class="form-input"
+            class="form-input mt-2"
             :placeholder="trans.ghProxyPlaceholder"
             @input="$emit('update:install-gh-proxy', $event.target.value)"
           >
-          <datalist id="ghProxyList">
-            <option value="https://ghfast.top/">https://ghfast.top/</option>
-            <option value="https://ghproxy.net/">https://ghproxy.net/</option>
-            <option value="https://gh.llkk.cc/">https://gh.llkk.cc/</option>
-            <option value="https://gh-proxy.com/">https://gh-proxy.com/</option>
-          </datalist>
         </div>
       </div>
 
@@ -115,9 +113,10 @@
 </template>
 
 <script setup>
+import { computed, ref, watch } from 'vue'
 import HelpTooltip from '../../../components/HelpTooltip.vue'
 
-defineProps({
+const props = defineProps({
   trans: { type: Object, required: true },
   show: { type: Boolean, default: false },
   currentServerName: { type: String, default: '' },
@@ -140,13 +139,57 @@ defineProps({
   copiedCmd: { type: Boolean, default: false }
 })
 
-defineEmits([
+const emit = defineEmits([
   'close',
   'copy-cmd',
   'open-edit-from-copy',
   'update:target-os',
   'update:install-gh-proxy'
 ])
+
+const CUSTOM_GH_PROXY_VALUE = '__custom__'
+const ghProxyOptions = [
+  { value: '', label: props.trans.ghProxyPlaceholder || 'Direct' },
+  { value: 'https://ghfast.top/', label: 'https://ghfast.top/' },
+  { value: 'https://ghproxy.net/', label: 'https://ghproxy.net/' },
+  { value: 'https://gh.llkk.cc/', label: 'https://gh.llkk.cc/' },
+  { value: 'https://gh-proxy.com/', label: 'https://gh-proxy.com/' }
+]
+
+const manualCustomGhProxy = ref(false)
+const isKnownGhProxy = (value) => ghProxyOptions.some(option => option.value === String(value || '').trim())
+
+const selectedGhProxy = computed({
+  get: () => {
+    const currentProxy = String(props.installGhProxy || '').trim()
+    if (manualCustomGhProxy.value || (!isKnownGhProxy(currentProxy) && currentProxy)) {
+      return CUSTOM_GH_PROXY_VALUE
+    }
+    return currentProxy
+  },
+  set: (value) => {
+    if (value === CUSTOM_GH_PROXY_VALUE) {
+      manualCustomGhProxy.value = true
+      if (isKnownGhProxy(props.installGhProxy)) {
+        emit('update:install-gh-proxy', '')
+      }
+      return
+    }
+    manualCustomGhProxy.value = false
+    emit('update:install-gh-proxy', value)
+  }
+})
+
+const showCustomGhProxy = computed(() => selectedGhProxy.value === CUSTOM_GH_PROXY_VALUE)
+
+watch(
+  () => props.show,
+  (show) => {
+    if (show && isKnownGhProxy(props.installGhProxy)) {
+      manualCustomGhProxy.value = false
+    }
+  }
+)
 
 const isBlank = (value) => value === '' || value === null || value === undefined
 const formatWithUnit = (value, unit) => (isBlank(value) ? '-' : `${value} ${unit}`)

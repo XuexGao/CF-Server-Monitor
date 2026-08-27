@@ -19,6 +19,7 @@ const DEFAULT_CONNECT_DOMAINS = [
 ];
 
 const CSP_META_TAG_RE_GLOBAL = /<meta\b(?=[^>]*http-equiv=["']Content-Security-Policy["'])[^>]*>\s*/gi;
+const API_BASE_META_TAG_RE = /<meta\b(?=[^>]*\bname=["']apiBase["'])[^>]*>/i;
 
 export function stripCspMeta(html) {
   return html.replace(CSP_META_TAG_RE_GLOBAL, '');
@@ -88,10 +89,14 @@ export function injectTitle(html, title) {
 export function injectApiBase(html, apiBases) {
   if (!apiBases || apiBases.length === 0) return html;
   const content = Array.isArray(apiBases) ? apiBases.join(',') : String(apiBases);
-  return html.replace(
-    /<meta name="apiBase" content="[^"]*">/,
-    `<meta name="apiBase" content="${content.replace(/&/g, '&amp;').replace(/"/g, '&quot;')}">`
-  );
+  const meta = `<meta name="apiBase" content="${content.replace(/&/g, '&amp;').replace(/"/g, '&quot;')}">`;
+  if (API_BASE_META_TAG_RE.test(html)) {
+    return html.replace(API_BASE_META_TAG_RE, meta);
+  }
+  if (/<\/head>/i.test(html)) {
+    return html.replace(/<\/head>/i, `${meta}\n</head>`);
+  }
+  return `${meta}\n${html}`;
 }
 
 function escapeCssUrl(value) {

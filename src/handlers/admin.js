@@ -1,7 +1,7 @@
 import { buildAuthCookie, buildClearAuthCookie, checkAuth, simpleAuthResponse, validateCredentials, generateToken } from '../middleware/auth.js';
 import { getLatestMetricsForAllServers } from '../database/schema.js';
 import { getAllServers, clearServersListCache } from '../utils/cache.js';
-import { clearAppearanceSettingsCache, isWssReportConfigured, isWssReportEnabled, normalizeBooleanSetting, normalizeDisplayMode, normalizeExpireNotificationTime, normalizeExpireReminder, normalizeFrontendWsTimeoutMinutes, normalizeLongHistoryPoints, normalizeNotificationTemplate, normalizeNotificationTimezone, normalizeNotificationWebhookBody, normalizeNotificationWebhookFormat, normalizeNotificationWebhookHeaders, normalizeNotificationWebhookMethod, normalizeResourceAlertRules, normalizeTgNotify, normalizeWssReportHours, saveSiteOptions, SITE_FIELDS, APPEARANCE_FIELDS } from '../utils/settings.js';
+import { clearAppearanceSettingsCache, isValidThemeOptions, isWssReportConfigured, isWssReportEnabled, normalizeBooleanSetting, normalizeDisplayMode, normalizeExpireNotificationTime, normalizeExpireReminder, normalizeFrontendWsTimeoutMinutes, normalizeLongHistoryPoints, normalizeNotificationTemplate, normalizeNotificationTimezone, normalizeNotificationWebhookBody, normalizeNotificationWebhookFormat, normalizeNotificationWebhookHeaders, normalizeNotificationWebhookMethod, normalizeResourceAlertRules, normalizeTgNotify, normalizeWssReportHours, saveSiteOptions, saveThemeOptions, SITE_FIELDS, APPEARANCE_FIELDS } from '../utils/settings.js';
 import { mergeMetricsIntoServer } from '../utils/metrics.js';
 import { verifyTurnstileToken, hashPassword } from '../utils/common.js';
 import { AppError, createSuccessResponse, createBadRequestResponse, createUnauthorizedResponse, createErrorResponse } from '../utils/errors.js';
@@ -569,6 +569,24 @@ async function handleStartThemePreviewAction({ request, data }) {
   });
 }
 
+async function handleSaveThemeOptionsAction({ env, sys, data }) {
+  const themeOptions = data.theme_options ?? data.settings?.theme_options;
+  if (!isValidThemeOptions(themeOptions)) {
+    return createBadRequestResponse('invalidThemeOptionsFormat');
+  }
+
+  await saveThemeOptions(env.DB, themeOptions);
+  if (sys) {
+    sys.theme_options = themeOptions;
+  }
+
+  return createSuccessResponse({
+    success: true,
+    theme_options: themeOptions,
+    message: 'updateSuccess'
+  });
+}
+
 async function handleListAction({ env }) {
   const servers = await getAllServers(env.DB);
   const latestMetricsMap = await getLatestMetricsForAllServers(env.DB);
@@ -707,6 +725,7 @@ async function handleSendTestNotificationAction({ data }) {
 const AUTHENTICATED_ADMIN_ACTION_HANDLERS = {
   get_settings: handleGetSettingsAction,
   start_theme_preview: handleStartThemePreviewAction,
+  save_theme_options: handleSaveThemeOptionsAction,
   list: handleListAction,
   d1_usage: handleD1UsageAction,
   send_test_notification: handleSendTestNotificationAction
@@ -809,7 +828,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
             } else if (field === 'display_mode') {
               appearanceOptions[field] = normalizeDisplayMode(value);
             } else if (field === 'theme_options') {
-              if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+              if (!isValidThemeOptions(value)) {
                 return createBadRequestResponse('invalidThemeOptionsFormat');
               }
               appearanceOptions[field] = value;

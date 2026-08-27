@@ -20,6 +20,7 @@
 - [1. 鉴权与 Turnstile 流程](#1-鉴权与-turnstile-流程)
 - **[2. 公开 API](#2-公开-api)**
   - **[2.1 获取站点配置](#21-获取站点配置)**
+  - **[2.1.1 保存第三方主题配置](#211-保存第三方主题配置)**
   - **[2.2 获取服务器列表](#22-获取服务器列表)**
   - [2.3 获取服务器详情](#23-获取服务器详情)
   - [2.4 获取历史指标](#24-获取历史指标)
@@ -127,7 +128,7 @@ my-theme/
 
 | 机制         | 使用位置            | 方式                                           |
 | ---------- | --------------- | -------------------------------------------- |
-| JWT Bearer | 非公开站点读取公开 API、查看 1 小时以上历史 | `Authorization: Bearer <token>`              |
+| JWT Bearer | 非公开站点读取公开 API、查看 1 小时以上历史、保存第三方主题配置 | `Authorization: Bearer <token>`              |
 | WebSocket JWT | 非公开站点连接 `/api/ws` | `Authorization: Bearer <token>`、`Cookie: cfsm_auth=<token>` 或查询参数 `token` / `auth_token` / `ws_token` |
 | Turnstile  | 公开 API（当启用时）    | `X-Turnstile-Token` 或 `X-Turnstile-Verified` |
 
@@ -163,6 +164,7 @@ my-theme/
 
 > 若站点非公开（`is_public !== 'true'`），所有接口需携带 JWT。
 > 启用 Turnstile 时需携带 `X-Turnstile-Token` 或 `X-Turnstile-Verified`。
+> `POST /api/theme_options` 是写接口，无论站点是否公开都需要 JWT。
 
 ### 2.1 获取站点配置
 
@@ -218,13 +220,73 @@ Headers: (可选) Authorization: Bearer <jwt>, X-Turnstile-Token / X-Turnstile-V
 | `long_history_points` | number      | 长历史查询返回的采样点数，可选 `60`、`120`、`180`、`240` |
 | `latency_window` | object | `/api/servers` 的 `servers[].ping` / `servers[].loss` 窗口参数，`points` 为最多真实点数，`hours` 为回看小时数 |
 
-`theme_options` 对第三方主题是只读运行时配置。需要修改主题配置时，跳转到内置后台 `/admin#admin`，不要在第三方主题内调用管理端接口。
+`theme_options` 是第三方主题的运行时配置。读取时使用 `/api/config`，保存主题自身配置时使用 `POST /api/theme_options`；不要在第三方主题内调用 `save_settings` 或其他管理端接口。
 
 **示例**：
 
 ```js
 const res = await fetch('/api/config');
 const config = await res.json();
+```
+
+***
+
+### 2.1.1 保存第三方主题配置
+
+第三方主题如需要保存自身配置，使用独立接口 `POST /api/theme_options`。该接口只更新 `appearance_options.theme_options`，不会修改 `site_options`，也不会覆盖 `appearance_options` 中的站点标题、背景图、CSP、自定义脚本等其他外观设置。
+
+**Request**
+
+```
+POST /api/theme_options
+Headers: Authorization: Bearer <jwt>, Content-Type: application/json, X-Turnstile-Token / X-Turnstile-Verified
+```
+
+启用全局 Turnstile 时需要携带 `X-Turnstile-Token` 或 `X-Turnstile-Verified`；未启用时只需要 JWT。`theme_options` 必须是非数组对象，传数组、字符串或 `null` 会返回 `400 invalidThemeOptionsFormat`。
+
+```json
+{
+  "theme_options": {
+    "layout": "compact",
+    "accent": "green"
+  }
+}
+```
+
+**Response**
+
+```json
+{
+  "success": true,
+  "theme_options": {
+    "layout": "compact",
+    "accent": "green"
+  },
+  "message": "updateSuccess"
+}
+```
+
+**示例**：
+
+```js
+async function saveThemeOptions(themeOptions, token, turnstileVerified) {
+  const headers = {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${token}`
+  };
+  if (turnstileVerified) {
+    headers['X-Turnstile-Verified'] = turnstileVerified;
+  }
+
+  const res = await fetch('/api/theme_options', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ theme_options: themeOptions })
+  });
+  const result = await res.json();
+  if (!res.ok) throw new Error(result.error || 'saveThemeOptionsFailed');
+  return result.theme_options;
+}
 ```
 
 ***
@@ -623,6 +685,10 @@ ws.onmessage = (ev) => {
 | 500  | 服务器内部错误        | 联系管理员                |
 | 503  | WebSocket 不可用  | 降级为轮询                |
 
+常见 `400` 错误字符串：
+
+- `invalidThemeOptionsFormat`：`theme_options` 不是非数组对象
+
 ***
 
 ## 5. 类型定义
@@ -740,6 +806,12 @@ interface SiteConfig {
   turnstile_verified: string | null;
   frontend_ws_timeout_minutes: number;
   long_history_points: number;
+}
+
+interface ThemeOptionsSaveResponse {
+  success: true;
+  theme_options: Record<string, unknown>;
+  message: 'updateSuccess';
 }
 
 interface WsMessage {

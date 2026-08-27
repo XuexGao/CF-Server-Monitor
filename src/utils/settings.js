@@ -687,6 +687,32 @@ export function clearAppearanceSettingsCache() {
   appearanceOptionsCacheExpiry = 0;
 }
 
+export function isValidThemeOptions(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+export async function saveThemeOptions(db, themeOptions) {
+  await db.prepare(
+    `INSERT INTO settings (key, value)
+     VALUES ('appearance_options', json_object('theme_options', json(?)))
+     ON CONFLICT(key) DO UPDATE SET value = CASE
+       WHEN json_valid(value) THEN CASE
+         WHEN json_type(value) = 'object' THEN json_set(value, '$.theme_options', json(?))
+         ELSE json_object('theme_options', json(?))
+       END
+       ELSE json_object('theme_options', json(?))
+     END`
+  ).bind(
+    JSON.stringify(themeOptions),
+    JSON.stringify(themeOptions),
+    JSON.stringify(themeOptions),
+    JSON.stringify(themeOptions)
+  ).run();
+
+  clearAppearanceSettingsCache();
+  return themeOptions;
+}
+
 export async function loadSettings(db) {
   const [siteSettings, appearanceOptions] = await Promise.all([
     loadSiteSettings(db),

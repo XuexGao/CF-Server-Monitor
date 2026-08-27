@@ -30,6 +30,7 @@
   - [1.1](#11-post-update---指标上报agent-入口) [`POST /update`](#11-post-update---指标上报agent-入口) [- 指标上报（Agent 入口）](#11-post-update---指标上报agent-入口)
 - [2. 公开 API（前端/管理端共用）](#2-公开-api前端管理端共用)
   - [2.1](#21-get-apiconfig---获取站点配置) [`GET /api/config`](#21-get-apiconfig---获取站点配置) [- 获取站点配置](#21-get-apiconfig---获取站点配置)
+  - [2.1.1](#211-post-apitheme_options---保存第三方主题配置) [`POST /api/theme_options`](#211-post-apitheme_options---保存第三方主题配置) [- 保存第三方主题配置](#211-post-apitheme_options---保存第三方主题配置)
   - [2.2](#22-get-apiservers---获取服务器列表首页) [`GET /api/servers`](#22-get-apiservers---获取服务器列表首页) [- 获取服务器列表（首页）](#22-get-apiservers---获取服务器列表首页)
   - [2.3](#23-get-apiserver---获取单台服务器详情) [`GET /api/server`](#23-get-apiserver---获取单台服务器详情) [- 获取单台服务器详情](#23-get-apiserver---获取单台服务器详情)
   - [2.4](#24-get-apihistoryall---获取历史指标) [`GET /api/history/all`](#24-get-apihistoryall---获取历史指标) [- 获取历史指标](#24-get-apihistoryall---获取历史指标)
@@ -45,6 +46,7 @@
   - [3.6](#36-action-save_settings---保存设置) [`action: save_settings`](#36-action-save_settings---保存设置) [- 保存设置](#36-action-save_settings---保存设置)
   - [3.6.1](#361-action-start_theme_preview---生成主题预览授权) [`action: start_theme_preview`](#361-action-start_theme_preview---生成主题预览授权) [- 生成主题预览授权](#361-action-start_theme_preview---生成主题预览授权)
   - [3.6.2](#362-action-clear_theme_preview_auth---清除主题预览授权) [`action: clear_theme_preview_auth`](#362-action-clear_theme_preview_auth---清除主题预览授权) [- 清除主题预览授权](#362-action-clear_theme_preview_auth---清除主题预览授权)
+  - [3.6.3](#363-action-save_theme_options---保存第三方主题配置) [`action: save_theme_options`](#363-action-save_theme_options---保存第三方主题配置) [- 保存第三方主题配置](#363-action-save_theme_options---保存第三方主题配置)
   - [3.7](#37-action-add---新增服务器) [`action: add`](#37-action-add---新增服务器) [- 新增服务器](#37-action-add---新增服务器)
   - [3.8](#38-action-edit---修改服务器信息) [`action: edit`](#38-action-edit---修改服务器信息) [- 修改服务器信息](#38-action-edit---修改服务器信息)
   - [3.9](#39-action-delete---删除服务器) [`action: delete`](#39-action-delete---删除服务器) [- 删除服务器](#39-action-delete---删除服务器)
@@ -96,7 +98,7 @@
 
 #### C. JWT Bearer（管理操作 → 后续管理请求）
 
-- **使用位置**：所有非 `login` 的 `POST /admin/api`、`POST /updateDatabase`、`POST /clearHistory`
+- **使用位置**：所有非 `login` 的 `POST /admin/api`、`POST /api/theme_options`、`POST /updateDatabase`、`POST /clearHistory`
 - **方式**：`Authorization: Bearer <token>` Header
 - **Token 签发**：`HS256` JWT，默认有效期 **604800 秒（7 天）**
 - **签名密钥**（优先级）：
@@ -540,6 +542,49 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
 | `latency_window` | object      | `/api/servers` 的 `servers[].ping` / `servers[].loss` 窗口参数；`points` 为最多真实点数，`hours` 为回看小时数 |
 
 > ~~`X-Turnstile-Token` 携带且验证成功时，响应头会同步设置 `X-Turnstile-Verified`。~~ **2026-07-26 修订**：当前前端从响应体的 `turnstile_verified` 保存凭证；响应 Header 尚未实际写入。
+
+***
+
+### 2.1.1 `POST /api/theme_options` - 保存第三方主题配置
+
+**Request**
+
+- Method：`POST`
+- Path：`/api/theme_options`
+- Headers：
+  ```
+  Content-Type: application/json
+  Authorization: Bearer <jwt>
+  X-Turnstile-Token: <token> 或 X-Turnstile-Verified: <encrypted>   # 仅全局 Turnstile 开启时需要
+  ```
+
+```json
+{
+  "theme_options": {
+    "layout": "compact",
+    "accent": "green"
+  }
+}
+```
+
+**行为**：
+
+- `theme_options` 必须是非数组对象；传数组、字符串、`null` 会返回 `400 invalidThemeOptionsFormat`。
+- 只更新 `settings` 表中 `appearance_options.theme_options`，保留 `appearance_options` 内其他字段，不写入或重写 `site_options`。
+- 读取端仍使用 `/api/config` 返回的 `theme_options`。
+
+**Response 200**
+
+```json
+{
+  "success": true,
+  "theme_options": {
+    "layout": "compact",
+    "accent": "green"
+  },
+  "message": "updateSuccess"
+}
+```
 
 ***
 
@@ -1045,7 +1090,7 @@ https://github.com/<owner>/<theme-repo>/tree/<commit-or-branch>[/theme-subdir]
   ```
 - Body（JSON）：
   ```json
-  { "action": "<one of: login|clear_theme_preview_auth|get_settings|start_theme_preview|list|d1_usage|send_test_notification|save_settings|add|delete|save_order|edit|batch_delete|export_servers|import_servers>", ...payload }
+  { "action": "<one of: login|clear_theme_preview_auth|get_settings|start_theme_preview|list|d1_usage|send_test_notification|save_settings|save_theme_options|add|delete|save_order|edit|batch_delete|export_servers|import_servers>", ...payload }
   ```
 
 **Turnstile**：
@@ -1295,6 +1340,7 @@ Header：`X-Turnstile-Token: <token>`（当 `site_options.turnstile_enabled` 或
 - `frontend_ws_timeout_minutes`：规范为 `0`-`1440` 的整数分钟；缺失或非法值回退为 `0`，即前端连接不超时
 - `csp_static` / `csp_api`：逗号分隔，只保留不带凭据、路径、查询或 fragment 的 HTTPS origin，非法项会被静默过滤
 - 外观设置不是字段级合并：请求中只要出现任一外观字段或 `appearance_options`，后端就会用本次提供的外观字段重写整个 `appearance_options` JSON；部分更新时应先读取并回传完整外观对象
+- 第三方主题如只需更新 `theme_options`，应使用 `POST /api/theme_options` 或 `action: save_theme_options`；这些接口不会影响其他 settings
 - `jwt_secret` 不在保存阶段校验长度；只有长度至少 32 的值会用于签名，空值或短值在下一次加载设置时会被新生成并持久化的随机密钥替换
 
 **Response 200**
@@ -1352,6 +1398,57 @@ Header：`X-Turnstile-Token: <token>`（当 `site_options.turnstile_enabled` 或
 
 ```json
 { "success": true }
+```
+
+***
+
+### 3.6.3 `action: save_theme_options` - 保存第三方主题配置
+
+**Request**
+
+```json
+{
+  "action": "save_theme_options",
+  "theme_options": {
+    "layout": "compact",
+    "accent": "green"
+  }
+}
+```
+
+也兼容以下格式：
+
+```json
+{
+  "action": "save_theme_options",
+  "settings": {
+    "theme_options": {
+      "layout": "compact",
+      "accent": "green"
+    }
+  }
+}
+```
+
+**行为**：
+
+- 需要携带有效 `Authorization: Bearer <jwt>`。
+- `theme_options` 必须是非数组对象；传数组、字符串、`null` 会返回 `400 invalidThemeOptionsFormat`。
+- 只更新 `settings` 表中 `appearance_options.theme_options`，保留 `appearance_options` 内其他字段，不写入或重写 `site_options`。
+- 推荐第三方主题直接调用 `POST /api/theme_options`；该 action 用于兼容 `/admin/api` action 路由体系。
+- 读取端仍使用 `/api/config` 返回的 `theme_options`。
+
+**Response 200**
+
+```json
+{
+  "success": true,
+  "theme_options": {
+    "layout": "compact",
+    "accent": "green"
+  },
+  "message": "updateSuccess"
+}
 ```
 
 ***
@@ -1962,6 +2059,15 @@ curl -X POST https://status.example.com/admin/api \
       "turnstile_secret_key":"1x0000000000000000000000000000000AA"
     }
   }'
+```
+
+### 8.11.1 管理：保存第三方主题配置
+
+```bash
+curl -X POST https://status.example.com/api/theme_options \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"theme_options":{"layout":"compact","accent":"green"}}'
 ```
 
 ### 8.12 管理：D1 用量

@@ -10,7 +10,7 @@
   <a href="README-en.md">English</a>
 </p>
 
-[![Workers](https://img.shields.io/badge/Workers-2.8.4%20Beta9-f38020?style=flat-square&logo=cloudflare&logoColor=white)](version.json)
+[![Workers](https://img.shields.io/badge/Workers-2.8.4%20Beta10-f38020?style=flat-square&logo=cloudflare&logoColor=white)](version.json)
 [![GitHub Stars](https://img.shields.io/github/stars/huilang-me/CF-Server-Monitor?style=flat-square&logo=github)](https://github.com/huilang-me/CF-Server-Monitor/stargazers)
 [![GitHub Forks](https://img.shields.io/github/forks/huilang-me/CF-Server-Monitor?style=flat-square&logo=github)](https://github.com/huilang-me/CF-Server-Monitor/forks)
 [![License](https://img.shields.io/badge/License-MIT-16a34a?style=flat-square)](#许可证)
@@ -230,6 +230,7 @@ loginctl enable-linger 用户名
 | 变量                     | 必填 | 说明                       |
 | ---------------------- | -- | ------------------------ |
 | `API_SECRET`           | 是  | Agent 上报密钥；也是首次登录后台的默认密码 |
+| `API_BASE`             | 否  | 前端请求的 Worker API 地址，多个用英文逗号分隔；用于多 Worker 聚合或前后端分离 |
 | `CORS_ALLOWED_ORIGINS` | 否  | 允许跨域访问 API 的来源，多个用英文逗号分隔 |
 
 ### GitHub Pages 静态前台
