@@ -10,7 +10,7 @@
   <a href="README-en.md">English</a>
 </p>
 
-[![Workers](https://img.shields.io/badge/Workers-2.8.4%20Beta10-f38020?style=flat-square&logo=cloudflare&logoColor=white)](version.json)
+[![Workers](https://img.shields.io/badge/Workers-2.8.5%20Beta1-f38020?style=flat-square&logo=cloudflare&logoColor=white)](version.json)
 [![GitHub Stars](https://img.shields.io/github/stars/huilang-me/CF-Server-Monitor?style=flat-square&logo=github)](https://github.com/huilang-me/CF-Server-Monitor/stargazers)
 [![GitHub Forks](https://img.shields.io/github/forks/huilang-me/CF-Server-Monitor?style=flat-square&logo=github)](https://github.com/huilang-me/CF-Server-Monitor/forks)
 [![License](https://img.shields.io/badge/License-MIT-16a34a?style=flat-square)](#许可证)
@@ -255,7 +255,7 @@ npm run build:github-page
 
 | 分类            | 主要内容                                  |
 | ------------- | ------------------------------------- |
-| 站点设置          | 标题、背景、favicon、默认展示模式、三网详情、公开访问策略       |
+| 站点设置          | 标题、背景、favicon、默认展示模式、默认外观、默认语言、三网详情、公开访问策略 |
 | 服务器参数         | HTTP/WSS 上报间隔、采集间隔、Ping 节点、网卡、月流量、价格、到期时间、自动续费 |
 | 安全设置          | 管理员账号密码、JWT Secret、Turnstile          |
 | 通知设置          | 离线告警、到期提醒、资源负载告警、测试通知                 |

@@ -56,6 +56,22 @@ test('single-table sparse query uses bounded primary-key seeks', () => {
   ]);
 });
 
+test('sparse query can select the latest row inside each range', () => {
+  const query = buildSparseHistoryQuery({
+    columns: 'ping_ct',
+    queryStart: 1_000,
+    firstRangeEnd: 2_000,
+    queryEnd: 10_000,
+    intervalMs: 1_000,
+    idPrefix: 50_000_000_000_000,
+    oldTableExists: false,
+    tableBoundary: 0,
+    sampleOrder: 'DESC'
+  });
+
+  assert.match(query.sql, /ORDER BY id DESC\s+LIMIT 1/);
+});
+
 test('cross-week sparse query falls back from the old table to the current table', () => {
   const query = buildSparseHistoryQuery({
     columns: 'cpu, loss_ct',

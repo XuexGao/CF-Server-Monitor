@@ -788,6 +788,16 @@ const isNotificationWebhookEnabled = () => settings.value.notification_webhook_e
 
 const isPlainObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value)
 
+const normalizePreferredThemeSetting = (value) => {
+  const theme = String(value || '').trim().toLowerCase()
+  return ['dark', 'light', 'auto'].includes(theme) ? theme : 'auto'
+}
+
+const normalizeDefaultLanguageSetting = (value) => {
+  const language = String(value || '').trim().toLowerCase()
+  return ['zh', 'en', 'auto'].includes(language) ? language : 'auto'
+}
+
 const formatThemeOptions = (value) => {
   const normalized = value === undefined || value === null ? {} : value
   try {
@@ -891,13 +901,15 @@ const settings = ref({
   custom_head: '',
   custom_script: '',
   display_mode: 'bar',
+  preferred_theme: 'auto',
+  default_language: 'auto',
   theme_options: '{}',
   is_public: false,
   show_price: true,
   show_expire: true,
   show_tf: true,
-  show_three_net_details: false,
-  wss_report_enabled: false,
+  show_three_net_details: true,
+  wss_report_enabled: true,
   wss_report_hours: Array.from({ length: 24 }, (_, hour) => hour),
   frontend_ws_timeout_minutes: 0,
   long_history_points: String(HISTORY.DEFAULT_LONG_RANGE_POINTS),
@@ -1318,6 +1330,8 @@ const loadSettings = async () => {
         custom_head: settingsData.custom_head || '',
         custom_script: settingsData.custom_script || '',
         display_mode: resolveDisplayMode(settingsData),
+        preferred_theme: normalizePreferredThemeSetting(settingsData.preferred_theme),
+        default_language: normalizeDefaultLanguageSetting(settingsData.default_language),
         theme_options: formatThemeOptions(settingsData.theme_options),
         is_public: settingsData.is_public === 'true',
         show_price: settingsData.show_price === 'true',
@@ -1488,6 +1502,8 @@ const saveSettings = async () => {
       custom_head: settings.value.custom_head,
       custom_script: settings.value.custom_script,
       display_mode: normalizeDisplayMode(settings.value.display_mode),
+      preferred_theme: normalizePreferredThemeSetting(settings.value.preferred_theme),
+      default_language: normalizeDefaultLanguageSetting(settings.value.default_language),
       appearance_options: {
         theme_options: themeOptionsResult.value
       },

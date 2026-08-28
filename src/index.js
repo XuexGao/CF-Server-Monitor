@@ -309,6 +309,8 @@ export default {
           turnstile_site_key: sys.turnstile_site_key || '',
           site_title: appearanceOptions.site_title || '',
           display_mode: appearanceOptions.display_mode || 'bar',
+          preferred_theme: appearanceOptions.preferred_theme || 'auto',
+          default_language: appearanceOptions.default_language || 'auto',
           theme_options: appearanceOptions.theme_options || {},
           verified: verified,
           turnstile_verified: turnstileVerified,

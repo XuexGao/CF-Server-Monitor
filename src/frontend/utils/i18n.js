@@ -3,10 +3,13 @@ import { ref, reactive, computed } from 'vue'
 const translations = reactive({
   en: {
     theme: 'Theme',
-    themeAuto: 'Auto',
+    themeAuto: 'Follow System',
     themeDark: 'Dark',
     themeLight: 'Light',
     language: 'Lang',
+    languageAuto: 'Auto',
+    languageChinese: 'Chinese',
+    languageEnglish: 'English',
     barChart: 'BAR CHART',
     ringChart: 'RING CHART',
     table: 'TABLE',
@@ -165,6 +168,8 @@ const translations = reactive({
     displayModeBar: 'Bar Chart',
     displayModeRing: 'Ring Chart',
     displayModeTable: 'Table',
+    defaultTheme: 'Default Appearance',
+    defaultLanguage: 'Default Language',
     displayOptions: 'Display Options',
     wssReportEnabled: 'Agent WSS Reporting',
     wssReportTip: 'Enabling WSS reduces Workers requests and increases real-time performance, but enabling it 24 hours a day can use 85% of Durable Objects duration regardless of server count. Recommended to enable when no other projects are using Durable Objects.',
@@ -479,10 +484,13 @@ const translations = reactive({
   zh: {
     collectInterval: '采集间隔（秒）',
     theme: '主题',
-    themeAuto: '自动',
+    themeAuto: '跟随系统',
     themeDark: '深色',
     themeLight: '浅色',
     language: '语言',
+    languageAuto: '自动',
+    languageChinese: '中文',
+    languageEnglish: '英文',
     barChart: '条形图',
     ringChart: '环形图',
     table: '列表',
@@ -641,6 +649,8 @@ const translations = reactive({
     displayModeBar: '条形图',
     displayModeRing: '环形图',
     displayModeTable: '列表',
+    defaultTheme: '默认外观',
+    defaultLanguage: '默认语言',
     displayOptions: '显示选项',
     wssReportEnabled: 'Agent WSS 上报',
     wssReportTip: '开启 WSS 可减少 Workers 请求量，增加实时性；24 小时开启会占用 85% Durable Objects 时长消耗（和服务器数量无关），无其他项目占用的情况下，建议开启。',
@@ -952,21 +962,66 @@ const translations = reactive({
   }
 })
 
-const currentLang = ref(localStorage.getItem('language_preference') || 'zh')
+const LANGUAGE_STORAGE_KEY = 'language_preference'
+let defaultLanguage = 'auto'
+
+export const normalizeLanguagePreference = (lang, fallback = 'auto') => {
+  const value = String(lang || '').trim().toLowerCase()
+  if (value === 'zh' || value === 'en' || value === 'auto') return value
+  return fallback === 'zh' || fallback === 'en' ? fallback : 'auto'
+}
+
+export const isChineseBrowserLanguage = (lang) => {
+  const value = String(lang || '').trim().toLowerCase().replace('_', '-')
+  return value === 'zh' ||
+    value.startsWith('zh-') ||
+    value === 'cmn' ||
+    value.startsWith('cmn-') ||
+    value === 'yue' ||
+    value.startsWith('yue-') ||
+    value === 'wuu' ||
+    value.startsWith('wuu-')
+}
+
+export const getBrowserLanguage = () => {
+  if (typeof navigator === 'undefined') return 'en'
+  const languages = Array.isArray(navigator.languages) && navigator.languages.length > 0
+    ? navigator.languages
+    : [navigator.language]
+  return languages.some(isChineseBrowserLanguage) ? 'zh' : 'en'
+}
+
+export const resolveLanguagePreference = (lang) => {
+  const value = normalizeLanguagePreference(lang)
+  return value === 'auto' ? getBrowserLanguage() : value
+}
+
+const currentLang = ref(resolveLanguagePreference(localStorage.getItem(LANGUAGE_STORAGE_KEY) || defaultLanguage))
 
 export const t = (key) => {
   return translations[currentLang.value]?.[key] || translations.en[key] || key
 }
 
 export const setLanguage = (lang) => {
-  if (translations[lang]) {
-    currentLang.value = lang
-    localStorage.setItem('language_preference', lang)
-    window.dispatchEvent(new CustomEvent('languageChanged', { detail: { lang } }))
+  const resolvedLang = normalizeLanguagePreference(lang, '')
+  if (translations[resolvedLang]) {
+    currentLang.value = resolvedLang
+    localStorage.setItem(LANGUAGE_STORAGE_KEY, resolvedLang)
+    window.dispatchEvent(new CustomEvent('languageChanged', { detail: { lang: resolvedLang } }))
   }
 }
 
 export const getLanguage = () => currentLang.value
+
+export const applyDefaultLanguage = (lang) => {
+  defaultLanguage = normalizeLanguagePreference(lang)
+  const storedLanguage = normalizeLanguagePreference(localStorage.getItem(LANGUAGE_STORAGE_KEY), '')
+  const resolvedLang = translations[storedLanguage]
+    ? storedLanguage
+    : resolveLanguagePreference(defaultLanguage)
+  currentLang.value = resolvedLang
+  window.dispatchEvent(new CustomEvent('languageChanged', { detail: { lang: resolvedLang } }))
+}
 
 export const toggleLanguage = () => {
   const newLang = currentLang.value === 'en' ? 'zh' : 'en'
@@ -981,4 +1036,4 @@ export const useTranslation = () => {
   return trans
 }
 
-export default { t, setLanguage, getLanguage, toggleLanguage, currentLang, translations, useTranslation }
+export default { t, setLanguage, getLanguage, applyDefaultLanguage, toggleLanguage, currentLang, translations, useTranslation }

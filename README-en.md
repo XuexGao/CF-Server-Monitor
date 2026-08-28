@@ -10,7 +10,7 @@ A lightweight multi-server monitoring dashboard built on Cloudflare Workers, D1,
   <a href="README-en.md">English</a>
 </p>
 
-[![Workers](https://img.shields.io/badge/Workers-2.8.4%20Beta10-f38020?style=flat-square&logo=cloudflare&logoColor=white)](version.json)
+[![Workers](https://img.shields.io/badge/Workers-2.8.5%20Beta1-f38020?style=flat-square&logo=cloudflare&logoColor=white)](version.json)
 [![GitHub Stars](https://img.shields.io/github/stars/huilang-me/CF-Server-Monitor?style=flat-square&logo=github)](https://github.com/huilang-me/CF-Server-Monitor/stargazers)
 [![GitHub Forks](https://img.shields.io/github/forks/huilang-me/CF-Server-Monitor?style=flat-square&logo=github)](https://github.com/huilang-me/CF-Server-Monitor/forks)
 [![License](https://img.shields.io/badge/License-MIT-16a34a?style=flat-square)](#license)
@@ -257,7 +257,7 @@ npm run build:github-page
 
 | Category | Main options |
 | --- | --- |
-| Site | Title, background, favicon, default display mode, three-net details, public access |
+| Site | Title, background, favicon, default display mode, default appearance, default language, three-net details, public access |
 | Server | HTTP/WSS report intervals, collect interval, ping nodes, network interfaces, monthly traffic, price, expiration, auto-renew |
 | Security | Admin account, password, JWT Secret, Turnstile |
 | Notifications | Offline alerts, expiration reminders, resource alerts, test notification |

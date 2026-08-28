@@ -86,6 +86,56 @@ test('dashboard latency window config exposes the public contract', () => {
   assert.equal(DASHBOARD_LATENCY_WINDOW_HOURS, 2);
 });
 
+test('dashboard latency history preserves empty buckets inside the window', async () => {
+  const miniflare = createMiniflare();
+
+  try {
+    const db = await miniflare.getD1Database('DB');
+    await createHistoryTable(db);
+
+    const partitionId = 3;
+    const now = Date.UTC(2026, 6, 29, 4, 0, 0);
+    const queryStart = now - DASHBOARD_LATENCY_WINDOW_HOURS * 60 * 60 * 1000;
+    const queryEnd = Math.floor(now / 1000) * 1000 + 1000;
+    const intervalMs = Math.max(10_000, Math.ceil((queryEnd - queryStart) / DASHBOARD_LATENCY_WINDOW_POINTS));
+    const slotTimestamp = index => queryStart + index * intervalMs + 1000;
+
+    await db.prepare(`
+      INSERT INTO metrics_history (
+        id, timestamp,
+        ping_ct, ping_cu, ping_cm, ping_bd,
+        loss_ct, loss_cu, loss_cm, loss_bd
+      )
+      VALUES
+        ${latencyRow(partitionId, slotTimestamp(0), 20)},
+        ${latencyRow(partitionId, slotTimestamp(5), 50)},
+        ${latencyRow(partitionId, slotTimestamp(19), 90)}
+    `).run();
+
+    const history = await getDashboardLatencyHistory(db, [{
+      id: 'server-gap',
+      history_partition_id: partitionId,
+      timestamp: queryStart
+    }], {
+      now,
+      cache: false
+    });
+
+    const window = history.get('server-gap');
+    assert.equal(window.ping.length, DASHBOARD_LATENCY_WINDOW_POINTS);
+    assert.equal(window.loss.length, DASHBOARD_LATENCY_WINDOW_POINTS);
+    assert.equal(window.ping[0].ct, 20);
+    assert.equal(window.ping[1].ct, undefined);
+    assert.equal(window.ping[5].ct, 50);
+    assert.equal(window.ping[6].ct, undefined);
+    assert.equal(window.ping[19].ct, 90);
+    assert.equal(window.loss[1].ct, undefined);
+    assert.equal(window.ping[5].ts, queryStart + 5 * intervalMs);
+  } finally {
+    await miniflare.dispose();
+  }
+});
+
 test('dashboard latency history cache is reused for five minutes per server', async () => {
   const miniflare = createMiniflare();
 

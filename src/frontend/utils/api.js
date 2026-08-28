@@ -1,6 +1,6 @@
 import { http, isAdminLoggedIn } from './http'
 import { getApiBases, getWsBase, hasMultipleApiBases, getTitle } from './config'
-import { DEFAULT_SITE_TITLE, FRONTEND_WS_TIMEOUT_MINUTES_MAX } from './constants'
+import { DEFAULT_SITE_TITLE, FRONTEND_WS_TIMEOUT_MINUTES_MAX, LATENCY_WINDOW } from './constants'
 import { ref } from 'vue'
 import { normalizeTimestamp } from './time.js'
 import { TIME } from './constants'
@@ -316,9 +316,13 @@ const createEmptyMergedData = () => ({
     show_price: true,
     show_expire: true,
     show_tf: true,
-    show_three_net_details: false,
+    show_three_net_details: true,
     display_mode: 'bar',
-    site_title: DEFAULT_SITE_TITLE
+    site_title: DEFAULT_SITE_TITLE,
+    latency_window: {
+      points: LATENCY_WINDOW.POINTS,
+      hours: LATENCY_WINDOW.HOURS
+    }
   }
 })
 
@@ -362,7 +366,8 @@ const mergeSiteResult = (mergedData, { data, error, baseUrl }, multiSite, localT
       show_tf: data.sysConfig.show_tf ?? mergedData.sysConfig.show_tf,
       show_three_net_details: data.sysConfig.show_three_net_details ?? mergedData.sysConfig.show_three_net_details,
       display_mode: resolveDisplayMode(data.sysConfig, mergedData.sysConfig.display_mode),
-      site_title: multiSite ? localTitle : mergedData.sysConfig.site_title
+      site_title: multiSite ? localTitle : mergedData.sysConfig.site_title,
+      latency_window: data.sysConfig.latency_window ?? mergedData.sysConfig.latency_window
     }
   }
 }

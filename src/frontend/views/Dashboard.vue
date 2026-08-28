@@ -376,7 +376,7 @@ import { fetchConfig, fetchServersAll, fetchServersAllWithProgress, formatBytes,
 import { calcTrafficUsagePercent, getUsageColor } from '../composables/useServerCardData'
 import { getTitle, hasMultipleApiBases, getPublicAssetUrl } from '../utils/config'
 import { currentLang, useTranslation } from '../utils/i18n.js'
-import { TIME, DEFAULT_SITE_TITLE, STORAGE } from '../utils/constants'
+import { TIME, DEFAULT_SITE_TITLE, STORAGE, LATENCY_WINDOW } from '../utils/constants'
 import { normalizeTimestamp as normalizeMetricTimestamp } from '../utils/time.js'
 import { normalizeDashboardView, normalizeDisplayMode, resolveDisplayMode } from '../utils/displayMode.js'
 import { getPlaybackElapsedMs, resolvePlaybackCursor } from '../utils/playback.js'
@@ -402,11 +402,15 @@ const sysConfig = ref({
   show_price: true,
   show_expire: true,
   show_tf: true,
-  show_three_net_details: false,
+  show_three_net_details: true,
   frontend_ws_timeout_minutes: normalizeLiveSocketTimeoutMinutes(appConfig?.frontend_ws_timeout_minutes),
   display_mode: 'bar',
   site_title: DEFAULT_SITE_TITLE,
-  theme_options: normalizeThemeOptions(appConfig?.theme_options)
+  theme_options: normalizeThemeOptions(appConfig?.theme_options),
+  latency_window: appConfig?.latency_window || {
+    points: LATENCY_WINDOW.POINTS,
+    hours: LATENCY_WINDOW.HOURS
+  }
 })
 const regionStats = ref({})
 const currentView = ref('bar')
@@ -961,7 +965,8 @@ const loadDashboardConfig = async () => {
       site_title: hasMultipleApiBases() && localTitle ? localTitle : (siteTitle || sysConfig.value.site_title),
       display_mode: resolveDisplayMode(config),
       frontend_ws_timeout_minutes: normalizeLiveSocketTimeoutMinutes(config?.frontend_ws_timeout_minutes),
-      theme_options: normalizeThemeOptions(config?.theme_options)
+      theme_options: normalizeThemeOptions(config?.theme_options),
+      latency_window: config?.latency_window || sysConfig.value.latency_window
     }
   } catch (e) {
     console.log('[INFO] Dashboard config pending...', e)
@@ -994,7 +999,8 @@ const refreshData = async () => {
           frontend_ws_timeout_minutes: sysConfig.value.frontend_ws_timeout_minutes,
           display_mode: normalizeDisplayMode(data.sysConfig?.display_mode),
           site_title: sysConfig.value.site_title || DEFAULT_SITE_TITLE,
-          theme_options: sysConfig.value.theme_options
+          theme_options: sysConfig.value.theme_options,
+          latency_window: data.sysConfig?.latency_window || sysConfig.value.latency_window
         }
 
         if (data.corsErrorSites?.length && !hasCorsError.value) hasCorsError.value = [...data.corsErrorSites]
@@ -1032,7 +1038,8 @@ const refreshData = async () => {
       frontend_ws_timeout_minutes: sysConfig.value.frontend_ws_timeout_minutes,
       display_mode: normalizeDisplayMode(data.sysConfig?.display_mode),
       site_title: sysConfig.value.site_title || DEFAULT_SITE_TITLE,
-      theme_options: sysConfig.value.theme_options
+      theme_options: sysConfig.value.theme_options,
+      latency_window: data.sysConfig?.latency_window || sysConfig.value.latency_window
     }
 
     drawMarkers()

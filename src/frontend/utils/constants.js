@@ -22,6 +22,11 @@ export const HISTORY = {
   DEFAULT_LONG_RANGE_POINTS: 120
 }
 
+export const LATENCY_WINDOW = {
+  POINTS: 20,
+  HOURS: 2
+}
+
 export const PING = {
   GOOD_THRESHOLD: 80,
   WARNING_THRESHOLD: 160,
@@ -54,6 +59,7 @@ export default {
   TIME,
   CHART,
   HISTORY,
+  LATENCY_WINDOW,
   PING,
   STORAGE,
   STATUS,

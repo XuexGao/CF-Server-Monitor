@@ -11,13 +11,13 @@ export function shouldUseSparseHistorySampling(
     && (!oldTableExists || oldUsesIdRange);
 }
 
-function buildSampleJsonExpression(tableName, jsonColumns) {
+function buildSampleJsonExpression(tableName, jsonColumns, sampleOrder) {
   return `(
     SELECT json_object(${jsonColumns})
     FROM ${tableName}
     WHERE id >= ranges.start_id
       AND id < ranges.end_id
-    ORDER BY id ASC
+    ORDER BY id ${sampleOrder}
     LIMIT 1
   )`;
 }
@@ -30,12 +30,14 @@ export function buildSparseHistoryQuery({
   intervalMs,
   idPrefix,
   oldTableExists,
-  tableBoundary
+  tableBoundary,
+  sampleOrder = 'ASC'
 }) {
   const columnList = columns.split(',').map(column => column.trim()).filter(Boolean);
   const jsonColumns = ['timestamp', ...columnList]
     .flatMap(column => [`'${column}'`, column])
     .join(', ');
+  const normalizedSampleOrder = String(sampleOrder).toUpperCase() === 'DESC' ? 'DESC' : 'ASC';
   const bindValues = [
     queryStart,
     firstRangeEnd,
@@ -45,11 +47,11 @@ export function buildSparseHistoryQuery({
     idPrefix,
     idPrefix
   ];
-  const currentSample = buildSampleJsonExpression('metrics_history', jsonColumns);
+  const currentSample = buildSampleJsonExpression('metrics_history', jsonColumns, normalizedSampleOrder);
   let sampleExpression = currentSample;
 
   if (oldTableExists) {
-    const oldSample = buildSampleJsonExpression('metrics_history_old', jsonColumns);
+    const oldSample = buildSampleJsonExpression('metrics_history_old', jsonColumns, normalizedSampleOrder);
     sampleExpression = `COALESCE(
         CASE WHEN ranges.range_start < ? THEN ${oldSample} END,
         CASE WHEN ranges.range_end > ? THEN ${currentSample} END

@@ -4,6 +4,15 @@ const STORAGE_KEY = "theme_preference";
 const themeChangeCallbacks = [];
 
 const currentTheme = ref("auto");
+let defaultTheme = "auto";
+
+const normalizeTheme = (theme, fallback = "auto") => {
+  const value = String(theme || "").trim().toLowerCase();
+  if (value === "dark" || value === "light" || value === "auto") {
+    return value;
+  }
+  return fallback === "dark" || fallback === "light" ? fallback : "auto";
+};
 
 // 跟随系统明暗偏好:浏览器/系统为暗色时返回 dark,否则返回 light
 const getSystemTheme = () => {
@@ -59,13 +68,14 @@ ensureSystemThemeListener();
 
 export const useTheme = () => {
   const getPreferredTheme = () => {
-    return localStorage.getItem(STORAGE_KEY) || "dark";
+    return normalizeTheme(localStorage.getItem(STORAGE_KEY), defaultTheme);
   };
 
   const setTheme = (theme) => {
-    localStorage.setItem(STORAGE_KEY, theme);
-    currentTheme.value = theme;
-    applyTheme(theme);
+    const normalizedTheme = normalizeTheme(theme);
+    localStorage.setItem(STORAGE_KEY, normalizedTheme);
+    currentTheme.value = normalizedTheme;
+    applyTheme(normalizedTheme);
   };
 
   const toggleTheme = () => {
@@ -99,6 +109,13 @@ export const useTheme = () => {
     initTheme,
     onThemeChange,
   };
+};
+
+export const applyDefaultTheme = (theme) => {
+  defaultTheme = normalizeTheme(theme);
+  const effectiveTheme = normalizeTheme(localStorage.getItem(STORAGE_KEY), defaultTheme);
+  currentTheme.value = effectiveTheme;
+  applyTheme(effectiveTheme);
 };
 
 export default useTheme;

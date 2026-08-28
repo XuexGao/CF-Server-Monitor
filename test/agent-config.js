@@ -14,7 +14,7 @@ import {
   validatePingNode
 } from '../src/utils/agentConfig.js';
 import { md5Hash } from '../src/utils/common.js';
-import { isWssReportEnabled, normalizeWssReportHours } from '../src/utils/settings.js';
+import { clearSiteSettingsCache, isWssReportEnabled, loadSiteSettings, normalizeWssReportHours, saveSiteOptions } from '../src/utils/settings.js';
 
 const server = {
   collect_interval: 1,
@@ -105,6 +105,56 @@ assert.equal(Object.prototype.hasOwnProperty.call(
 assert.deepEqual(normalizeWssReportHours(undefined), Array.from({ length: 24 }, (_, hour) => hour));
 assert.deepEqual(normalizeWssReportHours('[23, 2, 2, 99, "4"]'), [2, 4, 23]);
 assert.deepEqual(normalizeWssReportHours([]), []);
+clearSiteSettingsCache();
+{
+  const createEmptySettingsDb = () => {
+    let persistedSiteOptions = null;
+    return {
+      get persistedSiteOptions() {
+        return persistedSiteOptions;
+      },
+      prepare(sql) {
+        return {
+          bind(...args) {
+            this.args = args;
+            return this;
+          },
+          async first() {
+            if (sql.includes("WHERE key = 'site_options'")) {
+              return persistedSiteOptions ? { value: persistedSiteOptions } : null;
+            }
+            return null;
+          },
+          async all() {
+            return { results: [] };
+          },
+          async run() {
+            if (sql.includes('INSERT INTO settings') && Array.isArray(this.args)) {
+              if (this.args[0] === 'site_options' && typeof this.args[1] === 'string') {
+                persistedSiteOptions = this.args[1];
+              } else if (sql.includes('json_object')) {
+                persistedSiteOptions = JSON.stringify({ jwt_secret: this.args[0] });
+              }
+            }
+            return { success: true };
+          }
+        };
+      }
+    };
+  };
+  const emptySettingsDb = createEmptySettingsDb();
+  const defaultSettings = await loadSiteSettings(emptySettingsDb, { forceRefresh: true });
+  assert.equal(defaultSettings.show_three_net_details, 'true');
+  assert.equal(defaultSettings.wss_report_enabled, 'true');
+  assert.deepEqual(defaultSettings.wss_report_hours, Array.from({ length: 24 }, (_, hour) => hour));
+  assert.equal(isWssReportEnabled(defaultSettings, new Date('2026-08-20T10:00:00Z')), true);
+
+  clearSiteSettingsCache();
+  const initializedSiteOptions = await saveSiteOptions(createEmptySettingsDb(), { servers_optimized: 'true' });
+  assert.equal(initializedSiteOptions.show_three_net_details, 'true');
+  assert.equal(initializedSiteOptions.wss_report_enabled, 'true');
+  assert.deepEqual(initializedSiteOptions.wss_report_hours, Array.from({ length: 24 }, (_, hour) => hour));
+}
 assert.equal(isWssReportEnabled(
   { wss_report_enabled: 'true', wss_report_hours: [8, 9] },
   new Date('2026-08-20T08:30:00Z')

@@ -10,7 +10,11 @@ import {
   getWorkerLatestReportUpdates
 } from '../utils/latestReportCache.js';
 import { markFrontendRealtimeActive } from '../utils/realtimeBroadcastGate.js';
-import { DASHBOARD_LATEST_REPORT_ID_CHUNK_SIZE } from '../utils/config.js';
+import {
+  DASHBOARD_LATENCY_WINDOW_HOURS,
+  DASHBOARD_LATENCY_WINDOW_POINTS,
+  DASHBOARD_LATEST_REPORT_ID_CHUNK_SIZE
+} from '../utils/config.js';
 
 function createEmptyLatencyWindow() {
   return { ping: [], loss: [] };
@@ -260,7 +264,11 @@ export async function handleServersAPI(request, env, sys) {
       show_expire: sys.show_expire === 'true',
       show_tf: sys.show_tf === 'true',
       show_three_net_details: sys.show_three_net_details === 'true',
-      display_mode: sys.display_mode || 'bar'
+      display_mode: sys.display_mode || 'bar',
+      latency_window: {
+        points: DASHBOARD_LATENCY_WINDOW_POINTS,
+        hours: DASHBOARD_LATENCY_WINDOW_HOURS
+      }
     }
   };
 

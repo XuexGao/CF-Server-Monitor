@@ -507,6 +507,8 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
   "turnstile_site_key": "1x00000000000000000000AA",
   "site_title": "My Server Monitor",
   "display_mode": "bar",
+  "preferred_theme": "auto",
+  "default_language": "auto",
   "verified": false,
   "turnstile_verified": null,
   "theme_options": {
@@ -532,6 +534,8 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
 | `turnstile_site_key` | string       | Turnstile 前端公钥；前端拿到后渲染 widget          |
 | `site_title`         | string       | 站点标题                                         |
 | `display_mode`       | string       | 内置前端显示模式：`bar` / `ring` / `table`        |
+| `preferred_theme`    | string       | 默认外观：`auto` 跟随系统 / `dark` 深色 / `light` 浅色 |
+| `default_language`   | string       | 默认语言：`auto` 按浏览器语言自动选择中文或英文 / `zh` 中文 / `en` 英文 |
 | `verified`           | boolean      | 当前 Turnstile 验证状态；有效的验证凭证或本次成功验证的 Token 均可使其为 `true` |
 | `turnstile_verified` | string\|null | 当次验证成功后回写给客户端的"已验证凭证"，客户端应回存并在 1 小时内复用 |
 | `last_workers_version` | string\|null | **仅登录时出现**；远程最新 Workers 版本，来源为 GitHub `version.json`，后端缓存 5 分钟 |
@@ -1285,6 +1289,8 @@ Header：`X-Turnstile-Token: <token>`（当 `site_options.turnstile_enabled` 或
     "csp_static": "https://static.example.com",
     "csp_api": "https://api.example.com",
     "display_mode": "bar",
+    "preferred_theme": "auto",
+    "default_language": "auto",
     "theme_url": "https://github.com/Tokinx/cf-server-monitor-theme-emerald/tree/8cea2bbdbadb50684f2e97e13f7b2149ef99911b",
     "appearance_options": {
       "theme_options": {
@@ -1323,7 +1329,7 @@ Header：`X-Turnstile-Token: <token>`（当 `site_options.turnstile_enabled` 或
 
 **字段分类**：
 
-- `APPEARANCE_FIELDS`（写入 `appearance_options` JSON）：`site_title`、`custom_bg`、`custom_head`、`custom_script`、`csp_static`、`csp_api`、`display_mode`、`theme_options`
+- `APPEARANCE_FIELDS`（写入 `appearance_options` JSON）：`site_title`、`custom_bg`、`custom_bg_mobile`、`favicon`、`custom_head`、`custom_script`、`csp_static`、`csp_api`、`display_mode`、`preferred_theme`、`default_language`、`theme_options`
 - `SITE_FIELDS`（写入 `site_options` JSON）：`is_public`、`show_price`、`show_expire`、`show_tf`、`wss_report_enabled`、`wss_report_hours`、`frontend_ws_timeout_minutes`、`long_history_points`、通知、Turnstile、账号、Cloudflare、Ping 节点、`expire_reminder`、`notification_timezone`、`expire_notification_time`、`theme_url`、历史优化字段等站点级配置。`wss_report_hours` 是允许 Agent WSS 上报的 UTC 小时数组（`0-23`）；缺失时默认全天，空数组表示所有时段均关闭
 - 任何未列出的字段会被忽略
 
@@ -1336,7 +1342,7 @@ Header：`X-Turnstile-Token: <token>`（当 `site_options.turnstile_enabled` 或
 - 通知：规范化后的 `tg_notify` 非 `0`，或 `expire_reminder` 为 `1`-`7` 时，必须提供非空 `tg_bot_token`
 - `notification_timezone`：通知输出时间和到期提醒计划使用的 IANA 时区；缺失或非法值回退为 `UTC`
 - `expire_notification_time`：到期提醒每天在通知时区内执行的小时，取值 `0`-`23`；缺失或非法值回退为 `12`
-- `appearance_options` / `theme_options`：必须是非数组对象；`display_mode` 规范为 `bar` / `ring` / `table`
+- `appearance_options` / `theme_options`：必须是非数组对象；`display_mode` 规范为 `bar` / `ring` / `table`；`preferred_theme` 规范为 `auto` / `dark` / `light`，默认 `auto`；`default_language` 规范为 `auto` / `zh` / `en`，默认 `auto`
 - `frontend_ws_timeout_minutes`：规范为 `0`-`1440` 的整数分钟；缺失或非法值回退为 `0`，即前端连接不超时
 - `csp_static` / `csp_api`：逗号分隔，只保留不带凭据、路径、查询或 fragment 的 HTTPS origin，非法项会被静默过滤
 - 外观设置不是字段级合并：请求中只要出现任一外观字段或 `appearance_options`，后端就会用本次提供的外观字段重写整个 `appearance_options` JSON；部分更新时应先读取并回传完整外观对象
@@ -1856,6 +1862,8 @@ UUID 缺失或格式非法时返回 `400 { "error": "invalidServerId", "code": 4
   csp_static: string,            // 额外静态资源来源
   csp_api: string,               // 额外 API/WebSocket 来源
   display_mode: 'bar' | 'ring' | 'table',
+  preferred_theme: 'auto' | 'dark' | 'light',
+  default_language: 'auto' | 'zh' | 'en',
   theme_options: Record<string, unknown>,
   theme_url: string,             // 第三方主题商店 URL；为空使用内置主题
   is_public: 'true' | 'false',

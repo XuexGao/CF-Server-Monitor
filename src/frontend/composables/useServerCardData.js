@@ -2,14 +2,18 @@ import { computed } from 'vue'
 import { formatBytes, getFlagRegionCode, isServerOnline } from '../utils/api'
 import { getPublicAssetUrl } from '../utils/config'
 import { currentLang, useTranslation } from '../utils/i18n'
-import { PING } from '../utils/constants'
+import { LATENCY_WINDOW, PING } from '../utils/constants'
 import { formatBillingPrice } from '../utils/server.js'
 
 export const DEFAULT_SERVER_CARD_CONFIG = {
   show_price: true,
   show_expire: true,
   show_tf: true,
-  show_three_net_details: false,
+  show_three_net_details: true,
+  latency_window: {
+    points: LATENCY_WINDOW.POINTS,
+    hours: LATENCY_WINDOW.HOURS
+  },
   display_mode: 'bar'
 }
 
@@ -19,7 +23,7 @@ const THREE_NET_DEFS = [
   { key: 'cm', pingField: 'ping_cm', lossField: 'loss_cm', labelKey: 'pingCm', fallbackLabel: 'CM' }
 ]
 
-const DEFAULT_THREE_NET_POINT_COUNT = 20
+const DEFAULT_THREE_NET_POINT_COUNT = LATENCY_WINDOW.POINTS
 
 const normalizeLatencyTimestamp = (value, fallback = 0) => {
   const timestamp = Number(value)
@@ -352,10 +356,15 @@ export function useServerCardData(props) {
     return value === false ? null : value
   }
 
+  const getLatencyWindowConfigPointCount = () => {
+    const points = Number(props.sysConfig?.latency_window?.points)
+    return Number.isInteger(points) && points > 0 ? points : DEFAULT_THREE_NET_POINT_COUNT
+  }
+
   const getLatencyWindowPointCount = () => {
     const pingCount = Array.isArray(props.server.ping) ? props.server.ping.length : 0
     const lossCount = Array.isArray(props.server.loss) ? props.server.loss.length : 0
-    return Math.max(pingCount, lossCount, DEFAULT_THREE_NET_POINT_COUNT)
+    return Math.max(pingCount, lossCount, getLatencyWindowConfigPointCount())
   }
 
   const threeNetDetails = computed(() => THREE_NET_DEFS

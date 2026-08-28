@@ -21,6 +21,26 @@
         </div>
 
         <div class="form-row">
+          <div class="form-group flex-1">
+            <label class="form-label">{{ trans.defaultTheme }}</label>
+            <select v-model="settings.preferred_theme" class="form-select">
+              <option value="auto">{{ trans.themeAuto }}</option>
+              <option value="dark">{{ trans.themeDark }}</option>
+              <option value="light">{{ trans.themeLight }}</option>
+            </select>
+          </div>
+
+          <div class="form-group flex-1">
+            <label class="form-label">{{ trans.defaultLanguage }}</label>
+            <select v-model="settings.default_language" class="form-select">
+              <option value="auto">{{ trans.languageAuto }}</option>
+              <option value="zh">{{ trans.languageChinese }}</option>
+              <option value="en">{{ trans.languageEnglish }}</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-row">
           <div class="form-group  ">
             <label class="form-label">
               {{ trans.bgImage }}
