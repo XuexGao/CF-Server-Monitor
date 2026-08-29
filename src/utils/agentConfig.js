@@ -1,20 +1,25 @@
 import { md5Hash } from './common.js';
 import { isWssReportConfigured } from './settings.js';
 
-export const AGENT_CONFIG_SCHEMA_VERSION = 5;
+export const AGENT_CONFIG_SCHEMA_VERSION = 6;
 export const AGENT_CONFIG_LEGACY_SCHEMA_VERSION = 3;
 export const AGENT_CONFIG_CONNECTION_MODE_SCHEMA_VERSION = 4;
+export const AGENT_CONFIG_WSS_REPORT_INTERVAL_SCHEMA_VERSION = 5;
+export const AGENT_CONFIG_PING_MODE_SCHEMA_VERSION = 6;
 export const AGENT_CONFIG_SCHEMA_HEADER = 'X-Agent-Config-Schema';
 export const AGENT_CONFIG_MD5_HEADER = 'X-Agent-Config-Md5';
 export const MAX_TRAFFIC_CORRECTION_GB = 1000000;
 export const CONNECTION_MODE_AUTO = 'auto';
 export const CONNECTION_MODE_HTTP = 'http';
+export const PING_MODE_TCP = 'tcp';
+export const PING_MODE_ICMP = 'icmp';
 export const DEFAULT_WSS_REPORT_INTERVAL = 2;
 
 const ALLOWED_COLLECT_INTERVALS = new Set([0, 1, 2, 5, 10]);
 const ALLOWED_REPORT_INTERVALS = new Set([30, 60, 120, 180]);
 const ALLOWED_WSS_REPORT_INTERVALS = new Set([1, 2, 3, 4, 5]);
 const ALLOWED_CONNECTION_MODES = new Set([CONNECTION_MODE_AUTO, CONNECTION_MODE_HTTP]);
+const ALLOWED_PING_MODES = new Set([PING_MODE_TCP, PING_MODE_ICMP]);
 const PING_NODE_HOST_PATTERN = /^[a-zA-Z0-9._-]+$/;
 const IPV4_PATTERN = /^(?:\d{1,3}\.){3}\d{1,3}$/;
 const IPV4_LIKE_PATTERN = /^(?:\d+\.){3}\d+$/;
@@ -92,6 +97,11 @@ export function validateAgentConfigInput(input) {
     return { valid: false, error: 'connection_mode is not allowed' };
   }
 
+  const pingMode = normalizePingMode(input.ping_mode);
+  if (!ALLOWED_PING_MODES.has(pingMode)) {
+    return { valid: false, error: 'ping_mode is not allowed' };
+  }
+
   return {
     valid: true,
     config: {
@@ -100,6 +110,7 @@ export function validateAgentConfigInput(input) {
       wss_report_interval: wssReportInterval,
       reset_day: input.reset_day,
       connection_mode: connectionMode,
+      ping_mode: pingMode,
       schema_version: AGENT_CONFIG_SCHEMA_VERSION
     }
   };
@@ -211,6 +222,17 @@ export function normalizeConnectionMode(value) {
   return '';
 }
 
+export function normalizePingMode(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  if (!raw || raw === PING_MODE_TCP) {
+    return PING_MODE_TCP;
+  }
+  if (raw === PING_MODE_ICMP) {
+    return PING_MODE_ICMP;
+  }
+  return '';
+}
+
 export function isValidTrafficCorrection(value) {
   let number;
   if (typeof value === 'number') {
@@ -264,7 +286,7 @@ export function buildAgentConfig(server, settings = null, schemaVersion = AGENT_
     const wssEnabled = isWssReportConfigured(settings);
     config.connection_mode = wssEnabled ? connectionMode : CONNECTION_MODE_HTTP;
     if (
-      version >= AGENT_CONFIG_SCHEMA_VERSION &&
+      version >= AGENT_CONFIG_WSS_REPORT_INTERVAL_SCHEMA_VERSION &&
       config.connection_mode === CONNECTION_MODE_AUTO &&
       wssEnabled
     ) {
@@ -273,6 +295,10 @@ export function buildAgentConfig(server, settings = null, schemaVersion = AGENT_
         config.collect_interval = wssReportInterval;
       }
     }
+  }
+
+  if (version >= AGENT_CONFIG_PING_MODE_SCHEMA_VERSION) {
+    config.ping_mode = normalizePingMode(server?.ping_mode) || PING_MODE_TCP;
   }
 
   return config;
@@ -293,6 +319,9 @@ export function serializeAgentConfig(config) {
   }
   if (Object.prototype.hasOwnProperty.call(config, 'wss_report_interval')) {
     serialized += `&wss_report_interval=${config.wss_report_interval}`;
+  }
+  if (Object.prototype.hasOwnProperty.call(config, 'ping_mode')) {
+    serialized += `&ping_mode=${config.ping_mode}`;
   }
   return serialized;
 }

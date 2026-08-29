@@ -92,6 +92,7 @@ export async function initDatabase(db) {
           report_interval INTEGER DEFAULT 60,
           wss_report_interval INTEGER DEFAULT 2,
           connection_mode TEXT DEFAULT 'auto',
+          ping_mode TEXT DEFAULT 'tcp',
           auto_update TEXT DEFAULT '0',
           custom_ct TEXT DEFAULT '',
           custom_cu TEXT DEFAULT '',

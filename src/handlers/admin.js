@@ -8,7 +8,7 @@ import { AppError, createSuccessResponse, createBadRequestResponse, createUnauth
 import { addServerColumns } from '../database/updateDatabase.js';
 import { clearResourceAlertState, sendNotification } from '../services/notification.js';
 import { getNextServerHistoryPartitionId, HISTORY_MAX_PARTITION_ID } from '../database/indexOptimization.js';
-import { isValidTrafficCorrection, normalizeConnectionMode, normalizeWssReportInterval, validateAgentConfigInput, validatePingNode, validateNetworkInterfaces } from '../utils/agentConfig.js';
+import { isValidTrafficCorrection, normalizeConnectionMode, normalizePingMode, normalizeWssReportInterval, validateAgentConfigInput, validatePingNode, validateNetworkInterfaces } from '../utils/agentConfig.js';
 import { scheduleAgentConfigChanged, scheduleAgentReportModeChanged } from '../utils/agentConfigNotify.js';
 import { detectBillingCycle, detectCurrencySymbol, normalizeBillingCycle, normalizeCurrency, normalizePrice, renewExpireDateIfNeeded } from '../utils/serverBilling.js';
 import { THEME_PREVIEW_AUTH_TTL_SECONDS } from '../utils/config.js';
@@ -987,7 +987,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
       });
     }
     else if (data.action === 'edit') {
-      const { id, name, server_group, region, tags, note, price, billing_cycle, auto_renewal, currency, expire_date, traffic_limit, traffic_calc_type, interface: networkInterfaceInput, reset_day, collect_interval, report_interval, wss_report_interval, connection_mode, auto_update, custom_ct, custom_cu, custom_cm, custom_bd, rx_correction, tx_correction, offline_notify_disabled, is_hidden } = data;
+      const { id, name, server_group, region, tags, note, price, billing_cycle, auto_renewal, currency, expire_date, traffic_limit, traffic_calc_type, interface: networkInterfaceInput, reset_day, collect_interval, report_interval, wss_report_interval, connection_mode, ping_mode, auto_update, custom_ct, custom_cu, custom_cm, custom_bd, rx_correction, tx_correction, offline_notify_disabled, is_hidden } = data;
       if (!id || !isValidUUID(id)) {
         return createBadRequestResponse('invalidServerId');
       }
@@ -997,7 +997,8 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
         report_interval,
         wss_report_interval,
         reset_day,
-        connection_mode: effectiveConnectionMode
+        connection_mode: effectiveConnectionMode,
+        ping_mode
       });
       if (!agentConfigResult.valid) {
         return createBadRequestResponse(agentConfigResult.error);
@@ -1041,7 +1042,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
       try {
         await env.DB.prepare(`
           UPDATE servers
-          SET name = ?, server_group = ?, region = ?, tags = ?, note = ?, price = ?, billing_cycle = ?, auto_renewal = ?, currency = ?, expire_date = ?, traffic_limit = ?, traffic_calc_type = ?, "interface" = ?, reset_day = ?, collect_interval = ?, report_interval = ?, wss_report_interval = ?, connection_mode = ?, auto_update = ?, custom_ct = ?, custom_cu = ?, custom_cm = ?, custom_bd = ?, rx_correction = ?, tx_correction = ?, offline_notify_disabled = ?, is_hidden = ?
+          SET name = ?, server_group = ?, region = ?, tags = ?, note = ?, price = ?, billing_cycle = ?, auto_renewal = ?, currency = ?, expire_date = ?, traffic_limit = ?, traffic_calc_type = ?, "interface" = ?, reset_day = ?, collect_interval = ?, report_interval = ?, wss_report_interval = ?, connection_mode = ?, ping_mode = ?, auto_update = ?, custom_ct = ?, custom_cu = ?, custom_cm = ?, custom_bd = ?, rx_correction = ?, tx_correction = ?, offline_notify_disabled = ?, is_hidden = ?
           WHERE id = ?
         `).bind(
           name || '',
@@ -1062,6 +1063,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
           normalizedAgentConfig.report_interval,
           normalizedAgentConfig.wss_report_interval,
           normalizedAgentConfig.connection_mode,
+          normalizedAgentConfig.ping_mode,
           normalizeBooleanFlag(auto_update),
           pingNodes.values.custom_ct,
           pingNodes.values.custom_cu,
@@ -1183,10 +1185,10 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
           await env.DB.prepare(`
             INSERT INTO servers (id, name, server_group, region, tags, note, price, billing_cycle, auto_renewal,
               currency, expire_date,
-              traffic_limit, traffic_calc_type, "interface", reset_day, collect_interval, report_interval, wss_report_interval, connection_mode,
+              traffic_limit, traffic_calc_type, "interface", reset_day, collect_interval, report_interval, wss_report_interval, connection_mode, ping_mode,
               auto_update, custom_ct, custom_cu, custom_cm, custom_bd, rx_correction, tx_correction,
               offline_notify_disabled, is_hidden, sort_order, history_partition_id, timestamp)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `).bind(
             server.id,
             server.name || '',
@@ -1207,6 +1209,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
             server.report_interval ?? 60,
             normalizeWssReportInterval(server.wss_report_interval),
             normalizeConnectionMode(server.connection_mode) || 'auto',
+            normalizePingMode(server.ping_mode) || 'tcp',
             normalizeBooleanFlag(server.auto_update),
             server.custom_ct || '',
             server.custom_cu || '',

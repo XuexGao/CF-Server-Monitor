@@ -386,10 +386,10 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
 - 新版探针且配置 MD5 不一致，或仍有待确认流量修正：返回 `200 OK`，响应头携带当前
   `X-Agent-Config-Schema` 与 `X-Agent-Config-Md5`，响应体以固定顺序的完整 QueryParam 配置开头：
   ```text
-  collect_interval=2&report_interval=60&reset_day=1&schema_version=5&custom_ct=gd-ct-dualstack.ip.zstaticcdn.com&custom_cu=gd-cu-dualstack.ip.zstaticcdn.com&custom_cm=gd-cm-dualstack.ip.zstaticcdn.com&custom_bd=ip.zstaticcdn.com&interface=&connection_mode=auto&wss_report_interval=2
+  collect_interval=2&report_interval=60&reset_day=1&schema_version=6&custom_ct=gd-ct-dualstack.ip.zstaticcdn.com&custom_cu=gd-cu-dualstack.ip.zstaticcdn.com&custom_cm=gd-cm-dualstack.ip.zstaticcdn.com&custom_bd=ip.zstaticcdn.com&interface=&connection_mode=auto&wss_report_interval=2&ping_mode=tcp
   ```
   （`Content-Type: application/x-www-form-urlencoded; charset=utf-8`）
-- ~~动态配置包含 `traffic_calc_type`、`traffic_limit`、`auto_update` 等全部探针运行参数。~~ **2026-07-26 修订，2026-07-31 更新，2026-08-15 更新，2026-08-18 更新，2026-08-19 更新**：schema `3` 不包含 `connection_mode`；schema `4` 增加 `connection_mode`，并保持原有序列化与 MD5 计算不变；schema `5` 在 WSS 全局开启且服务器 `connection_mode=auto` 时追加 `wss_report_interval`（`1-5` 秒，默认 `2`），并将 `collect_interval=0` 或大于 WSS 间隔的值规范为 WSS 间隔。待应用的 `rx_correction`、`tx_correction` 会追加到响应体，但不参与配置 MD5；启用自动更新且版本不一致时追加 `update=1`。
+- ~~动态配置包含 `traffic_calc_type`、`traffic_limit`、`auto_update` 等全部探针运行参数。~~ **2026-07-26 修订，2026-07-31 更新，2026-08-15 更新，2026-08-18 更新，2026-08-19 更新，2026-08-28 更新**：schema `3` 不包含 `connection_mode`；schema `4` 增加 `connection_mode`，并保持原有序列化与 MD5 计算不变；schema `5` 在 WSS 全局开启且服务器 `connection_mode=auto` 时追加 `wss_report_interval`（`1-5` 秒，默认 `2`），并将 `collect_interval=0` 或大于 WSS 间隔的值规范为 WSS 间隔；schema `6` 追加 `ping_mode`（`tcp|icmp`，默认 `tcp`），参与配置 MD5 并下发给 Agent。待应用的 `rx_correction`、`tx_correction` 会追加到响应体，但不参与配置 MD5；启用自动更新且版本不一致时追加 `update=1`。
 - 探针应用流量修正后，可在下一次 `POST /update` 顶层回传 `rx_correction` / `tx_correction`。值匹配时后端清空待修正字段并直接返回纯文本 `OK`，本次请求不要求 `metrics`。
 - 失败：
   ```json
@@ -409,7 +409,7 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
   { "type": "ack", "ts": 1737638343000, "persisted": true, "nextD1WriteAfterMs": 60000, "nextWssReportAfterMs": 60000 }
   ```
   `persisted` 表示本条消息是否触发 D1 历史写入；`nextD1WriteAfterMs` 是距离下一次允许写入 D1 的最短等待时间。WSS 首条成功指标会立即写入一次 D1，后续按该服务器 `report_interval` 控制写入频率（允许值沿用配置：`30/60/120/180` 秒；异常回退 `60` 秒）。`nextWssReportAfterMs` 是服务端建议的下一次 WSS 上报间隔：有前端实时订阅时使用服务器 `wss_report_interval`；无前端访问时使用 `report_interval`，但最低为 `60` 秒，不区分资源告警缓存是否活跃。缺失或非法的 WSS 间隔回退为 `2` 秒。
-  新版 WSS Agent 可在握手 URL query 中携带 `config_schema=5` / `config_md5=<md5>`，也兼容握手 Header `X-Agent-Config-Schema: 5` 与 `X-Agent-Config-Md5` 记录当前配置状态；当某次上报消息携带 `config_schema: 5` / `config_md5` 时，ack 会同时返回动态配置协商字段。schema `3` / `4` Agent 仍会收到各自版本的兼容配置：
+  新版 WSS Agent 可在握手 URL query 中携带 `config_schema=6` / `config_md5=<md5>`，也兼容握手 Header `X-Agent-Config-Schema: 6` 与 `X-Agent-Config-Md5` 记录当前配置状态；当某次上报消息携带 `config_schema: 6` / `config_md5` 时，ack 会同时返回动态配置协商字段。schema `3` / `4` / `5` Agent 仍会收到各自版本的兼容配置：
   ```json
   {
     "type": "ack",
@@ -417,16 +417,16 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
     "persisted": false,
     "nextD1WriteAfterMs": 30000,
     "nextWssReportAfterMs": 2000,
-    "config_schema": 5,
+    "config_schema": 6,
     "config_md5": "b4d7c0d...",
     "has_config": true,
-    "body": "collect_interval=2&report_interval=60&reset_day=1&schema_version=5&custom_ct=gd-ct-dualstack.ip.zstaticcdn.com&custom_cu=gd-cu-dualstack.ip.zstaticcdn.com&custom_cm=gd-cm-dualstack.ip.zstaticcdn.com&custom_bd=&interface=&connection_mode=auto&wss_report_interval=2",
-    "config_body": "collect_interval=2&report_interval=60&reset_day=1&schema_version=5&custom_ct=gd-ct-dualstack.ip.zstaticcdn.com&custom_cu=gd-cu-dualstack.ip.zstaticcdn.com&custom_cm=gd-cm-dualstack.ip.zstaticcdn.com&custom_bd=&interface=&connection_mode=auto&wss_report_interval=2",
+    "body": "collect_interval=2&report_interval=60&reset_day=1&schema_version=6&custom_ct=gd-ct-dualstack.ip.zstaticcdn.com&custom_cu=gd-cu-dualstack.ip.zstaticcdn.com&custom_cm=gd-cm-dualstack.ip.zstaticcdn.com&custom_bd=&interface=&connection_mode=auto&wss_report_interval=2&ping_mode=tcp",
+    "config_body": "collect_interval=2&report_interval=60&reset_day=1&schema_version=6&custom_ct=gd-ct-dualstack.ip.zstaticcdn.com&custom_cu=gd-cu-dualstack.ip.zstaticcdn.com&custom_cm=gd-cm-dualstack.ip.zstaticcdn.com&custom_bd=&interface=&connection_mode=auto&wss_report_interval=2&ping_mode=tcp",
     "payload": {
       "collect_interval": 2,
       "report_interval": 60,
       "reset_day": 1,
-      "schema_version": 5,
+      "schema_version": 6,
       "custom_ct": "gd-ct-dualstack.ip.zstaticcdn.com",
       "custom_cu": "gd-cu-dualstack.ip.zstaticcdn.com",
       "custom_cm": "gd-cm-dualstack.ip.zstaticcdn.com",
@@ -434,6 +434,7 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
       "interface": "",
       "connection_mode": "auto",
       "wss_report_interval": 2,
+      "ping_mode": "tcp",
       "config_md5": "b4d7c0d..."
     }
   }
@@ -1508,6 +1509,9 @@ Header：`X-Turnstile-Token: <token>`（当 `site_options.turnstile_enabled` 或
   "reset_day": 1,                     // 必传整数：0 ~ 31
   "collect_interval": 1,              // 必传：0 | 1 | 2 | 5 | 10
   "report_interval": 60,              // 必传：30 | 60 | 120 | 180
+  "wss_report_interval": 2,           // 1 | 2 | 3 | 4 | 5
+  "connection_mode": "auto",          // auto | http
+  "ping_mode": "tcp",                 // tcp | icmp
   "auto_update": "0",                // boolean-like，规范为 "0" | "1"
   "custom_ct": "gd-ct-dualstack.ip.zstaticcdn.com",
   "custom_cu": "gd-cu-dualstack.ip.zstaticcdn.com",
@@ -1795,6 +1799,7 @@ UUID 缺失或格式非法时返回 `400 { "error": "invalidServerId", "code": 4
 | `reset_day`                                   | number             | 流量重置日 `0..31`；`0` 表示不重置 |
 | `collect_interval`                            | number             | 采集间隔枚举：`0` / `1` / `2` / `5` / `10` 秒 |
 | `report_interval`                             | number             | 上报间隔枚举：`30` / `60` / `120` / `180` 秒 |
+| `ping_mode`                                   | string             | Ping 探测模式：`tcp` / `icmp`，默认 `tcp` |
 | `auto_update`                                 | string `"0"`/`"1"` | 探针自动更新；仅管理端 `list` / 导出返回，公共接口会删除 |
 | `custom_ct` / `custom_cu` / `custom_cm` / `custom_bd` | string | 服务器级测速节点 `host[:port]`；为空时使用站点设置 |
 | `rx_correction` / `tx_correction`             | number\|null       | 待下发给探针的一次性流量修正值 |
@@ -1924,7 +1929,7 @@ Worker 同时注册了 cron 触发器（`scheduled` handler），可在 `wrangle
 | `*/1 * * * *` | 每分钟：检测离线节点、资源告警 | `checkOfflineNodes`、`checkResourceAlerts`（通知） |
 | `0 * * * *`   | 每小时：根据 UTC 日期分支 | 见下表                                                            |
 | <br />        | 每周日 0 点：表轮换    | `weeklyCleanup`（删除旧表、重命名 metrics\_history → metrics\_history\_old、创建新表） |
-| <br />        | 每小时按通知时区/到期通知小时判断是否执行到期检测 | `checkExpiringServers` |
+| <br />        | 每小时按通知时区/到期提醒时间判断是否执行到期检测 | `checkExpiringServers` |
 
 每周日 00:00–00:04 UTC 的表轮换窗口内，分钟任务会跳过离线节点检测。
 

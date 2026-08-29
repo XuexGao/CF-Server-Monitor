@@ -57,8 +57,10 @@ function makeSettingsDb(settingsSource) {
   };
 }
 
-function makeDescriptor(md5 = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', schemaVersion = 5) {
-  const serialized = schemaVersion >= 5
+function makeDescriptor(md5 = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', schemaVersion = 6) {
+  const serialized = schemaVersion >= 6
+    ? `collect_interval=2&report_interval=60&reset_day=1&schema_version=${schemaVersion}&custom_ct=&custom_cu=&custom_cm=&custom_bd=&interface=&connection_mode=auto&wss_report_interval=2&ping_mode=tcp`
+    : schemaVersion >= 5
     ? `collect_interval=2&report_interval=60&reset_day=1&schema_version=${schemaVersion}&custom_ct=&custom_cu=&custom_cm=&custom_bd=&interface=&connection_mode=auto&wss_report_interval=2`
     : schemaVersion >= 4
       ? `collect_interval=0&report_interval=60&reset_day=1&schema_version=${schemaVersion}&custom_ct=&custom_cu=&custom_cm=&custom_bd=&interface=&connection_mode=auto`
@@ -79,6 +81,9 @@ function makeDescriptor(md5 = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', schemaVersion 
   }
   if (schemaVersion >= 5) {
     config.wss_report_interval = 2;
+  }
+  if (schemaVersion >= 6) {
+    config.ping_mode = 'tcp';
   }
   return {
     serialized,
@@ -362,7 +367,7 @@ test('WSS agent context uses current report interval from payload', async () => 
     serverId: 'server-1',
     historyPartitionId: 42,
     reportIntervalMs: 60000,
-    configSchema: '5',
+    configSchema: '6',
     configMd5: 'none'
   }, {
     id: 'server-1',
@@ -389,7 +394,7 @@ test('WSS agent config ack is skipped when report omits config state', async () 
       configMd5: 'none'
     },
     serverId: 'server-1',
-    agentConfig: { schema: '5', md5: 'none', requested: false }
+    agentConfig: { schema: '6', md5: 'none', requested: false }
   });
 
   assert.equal(loads, 0);
@@ -407,7 +412,7 @@ test('WSS agent config ack is built when report includes config state', async ()
   const ack = await broadcaster._buildAgentConfigAck({
     attachment: {},
     serverId: 'server-1',
-    agentConfig: { schema: '5', md5: 'none', requested: true }
+    agentConfig: { schema: '6', md5: 'none', requested: true }
   });
 
   assert.equal(loads, 1);
@@ -417,6 +422,7 @@ test('WSS agent config ack is built when report includes config state', async ()
   assert.equal(ack.config_body, makeDescriptor().serialized);
   assert.equal(ack.payload.report_interval, 60);
   assert.equal(ack.payload.connection_mode, 'auto');
+  assert.equal(ack.payload.ping_mode, 'tcp');
   assert.equal(Object.prototype.hasOwnProperty.call(ack, 'config'), false);
 });
 
@@ -448,7 +454,7 @@ test('WSS agent config push uses string body and structured payload', () => {
         kind: 'agent-report',
         authenticated: true,
         serverId: 'server-1',
-        configSchema: '5',
+        configSchema: '6',
         configMd5: 'none'
       };
     },
@@ -467,6 +473,7 @@ test('WSS agent config push uses string body and structured payload', () => {
   assert.equal(sent[0].config_body, makeDescriptor().serialized);
   assert.equal(sent[0].payload.report_interval, 60);
   assert.equal(sent[0].payload.connection_mode, 'auto');
+  assert.equal(sent[0].payload.ping_mode, 'tcp');
   assert.equal(Object.prototype.hasOwnProperty.call(sent[0], 'config'), false);
 });
 
@@ -488,6 +495,7 @@ test('WSS agent config push keeps legacy schema without connection mode', () => 
   };
   const broadcaster = makeBroadcaster([ws]);
   const descriptors = new Map([
+    [6, makeDescriptor('eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee', 6)],
     [5, makeDescriptor('bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 5)],
     [4, makeDescriptor('dddddddddddddddddddddddddddddddd', 4)],
     [3, makeDescriptor('cccccccccccccccccccccccccccccccc', 3)]

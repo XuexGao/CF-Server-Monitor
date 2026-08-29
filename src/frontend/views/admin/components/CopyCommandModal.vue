@@ -53,6 +53,10 @@
           <span class="config-value">{{ connectionMode === 'http' ? trans.connectionModeHttp : trans.connectionModeAuto }}</span>
         </div>
         <div class="config-row">
+          <span class="config-label">{{ trans.pingMode }}</span>
+          <span class="config-value">{{ effectivePingMode === 'icmp' ? 'ICMP (root)' : 'TCP' }}</span>
+        </div>
+        <div class="config-row">
           <span class="config-label">{{ trans.trafficResetDay }}</span>
           <span class="config-value">{{ isBlank(resetDay) ? '-' : resetDay }}</span>
         </div>
@@ -126,6 +130,7 @@ const props = defineProps({
   reportInterval: { type: [Number, String], default: 60 },
   wssReportInterval: { type: [Number, String], default: 2 },
   connectionMode: { type: String, default: 'auto' },
+  pingMode: { type: String, default: 'tcp' },
   customCt: { type: String, default: '' },
   customCu: { type: String, default: '' },
   customCm: { type: String, default: '' },
@@ -181,6 +186,7 @@ const selectedGhProxy = computed({
 })
 
 const showCustomGhProxy = computed(() => selectedGhProxy.value === CUSTOM_GH_PROXY_VALUE)
+const effectivePingMode = computed(() => props.pingMode === 'icmp' ? 'icmp' : 'tcp')
 
 watch(
   () => props.show,

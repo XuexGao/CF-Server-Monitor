@@ -97,7 +97,7 @@
         </div>
       </div>
 
-      <div class="form-row">
+      <div class="form-row mobile-two-row">
         <div class="form-group flex-1">
           <label class="form-label">
             {{ trans.collectInterval }}
@@ -138,7 +138,17 @@
         </div>
       </div>
 
-      <div class="form-row">
+      <div class="form-row mobile-two-row">
+        <div class="form-group flex-1">
+          <label class="form-label">
+            {{ trans.pingMode }}
+            <HelpTooltip :text="trans.pingModeIcmpRootHint" />
+          </label>
+          <select v-model="editForm.ping_mode" class="form-select">
+            <option value="tcp">TCP</option>
+            <option value="icmp">ICMP (root)</option>
+          </select>
+        </div>
         <div class="form-group flex-1">
           <label class="form-label">{{ trans.networkInterface }}</label>
           <input type="text" name="edit_interface" autocomplete="off" v-model.trim="editForm.interface" class="form-input" :placeholder="trans.networkInterfacePlaceholder">

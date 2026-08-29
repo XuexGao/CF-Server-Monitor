@@ -247,6 +247,7 @@
         :report-interval="reportInterval"
         :wss-report-interval="wssReportInterval"
         :connection-mode="connectionMode"
+        :ping-mode="pingMode"
         :custom-ct="customCt"
         :custom-cu="customCu"
         :custom-cm="customCm"
@@ -999,6 +1000,7 @@ const editForm = ref({
   report_interval: 60,
   wss_report_interval: 2,
   connection_mode: 'auto',
+  ping_mode: 'tcp',
   custom_ct: '',
   custom_cu: '',
   custom_cm: '',
@@ -1027,6 +1029,7 @@ const createBatchEditDefaults = () => ({
   report_interval: 60,
   wss_report_interval: 2,
   connection_mode: 'auto',
+  ping_mode: 'tcp',
   custom_ct: '',
   custom_cu: '',
   custom_cm: '',
@@ -1080,6 +1083,7 @@ const collectInterval = ref(0)
 const reportInterval = ref(60)
 const wssReportInterval = ref(2)
 const connectionMode = ref('auto')
+const pingMode = ref('tcp')
 const customCt = ref('')
 const customCu = ref('')
 const customCm = ref('')
@@ -1096,6 +1100,8 @@ const getEffectiveConnectionMode = (value) => {
   const connectionMode = value === 'http' ? 'http' : 'auto'
   return isWssReportEnabled.value ? connectionMode : 'http'
 }
+
+const getEffectivePingMode = (value) => value === 'icmp' ? 'icmp' : 'tcp'
 
 watch(isWssReportEnabled, (enabled) => {
   if (!enabled) {
@@ -1660,6 +1666,7 @@ const copyCmd = (serverId) => {
   reportInterval.value = server?.report_interval || 60
   wssReportInterval.value = server?.wss_report_interval || 2
   connectionMode.value = getEffectiveConnectionMode(server?.connection_mode)
+  pingMode.value = getEffectivePingMode(server?.ping_mode)
   customCt.value = server?.custom_ct || settings.value.custom_ct
   customCu.value = server?.custom_cu || settings.value.custom_cu
   customCm.value = server?.custom_cm || settings.value.custom_cm
@@ -1687,6 +1694,7 @@ const getCustomInstallCommand = () => {
   const autoUpdateFlag = autoUpdate.value ? 1 : 0
   const proxy = installGhProxy.value.trim()
   const effectiveConnectionMode = getEffectiveConnectionMode(connectionMode.value)
+  const effectivePingMode = getEffectivePingMode(pingMode.value)
   if (targetOs.value === 'windows') {
     const params = [
       'install'
@@ -1699,6 +1707,7 @@ const getCustomInstallCommand = () => {
       `-collect_interval='${collectInterval.value}'`,
       `-interval='${reportInterval.value}'`,
       `-connection_mode='${effectiveConnectionMode}'`,
+      `-ping_mode='${effectivePingMode}'`,
       `-reset_day='${resetDay.value ?? 1}'`,
       `-auto_update='${autoUpdateFlag}'`
     )
@@ -1721,6 +1730,7 @@ const getCustomInstallCommand = () => {
     `-collect_interval=${collectInterval.value}`,
     `-interval=${reportInterval.value}`,
     `-connection_mode=${effectiveConnectionMode}`,
+    `-ping_mode=${effectivePingMode}`,
     `-reset_day=${resetDay.value ?? 1}`,
     `-auto_update=${autoUpdateFlag}`
   )
@@ -1795,6 +1805,7 @@ const createEditFormFromServer = (server) => ({
     report_interval: server.report_interval || 60,
     wss_report_interval: server.wss_report_interval || 2,
     connection_mode: getEffectiveConnectionMode(server.connection_mode),
+    ping_mode: server.ping_mode === 'icmp' ? 'icmp' : 'tcp',
     custom_ct: server.custom_ct || '',
     custom_cu: server.custom_cu || '',
     custom_cm: server.custom_cm || '',
@@ -1878,6 +1889,7 @@ const buildEditPayloadFromForm = (form) => {
       report_interval: form.report_interval,
       wss_report_interval: form.wss_report_interval,
       connection_mode: getEffectiveConnectionMode(form.connection_mode),
+      ping_mode: form.ping_mode === 'icmp' ? 'icmp' : 'tcp',
       custom_ct: pingNodeValidation.values.custom_ct,
       custom_cu: pingNodeValidation.values.custom_cu,
       custom_cm: pingNodeValidation.values.custom_cm,
@@ -1942,6 +1954,7 @@ const saveEdit = async () => {
     report_interval: editForm.value.report_interval,
     wss_report_interval: editForm.value.wss_report_interval,
     connection_mode: getEffectiveConnectionMode(editForm.value.connection_mode),
+    ping_mode: editForm.value.ping_mode === 'icmp' ? 'icmp' : 'tcp',
     custom_ct: pingNodeValidation.values.custom_ct,
     custom_cu: pingNodeValidation.values.custom_cu,
     custom_cm: pingNodeValidation.values.custom_cm,
