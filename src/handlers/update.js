@@ -55,6 +55,7 @@ const DISK_IO_COLUMN_TO_FIELD = Object.freeze(Object.fromEntries(
 const AGENT_WSS_MODE_HEADER = 'X-Agent-Wss-Mode';
 const AGENT_WSS_REASON_HEADER = 'X-Agent-Wss-Reason';
 const AGENT_WSS_SCHEDULE_INACTIVE = 'wss_schedule_inactive';
+const AGENT_WSS_SCHEDULE_DISABLED = 'wss_disabled';
 let batchQueue = new Map();
 let flushingPromise = null;
 let flushTimer = null;
@@ -403,6 +404,23 @@ function createAgentWssScheduleInactiveResponse(settings = {}) {
   });
 }
 
+function createAgentWssDisabledResponse() {
+  return new Response(JSON.stringify({
+    error: 'Agent WSS report disabled',
+    code: 409,
+    text: AGENT_WSS_SCHEDULE_DISABLED,
+    connection_mode: 'http'
+  }), {
+    status: 409,
+    headers: {
+      'Cache-Control': 'no-store',
+      'Content-Type': 'application/json',
+      [AGENT_WSS_MODE_HEADER]: 'disabled',
+      [AGENT_WSS_REASON_HEADER]: AGENT_WSS_SCHEDULE_DISABLED
+    }
+  });
+}
+
 async function _flushBatch(env) {
   if (batchQueue.size === 0) return;
 
@@ -685,10 +703,7 @@ export async function handleWebSocketUpgrade(request, env) {
 export async function handleUpdateWebSocketUpgrade(request, env) {
   const settings = await loadSiteSettings(env.DB);
   if (!isWssReportConfigured(settings)) {
-    return new Response(JSON.stringify({ error: 'Agent WSS report disabled', code: 403 }), {
-      status: 403,
-      headers: { 'Content-Type': 'application/json' }
-    });
+    return createAgentWssDisabledResponse();
   }
   const scheduleState = getWssReportScheduleState(settings);
   if (!scheduleState.active) {

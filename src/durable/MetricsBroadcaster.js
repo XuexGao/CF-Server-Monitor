@@ -54,6 +54,7 @@ const AGENT_REPORT_KIND = 'agent-report';
 const AGENT_WSS_MODE_HEADER = 'X-Agent-Wss-Mode';
 const AGENT_WSS_REASON_HEADER = 'X-Agent-Wss-Reason';
 const AGENT_WSS_SCHEDULE_INACTIVE = 'wss_schedule_inactive';
+const AGENT_WSS_SCHEDULE_DISABLED = 'wss_disabled';
 const ALLOWED_AGENT_REPORT_INTERVALS = new Set([30, 60, 120, 180]);
 const RESOURCE_ALERT_STORAGE_KEY = 'resource_alert_windows_v1';
 const RESOURCE_ALERT_BUCKET_MS = 60 * 1000;
@@ -520,11 +521,35 @@ export class MetricsBroadcaster {
     );
   }
 
+  _closeWsForDisabledAgentSchedule(ws) {
+    this._closeWsWithError(
+      ws,
+      'Agent WSS report disabled',
+      409,
+      {
+        text: AGENT_WSS_SCHEDULE_DISABLED,
+        connection_mode: 'http'
+      },
+      WS_TRY_AGAIN_LATER,
+      AGENT_WSS_SCHEDULE_DISABLED
+    );
+  }
+
   _createAgentWssUnavailableResponse(scheduleState) {
     if (!scheduleState?.configured) {
-      return new Response(JSON.stringify({ error: 'Agent WSS report disabled', code: 403 }), {
-        status: 403,
-        headers: { 'Content-Type': 'application/json' }
+      return new Response(JSON.stringify({
+        error: 'Agent WSS report disabled',
+        code: 409,
+        text: AGENT_WSS_SCHEDULE_DISABLED,
+        connection_mode: 'http'
+      }), {
+        status: 409,
+        headers: {
+          'Cache-Control': 'no-store',
+          'Content-Type': 'application/json',
+          [AGENT_WSS_MODE_HEADER]: scheduleState.mode,
+          [AGENT_WSS_REASON_HEADER]: scheduleState.reason
+        }
       });
     }
 
@@ -854,7 +879,7 @@ export class MetricsBroadcaster {
     return { matched, delivered };
   }
 
-  _closeAgentReportWebSockets(message = 'Agent WSS report disabled') {
+  _closeAgentReportWebSockets() {
     let matched = 0;
     let closed = 0;
 
@@ -864,16 +889,7 @@ export class MetricsBroadcaster {
       matched += 1;
 
       try {
-        this._sendWsJson(ws, {
-          type: 'error',
-          ts: Date.now(),
-          error: message,
-          code: 403
-        });
-      } catch (_) {}
-
-      try {
-        ws.close(WS_POLICY_VIOLATION, message);
+        this._closeWsForDisabledAgentSchedule(ws);
         closed += 1;
       } catch (_) {}
     }
@@ -1216,7 +1232,7 @@ export class MetricsBroadcaster {
       const settings = await loadSiteSettings(this.env.DB);
       const scheduleState = getWssReportScheduleState(settings);
       if (!scheduleState.configured) {
-        this._closeWsWithError(ws, 'Agent WSS report disabled', 403);
+        this._closeWsForDisabledAgentSchedule(ws);
         return;
       }
       if (!scheduleState.active) {

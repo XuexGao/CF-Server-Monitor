@@ -137,6 +137,28 @@ test('private frontend WebSocket rejects unauthenticated clients', async () => {
   assert.equal(forwarded, false);
 });
 
+test('Agent WSS upgrade rejects disabled state with fast-switch envelope', async () => {
+  clearSiteSettingsCache();
+  let forwarded = false;
+  const response = await handleUpdateWebSocketUpgrade(
+    makeWebSocketUpgradeRequest('https://example.com/update'),
+    makeWebSocketEnv({
+      wss_report_enabled: 'false'
+    }, () => {
+      forwarded = true;
+    })
+  );
+
+  assert.equal(response.status, 409);
+  assert.equal(response.headers.get('X-Agent-Wss-Mode'), 'disabled');
+  assert.equal(response.headers.get('X-Agent-Wss-Reason'), 'wss_disabled');
+  const body = await response.json();
+  assert.equal(body.code, 409);
+  assert.equal(body.text, 'wss_disabled');
+  assert.equal(body.connection_mode, 'http');
+  assert.equal(forwarded, false);
+});
+
 test('private frontend WebSocket accepts query token auth', async () => {
   let forwardedUrl = '';
   const env = makeWebSocketEnv({ is_public: 'false' }, request => {
@@ -230,6 +252,29 @@ test('Durable Object rechecks Agent WSS schedule before accepting a socket', asy
   assert.equal(response.headers.get('X-Agent-Wss-Reason'), 'wss_schedule_inactive');
   const body = await response.json();
   assert.equal(body.text, 'wss_schedule_inactive');
+  assert.equal(body.connection_mode, 'http');
+  assert.equal(broadcaster.standardAgentWebSocketCount, 0);
+});
+
+test('Durable Object rejects Agent WSS upgrade when report is disabled', async () => {
+  clearSiteSettingsCache();
+  const broadcaster = makeBroadcaster([], {
+    DB: makeSettingsDb({
+      wss_report_enabled: 'false'
+    })
+  });
+
+  const response = await broadcaster._handleAgentReportWebSocket(
+    makeWebSocketUpgradeRequest('http://internal/update'),
+    new URL('http://internal/update')
+  );
+
+  assert.equal(response.status, 409);
+  assert.equal(response.headers.get('X-Agent-Wss-Mode'), 'disabled');
+  assert.equal(response.headers.get('X-Agent-Wss-Reason'), 'wss_disabled');
+  const body = await response.json();
+  assert.equal(body.code, 409);
+  assert.equal(body.text, 'wss_disabled');
   assert.equal(body.connection_mode, 'http');
   assert.equal(broadcaster.standardAgentWebSocketCount, 0);
 });
@@ -577,10 +622,12 @@ test('agent report mode change closes existing Agent WSS when disabled', async (
   });
   assert.equal(sent.length, 1);
   assert.equal(sent[0].type, 'error');
-  assert.equal(sent[0].code, 403);
+  assert.equal(sent[0].code, 409);
+  assert.equal(sent[0].text, 'wss_disabled');
+  assert.equal(sent[0].connection_mode, 'http');
   assert.deepEqual(closed, [{
-    code: 1008,
-    reason: 'Agent WSS report disabled'
+    code: 1013,
+    reason: 'wss_disabled'
   }]);
 });
 
