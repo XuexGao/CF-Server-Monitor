@@ -22,18 +22,6 @@
     initial-value: 0;
 }
 
-@property --ring-color {
-    syntax: '<color>';
-    inherits: true;
-    initial-value: #4da6ff;
-}
-
-@property --swap-ring-color {
-    syntax: '<color>';
-    inherits: true;
-    initial-value: #4da6ff;
-}
-
 :root {
     /* Background Colors */
     --bg-primary: #0a0e14;
@@ -1024,7 +1012,7 @@ body::before {
     height: 100%;
     background: linear-gradient(90deg, var(--accent-green), var(--accent-cyan));
     border-radius: 999px;
-    transition: width 0.3s ease;
+    transition: width 0.18s ease;
 }
 
 .quota-label-with-help {
@@ -1306,11 +1294,8 @@ body::before {
     align-items: center;
     justify-content: center;
     --ring-thickness: 5px;
-    transition:
-        --ring-value 0.3s ease,
-        --ring-color 0.3s ease,
-        --swap-ring-value 0.3s ease,
-        --swap-ring-color 0.3s ease;
+    transition: --ring-value 0.18s ease, --swap-ring-value 0.18s ease;
+    contain: paint;
 }
 
 .metric-ring-track,
@@ -1330,7 +1315,6 @@ body::before {
     background: conic-gradient(from -90deg, var(--ring-color) 0 calc(var(--ring-value) * 1%), rgba(255, 255, 255, 0.03) 0 100%);
     -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - var(--ring-thickness)), #000 calc(100% - var(--ring-thickness) + 1px));
     mask: radial-gradient(farthest-side, transparent calc(100% - var(--ring-thickness)), #000 calc(100% - var(--ring-thickness) + 1px));
-    transition: background 0.3s ease;
 }
 
 .metric-ring-chart-memory {
@@ -1354,7 +1338,6 @@ body::before {
     background: conic-gradient(from -90deg, var(--swap-ring-color) 0 calc(var(--swap-ring-value) * 1%), rgba(255, 255, 255, 0.025) 0 100%);
     -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - var(--swap-ring-thickness)), #000 calc(100% - var(--swap-ring-thickness) + 1px));
     mask: radial-gradient(farthest-side, transparent calc(100% - var(--swap-ring-thickness)), #000 calc(100% - var(--swap-ring-thickness) + 1px));
-    transition: background 0.3s ease;
 }
 
 .metric-ring-chart-memory.has-swap-ring .metric-ring-center {
@@ -1481,7 +1464,7 @@ body::before {
     height: 100%;
     border-radius: 999px;
     background: var(--accent-blue);
-    transition: width 0.3s ease, background 0.3s ease;
+    transition: width 0.18s ease;
 }
 
 /* Ping row — ring card */
@@ -1575,7 +1558,7 @@ body::before {
 .stat-bar-fill {
     height: 100%;
     border-radius: 2px;
-    transition: width 0.3s ease, background 0.3s ease;
+    transition: width 0.18s ease;
 }
 
 .stat-value {
@@ -1951,6 +1934,22 @@ body::before {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
     gap: 12px;
+}
+
+/* Skip layout and paint work for cards outside the viewport. */
+.servers-grid > .server-card {
+    content-visibility: auto;
+    contain-intrinsic-size: 0 420px;
+}
+
+/* A large live dashboard should settle updates without animating every item. */
+.view-panel.high-density .metric-ring-chart,
+.view-panel.high-density .metric-ring-progress,
+.view-panel.high-density .metric-ring-swap-progress,
+.view-panel.high-density .server-card-limit-fill,
+.view-panel.high-density .stat-bar-fill,
+.view-panel.high-density .quota-progress-fill {
+    transition: none;
 }
 
 .group-section {
