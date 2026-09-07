@@ -369,7 +369,8 @@ export function useServerCardData(props) {
 
   const threeNetDetails = computed(() => THREE_NET_DEFS
     .map(def => {
-      const label = trans.value[def.labelKey] || def.fallbackLabel
+      const customName = props.sysConfig?.[`custom_${def.key}_name`]
+      const label = String(customName || trans.value[def.labelKey] || def.fallbackLabel)
       const pingSeries = getLatencySeries('ping', def.key)
       const lossSeries = getLatencySeries('loss', def.key)
       const pointCount = Math.max(pingSeries.length, lossSeries.length, getLatencyWindowPointCount())
@@ -419,7 +420,11 @@ export function useServerCardData(props) {
     { label: 'CT', value: props.server.ping_ct },
     { label: 'CU', value: props.server.ping_cu },
     { label: 'CM', value: props.server.ping_cm },
-    { label: 'BGP', value: props.server.ping_bd }
+    { label: 'BGP', value: props.server.ping_bd },
+    { label: props.server.node_1_name || 'Node 1', value: props.server.ping_node_1 },
+    { label: props.server.node_2_name || 'Node 2', value: props.server.ping_node_2 },
+    { label: props.server.node_3_name || 'Node 3', value: props.server.ping_node_3 },
+    { label: props.server.node_4_name || 'Node 4', value: props.server.ping_node_4 }
   ].filter(ping => !isPingDisabled(ping.value)))
 
   const hasPingData = computed(() => pingList.value.length > 0)

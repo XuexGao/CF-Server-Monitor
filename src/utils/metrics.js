@@ -186,6 +186,14 @@ export function mergeMetricsIntoServer(server, metrics) {
   server.loss_cu = normalizeProbeMetric(metrics.loss_cu);
   server.loss_cm = normalizeProbeMetric(metrics.loss_cm);
   server.loss_bd = normalizeProbeMetric(metrics.loss_bd);
+  server.ping_node_1 = normalizeProbeMetric(metrics.ping_node_1);
+  server.ping_node_2 = normalizeProbeMetric(metrics.ping_node_2);
+  server.ping_node_3 = normalizeProbeMetric(metrics.ping_node_3);
+  server.ping_node_4 = normalizeProbeMetric(metrics.ping_node_4);
+  server.loss_node_1 = normalizeProbeMetric(metrics.loss_node_1);
+  server.loss_node_2 = normalizeProbeMetric(metrics.loss_node_2);
+  server.loss_node_3 = normalizeProbeMetric(metrics.loss_node_3);
+  server.loss_node_4 = normalizeProbeMetric(metrics.loss_node_4);
   server.ram_total = metrics.ram_total || 0;
   server.ram_used = metrics.ram_used || 0;
   server.swap_total = metrics.swap_total || 0;

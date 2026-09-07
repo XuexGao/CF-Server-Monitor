@@ -13,7 +13,7 @@ import { scheduleAgentConfigChanged, scheduleAgentReportModeChanged } from '../u
 import { detectBillingCycle, detectCurrencySymbol, normalizeBillingCycle, normalizeCurrency, normalizePrice, renewExpireDateIfNeeded } from '../utils/serverBilling.js';
 import { THEME_PREVIEW_AUTH_TTL_SECONDS } from '../utils/config.js';
 
-const PING_NODE_FIELDS = ['custom_ct', 'custom_cu', 'custom_cm', 'custom_bd'];
+const PING_NODE_FIELDS = ['custom_ct', 'custom_cu', 'custom_cm', 'custom_bd', 'node_1', 'node_2', 'node_3', 'node_4'];
 const THEME_PREVIEW_AUTH_COOKIE = 'cfsm_theme_preview_auth';
 const DURABLE_OBJECTS_WEBSOCKET_MESSAGE_BILLING_RATIO = 20;
 
@@ -987,7 +987,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
       });
     }
     else if (data.action === 'edit') {
-      const { id, name, server_group, region, tags, note, price, billing_cycle, auto_renewal, currency, expire_date, traffic_limit, traffic_calc_type, interface: networkInterfaceInput, reset_day, collect_interval, report_interval, wss_report_interval, connection_mode, ping_mode, auto_update, custom_ct, custom_cu, custom_cm, custom_bd, rx_correction, tx_correction, offline_notify_disabled, is_hidden } = data;
+      const { id, name, server_group, region, tags, note, price, billing_cycle, auto_renewal, currency, expire_date, traffic_limit, traffic_calc_type, interface: networkInterfaceInput, reset_day, collect_interval, report_interval, wss_report_interval, connection_mode, ping_mode, auto_update, custom_ct, custom_cu, custom_cm, custom_bd, node_1, node_2, node_3, node_4, rx_correction, tx_correction, offline_notify_disabled, is_hidden } = data;
       if (!id || !isValidUUID(id)) {
         return createBadRequestResponse('invalidServerId');
       }
@@ -1005,7 +1005,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
       }
       const normalizedAgentConfig = agentConfigResult.config;
 
-      const pingNodes = normalizePingNodeFields({ custom_ct, custom_cu, custom_cm, custom_bd });
+      const pingNodes = normalizePingNodeFields({ custom_ct, custom_cu, custom_cm, custom_bd, node_1, node_2, node_3, node_4 });
       if (!pingNodes.valid) {
         return createBadRequestResponse('invalidPingNodeFormat');
       }
@@ -1042,7 +1042,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
       try {
         await env.DB.prepare(`
           UPDATE servers
-          SET name = ?, server_group = ?, region = ?, tags = ?, note = ?, price = ?, billing_cycle = ?, auto_renewal = ?, currency = ?, expire_date = ?, traffic_limit = ?, traffic_calc_type = ?, "interface" = ?, reset_day = ?, collect_interval = ?, report_interval = ?, wss_report_interval = ?, connection_mode = ?, ping_mode = ?, auto_update = ?, custom_ct = ?, custom_cu = ?, custom_cm = ?, custom_bd = ?, rx_correction = ?, tx_correction = ?, offline_notify_disabled = ?, is_hidden = ?
+          SET name = ?, server_group = ?, region = ?, tags = ?, note = ?, price = ?, billing_cycle = ?, auto_renewal = ?, currency = ?, expire_date = ?, traffic_limit = ?, traffic_calc_type = ?, "interface" = ?, reset_day = ?, collect_interval = ?, report_interval = ?, wss_report_interval = ?, connection_mode = ?, ping_mode = ?, auto_update = ?, custom_ct = ?, custom_cu = ?, custom_cm = ?, custom_bd = ?, node_1 = ?, node_2 = ?, node_3 = ?, node_4 = ?, rx_correction = ?, tx_correction = ?, offline_notify_disabled = ?, is_hidden = ?
           WHERE id = ?
         `).bind(
           name || '',
@@ -1069,6 +1069,10 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
           pingNodes.values.custom_cu,
           pingNodes.values.custom_cm,
           pingNodes.values.custom_bd,
+          pingNodes.values.node_1,
+          pingNodes.values.node_2,
+          pingNodes.values.node_3,
+          pingNodes.values.node_4,
           safeRx,
           safeTx,
           normalizeBooleanFlag(offline_notify_disabled),
@@ -1186,9 +1190,9 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
             INSERT INTO servers (id, name, server_group, region, tags, note, price, billing_cycle, auto_renewal,
               currency, expire_date,
               traffic_limit, traffic_calc_type, "interface", reset_day, collect_interval, report_interval, wss_report_interval, connection_mode, ping_mode,
-              auto_update, custom_ct, custom_cu, custom_cm, custom_bd, rx_correction, tx_correction,
+              auto_update, custom_ct, custom_cu, custom_cm, custom_bd, node_1, node_2, node_3, node_4, rx_correction, tx_correction,
               offline_notify_disabled, is_hidden, sort_order, history_partition_id, timestamp)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `).bind(
             server.id,
             server.name || '',
@@ -1215,6 +1219,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
             server.custom_cu || '',
             server.custom_cm || '',
             server.custom_bd || '',
+            server.node_1 || '', server.node_2 || '', server.node_3 || '', server.node_4 || '',
             server.rx_correction ?? null,
             server.tx_correction ?? null,
             normalizeBooleanFlag(server.offline_notify_disabled),

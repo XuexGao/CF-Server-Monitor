@@ -187,6 +187,10 @@ Headers: (可选) Authorization: Bearer <jwt>, X-Turnstile-Token / X-Turnstile-V
   "turnstile_enabled": true,
   "turnstile_login_enabled": true,
   "turnstile_site_key": "1x00000000000000000000AA",
+  "custom_ct_name": "电信",
+  "custom_cu_name": "联通",
+  "custom_cm_name": "移动",
+  "custom_bd_name": "BGP",
   "site_title": "My Server Monitor",
   "preferred_theme": "auto",
   "default_language": "auto",
@@ -214,6 +218,7 @@ Headers: (可选) Authorization: Bearer <jwt>, X-Turnstile-Token / X-Turnstile-V
 | `turnstile_enabled`  | boolean      | 是否启用全局 API 人机验证 |
 | `turnstile_login_enabled` | boolean | 是否启用登录页人机验证 |
 | `turnstile_site_key` | string       | Turnstile 前端公钥  |
+| `custom_ct_name` / `custom_cu_name` / `custom_cm_name` / `custom_bd_name` | string | Ping 指标显示名称；分别用于 CT、CU、CM、BGP |
 | `site_title`         | string       | 站点标题 |
 | `preferred_theme`    | string       | 默认外观：`auto` 跟随系统 / `dark` 深色 / `light` 浅色 |
 | `default_language`   | string       | 默认语言：`auto` 按浏览器语言自动选择中文或英文 / `zh` 中文 / `en` 英文 |
@@ -747,10 +752,18 @@ interface Server {
   ping_cu: number | null | false;
   ping_cm: number | null | false;
   ping_bd: number | null | false;
+  ping_node_1: number | null | false;
+  ping_node_2: number | null | false;
+  ping_node_3: number | null | false;
+  ping_node_4: number | null | false;
   loss_ct: number | null | false;
   loss_cu: number | null | false;
   loss_cm: number | null | false;
   loss_bd: number | null | false;
+  loss_node_1: number | null | false;
+  loss_node_2: number | null | false;
+  loss_node_3: number | null | false;
+  loss_node_4: number | null | false;
   ping?: LatencyWindowPoint[]; // 仅 /api/servers 的列表项返回；三网详情关闭时为空数组
   loss?: LatencyWindowPoint[]; // 仅 /api/servers 的列表项返回；三网详情关闭时为空数组
   ram_total: number;
@@ -837,3 +850,5 @@ interface WsMessage {
   }>;
 }
 ```
+
+延时与丢包字段的展示约定：`false`（或 REST/历史字段缺失时归一化的 `false`）表示节点未配置/未上报/未取样，前端应不显示；`null` 表示该轮明确探测超时/未取到有效 RTT，详情页可显示为 “Timeout/超时”，不应把 `null` 当“无数据”从指标区和图表图例中隐藏。数值 `0`（包括 `0%` 丢包）是有效数据，必须正常显示。自定义节点显示名使用 `node_1_name` 至 `node_4_name`，未配置时使用 `Node 1` 至 `Node 4`。

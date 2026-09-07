@@ -252,6 +252,10 @@
         :custom-cu="customCu"
         :custom-cm="customCm"
         :custom-bd="customBd"
+        :node-1="node1"
+        :node-2="node2"
+        :node-3="node3"
+        :node-4="node4"
         :network-interface="networkInterface"
         :reset-day="resetDay"
         :rx-correction="rxCorrection"
@@ -941,6 +945,10 @@ const settings = ref({
   custom_cu: '',
   custom_cm: '',
   custom_bd: '',
+  custom_ct_name: '电信',
+  custom_cu_name: '联通',
+  custom_cm_name: '移动',
+  custom_bd_name: 'BGP',
   theme_url: '',
   csp_static: '',
   csp_api: ''
@@ -1005,6 +1013,7 @@ const editForm = ref({
   custom_cu: '',
   custom_cm: '',
   custom_bd: '',
+  node_1: '', node_2: '', node_3: '', node_4: '',
   rx_correction: '',
   tx_correction: '',
   auto_update: false,
@@ -1034,6 +1043,7 @@ const createBatchEditDefaults = () => ({
   custom_cu: '',
   custom_cm: '',
   custom_bd: '',
+  node_1: '', node_2: '', node_3: '', node_4: '',
   rx_correction: '',
   tx_correction: '',
   auto_update: false,
@@ -1088,6 +1098,10 @@ const customCt = ref('')
 const customCu = ref('')
 const customCm = ref('')
 const customBd = ref('')
+const node1 = ref('')
+const node2 = ref('')
+const node3 = ref('')
+const node4 = ref('')
 const networkInterface = ref('')
 const resetDay = ref(1)
 const rxCorrection = ref('')
@@ -1111,10 +1125,11 @@ watch(isWssReportEnabled, (enabled) => {
 })
 
 const getPingNodeLabel = (field) => ({
-  custom_ct: trans.value.customCt,
-  custom_cu: trans.value.customCu,
-  custom_cm: trans.value.customCm,
-  custom_bd: trans.value.customBd
+  custom_ct: settings.value.custom_ct_name || trans.value.customCt,
+  custom_cu: settings.value.custom_cu_name || trans.value.customCu,
+  custom_cm: settings.value.custom_cm_name || trans.value.customCm,
+  custom_bd: settings.value.custom_bd_name || trans.value.customBd
+  ,node_1: settings.value.node_1_name || 'Node 1', node_2: settings.value.node_2_name || 'Node 2', node_3: settings.value.node_3_name || 'Node 3', node_4: settings.value.node_4_name || 'Node 4'
 })[field] || field
 
 const getPingNodeValidation = (source) => {
@@ -1376,6 +1391,12 @@ const loadSettings = async () => {
         custom_cu: settingsData.custom_cu || '',
         custom_cm: settingsData.custom_cm || '',
         custom_bd: settingsData.custom_bd || '',
+        node_1: settingsData.node_1 || '', node_2: settingsData.node_2 || '', node_3: settingsData.node_3 || '', node_4: settingsData.node_4 || '',
+        custom_ct_name: settingsData.custom_ct_name || '电信',
+        custom_cu_name: settingsData.custom_cu_name || '联通',
+        custom_cm_name: settingsData.custom_cm_name || '移动',
+        custom_bd_name: settingsData.custom_bd_name || 'BGP',
+        node_1_name: settingsData.node_1_name || 'Node 1', node_2_name: settingsData.node_2_name || 'Node 2', node_3_name: settingsData.node_3_name || 'Node 3', node_4_name: settingsData.node_4_name || 'Node 4',
         theme_url: settingsData.theme_url || '',
         csp_static: settingsData.csp_static || '',
         csp_api: settingsData.csp_api || ''
@@ -1547,6 +1568,12 @@ const saveSettings = async () => {
       custom_cu: pingNodeValidation.values.custom_cu,
       custom_cm: pingNodeValidation.values.custom_cm,
       custom_bd: pingNodeValidation.values.custom_bd,
+      node_1: pingNodeValidation.values.node_1, node_2: pingNodeValidation.values.node_2, node_3: pingNodeValidation.values.node_3, node_4: pingNodeValidation.values.node_4,
+      custom_ct_name: settings.value.custom_ct_name.trim(),
+      custom_cu_name: settings.value.custom_cu_name.trim(),
+      custom_cm_name: settings.value.custom_cm_name.trim(),
+      custom_bd_name: settings.value.custom_bd_name.trim(),
+      node_1_name: settings.value.node_1_name.trim(), node_2_name: settings.value.node_2_name.trim(), node_3_name: settings.value.node_3_name.trim(), node_4_name: settings.value.node_4_name.trim(),
       csp_static: settings.value.csp_static || '',
       csp_api: settings.value.csp_api || ''
     }
@@ -1671,6 +1698,10 @@ const copyCmd = (serverId) => {
   customCu.value = server?.custom_cu || settings.value.custom_cu
   customCm.value = server?.custom_cm || settings.value.custom_cm
   customBd.value = server?.custom_bd || settings.value.custom_bd
+  node1.value = server?.node_1 || settings.value.node_1
+  node2.value = server?.node_2 || settings.value.node_2
+  node3.value = server?.node_3 || settings.value.node_3
+  node4.value = server?.node_4 || settings.value.node_4
   networkInterface.value = server?.interface || ''
   resetDay.value = server?.reset_day ?? 1
   rxCorrection.value = server?.rx_correction ?? ''
@@ -1715,6 +1746,7 @@ const getCustomInstallCommand = () => {
     if (customCu.value) params.push(`-cu='${customCu.value}'`)
     if (customCm.value) params.push(`-cm='${customCm.value}'`)
     if (customBd.value) params.push(`-bd='${customBd.value}'`)
+    if (node1.value) params.push(`-node_1='${node1.value}'`); if (node2.value) params.push(`-node_2='${node2.value}'`); if (node3.value) params.push(`-node_3='${node3.value}'`); if (node4.value) params.push(`-node_4='${node4.value}'`)
     if (networkInterface.value) params.push(`-interface='${networkInterface.value}'`)
     if (hasCorrectionValue(rxCorrection.value)) params.push(`-rx_correction='${rxCorrection.value}'`)
     if (hasCorrectionValue(txCorrection.value)) params.push(`-tx_correction='${txCorrection.value}'`)
@@ -1738,6 +1770,7 @@ const getCustomInstallCommand = () => {
   if (customCu.value) params.push(`-cu=${customCu.value}`)
   if (customCm.value) params.push(`-cm=${customCm.value}`)
   if (customBd.value) params.push(`-bd=${customBd.value}`)
+  if (node1.value) params.push(`-node_1=${node1.value}`); if (node2.value) params.push(`-node_2=${node2.value}`); if (node3.value) params.push(`-node_3=${node3.value}`); if (node4.value) params.push(`-node_4=${node4.value}`)
   if (networkInterface.value) params.push(`-interface=${networkInterface.value}`)
   if (hasCorrectionValue(rxCorrection.value)) params.push(`-rx_correction=${rxCorrection.value}`)
   if (hasCorrectionValue(txCorrection.value)) params.push(`-tx_correction=${txCorrection.value}`)
@@ -1810,6 +1843,7 @@ const createEditFormFromServer = (server) => ({
     custom_cu: server.custom_cu || '',
     custom_cm: server.custom_cm || '',
     custom_bd: server.custom_bd || '',
+    node_1: server.node_1 || '', node_2: server.node_2 || '', node_3: server.node_3 || '', node_4: server.node_4 || '',
     rx_correction: server.rx_correction ?? '',
     tx_correction: server.tx_correction ?? '',
     auto_update: server.auto_update === '1' || server.auto_update === 1 || server.auto_update === true,
@@ -1894,6 +1928,7 @@ const buildEditPayloadFromForm = (form) => {
       custom_cu: pingNodeValidation.values.custom_cu,
       custom_cm: pingNodeValidation.values.custom_cm,
       custom_bd: pingNodeValidation.values.custom_bd,
+      node_1: pingNodeValidation.values.node_1, node_2: pingNodeValidation.values.node_2, node_3: pingNodeValidation.values.node_3, node_4: pingNodeValidation.values.node_4,
       rx_correction: form.rx_correction,
       tx_correction: form.tx_correction,
       auto_update: form.auto_update ? '1' : '0',
@@ -1959,6 +1994,7 @@ const saveEdit = async () => {
     custom_cu: pingNodeValidation.values.custom_cu,
     custom_cm: pingNodeValidation.values.custom_cm,
     custom_bd: pingNodeValidation.values.custom_bd,
+    node_1: pingNodeValidation.values.node_1, node_2: pingNodeValidation.values.node_2, node_3: pingNodeValidation.values.node_3, node_4: pingNodeValidation.values.node_4,
     rx_correction: editForm.value.rx_correction,
     tx_correction: editForm.value.tx_correction,
     auto_update: editForm.value.auto_update ? '1' : '0',

@@ -306,10 +306,9 @@
           </span>
           <div class="chart-header-actions">
             <div class="ping-indicator">
-              <span v-if="avgLossCt !== null" class="ping-ct">{{ trans.pingCt }} <b>{{ avgLossCt }}%</b></span>
-              <span v-if="avgLossCu !== null" class="ping-cu">{{ trans.pingCu }} <b>{{ avgLossCu }}%</b></span>
-              <span v-if="avgLossCm !== null" class="ping-cm">{{ trans.pingCm }} <b>{{ avgLossCm }}%</b></span>
-              <span v-if="avgLossBd !== null" class="ping-bd">{{ trans.pingBd }} <b>{{ avgLossBd }}%</b></span>
+              <span v-for="item in visibleLossStats" :key="item.field" :class="item.className">
+                {{ item.label }} <b>{{ item.value }}%</b>
+              </span>
             </div>
             <ChartExpandButton :expanded="isChartExpanded('loss')" @toggle="toggleChartExpanded('loss')" />
           </div>
@@ -449,8 +448,13 @@ const PING_FIELD_DEFS = [
   { field: 'ping_ct', lossField: 'loss_ct', labelKey: 'pingCt', className: 'ping-ct', datasetIndex: 0 },
   { field: 'ping_cu', lossField: 'loss_cu', labelKey: 'pingCu', className: 'ping-cu', datasetIndex: 1 },
   { field: 'ping_cm', lossField: 'loss_cm', labelKey: 'pingCm', className: 'ping-cm', datasetIndex: 2 },
-  { field: 'ping_bd', lossField: 'loss_bd', labelKey: 'pingBd', className: 'ping-bd', datasetIndex: 3 }
+  { field: 'ping_bd', lossField: 'loss_bd', labelKey: 'pingBd', className: 'ping-bd', datasetIndex: 3 },
+  { field: 'ping_node_1', lossField: 'loss_node_1', labelKey: 'node1', className: 'ping-node-1', datasetIndex: 4 },
+  { field: 'ping_node_2', lossField: 'loss_node_2', labelKey: 'node2', className: 'ping-node-2', datasetIndex: 5 },
+  { field: 'ping_node_3', lossField: 'loss_node_3', labelKey: 'node3', className: 'ping-node-3', datasetIndex: 6 },
+  { field: 'ping_node_4', lossField: 'loss_node_4', labelKey: 'node4', className: 'ping-node-4', datasetIndex: 7 }
 ]
+const pingLabel = (key) => String(appConfig?.[key.startsWith('node_') ? `${key}_name` : `custom_${key}_name`] || trans.value[`ping${key.toUpperCase().charAt(0)}${key.slice(1)}`] || key.toUpperCase())
 
 const DISK_IO_FIELDS = ['read_bps', 'write_bps', 'read_iops', 'write_iops', 'await_ms', 'util']
 const EMPTY_DISK_IO = Object.freeze(Object.fromEntries(DISK_IO_FIELDS.map(field => [field, 0])))
@@ -601,10 +605,18 @@ const avgPingCt = ref(null)
 const avgPingCu = ref(null)
 const avgPingCm = ref(null)
 const avgPingBd = ref(null)
+const avgPingNode1 = ref(null)
+const avgPingNode2 = ref(null)
+const avgPingNode3 = ref(null)
+const avgPingNode4 = ref(null)
 const avgLossCt = ref(null)
 const avgLossCu = ref(null)
 const avgLossCm = ref(null)
 const avgLossBd = ref(null)
+const avgLossNode1 = ref(null)
+const avgLossNode2 = ref(null)
+const avgLossNode3 = ref(null)
+const avgLossNode4 = ref(null)
 let isInitializingCharts = false
 let databaseUpgradeAlertShown = false
 let lastReportChartUpdateTime = 0
@@ -650,16 +662,45 @@ const avgPingRefs = {
   ping_ct: avgPingCt,
   ping_cu: avgPingCu,
   ping_cm: avgPingCm,
-  ping_bd: avgPingBd
+  ping_bd: avgPingBd,
+  ping_node_1: avgPingNode1,
+  ping_node_2: avgPingNode2,
+  ping_node_3: avgPingNode3,
+  ping_node_4: avgPingNode4
 }
 
-const visiblePingFields = computed(() => PING_FIELD_DEFS.filter(item => !isDisabledProbeMetric(server.value[item.field])))
+const avgLossRefs = {
+  loss_ct: avgLossCt,
+  loss_cu: avgLossCu,
+  loss_cm: avgLossCm,
+  loss_bd: avgLossBd,
+  loss_node_1: avgLossNode1,
+  loss_node_2: avgLossNode2,
+  loss_node_3: avgLossNode3,
+  loss_node_4: avgLossNode4
+}
+
+const visiblePingFields = computed(() => PING_FIELD_DEFS.filter(item => {
+  const value = server.value[item.field]
+  return value !== undefined && !isDisabledProbeMetric(value)
+}))
 const hasPingData = computed(() => visiblePingFields.value.length > 0)
 const visiblePingStats = computed(() => visiblePingFields.value.map(item => ({
   ...item,
-  label: trans.value[item.labelKey],
+  label: pingLabel(item.field.replace('ping_', '')),
   value: avgPingRefs[item.field].value
 })))
+const visibleLossFields = computed(() => PING_FIELD_DEFS.filter(item => (
+  server.value[item.field] !== undefined &&
+  !isDisabledProbeMetric(server.value[item.field]) &&
+  (lossHistoryFields.value[item.lossField] || isLossValid(server.value[item.lossField]))
+)))
+const visibleLossStats = computed(() => visibleLossFields.value.map(item => ({
+  ...item,
+  field: item.lossField,
+  label: pingLabel(item.field.replace('ping_', '')),
+  value: avgLossRefs[item.lossField].value
+})).filter(item => item.value !== null))
 
 const trafficUsageBytes = computed(() => getTrafficUsageBytes(server.value))
 
@@ -682,7 +723,7 @@ const parseLoadAvg = (loadAvgStr) => {
 
 const isLossValid = (value) => !isDisabledProbeMetric(value) && value !== null && value !== undefined && value !== '' && !Number.isNaN(parseFloat(value))
 const formatLoss = (value) => isLossValid(value) ? `${Math.max(0, Math.min(100, parseFloat(value))).toFixed(0)}%` : ''
-const hasLossData = computed(() => visiblePingFields.value.some(item => lossHistoryFields.value[item.lossField] || isLossValid(server.value[item.lossField])))
+const hasLossData = computed(() => visibleLossFields.value.length > 0)
 const formatPing = (value) => (value === null || value === undefined || value === '' || value === 'null') ? 'Timeout' : `${value}ms`
 
 const parseBootTimeToMs = (bootTime) => {
@@ -822,8 +863,8 @@ const CHART_DEFS = [
   { key: 'proc', ref: () => procChartRef.value, datasets: [ds('Processes', '#f778ba', { fill: true })] },
   { key: 'net', ref: () => netChartRef.value, datasets: [ds('Download', '#00d4aa', { fill: true }), ds('Upload', '#4da6ff', { fill: true })], legend: true, formatValue: (v) => formatBytes(v) + '/s', tickFormat: (v) => formatBytes(v) },
   { key: 'conn', ref: () => connChartRef.value, datasets: [ds('TCP', '#b392f0'), ds('UDP', '#f778ba')], legend: true },
-  { key: 'ping', ref: () => pingChartRef.value, datasets: [ds('CT', '#00d4aa', { tension: 0.3 }), ds('CU', '#ffb870', { tension: 0.3 }), ds('CM', '#4da6ff', { tension: 0.3 }), ds('BGP', '#b392f0', { tension: 0.3 })], unit: ' ms', legend: true },
-  { key: 'loss', ref: () => lossChartRef.value, datasets: [ds('CT', '#00d4aa', { tension: 0.3 }), ds('CU', '#ffb870', { tension: 0.3 }), ds('CM', '#4da6ff', { tension: 0.3 }), ds('BGP', '#b392f0', { tension: 0.3 })], unit: '%', legend: true },
+  { key: 'ping', ref: () => pingChartRef.value, datasets: ['ct', 'cu', 'cm', 'bd', 'node_1', 'node_2', 'node_3', 'node_4'].map((key, i) => ds(pingLabel(key), ['#00d4aa', '#ffb870', '#4da6ff', '#b392f0', '#ff7b72', '#79c0ff', '#7ee787', '#ffa657'][i], { tension: 0.3 })), unit: ' ms', legend: true },
+  { key: 'loss', ref: () => lossChartRef.value, datasets: ['ct', 'cu', 'cm', 'bd', 'node_1', 'node_2', 'node_3', 'node_4'].map((key, i) => ds(pingLabel(key), ['#00d4aa', '#ffb870', '#4da6ff', '#b392f0', '#ff7b72', '#79c0ff', '#7ee787', '#ffa657'][i], { tension: 0.3 })), unit: '%', legend: true },
   { key: 'load', ref: () => loadChartRef.value, datasets: [ds(trans.value.load1m || '1 Min', '#00d4aa', { tension: 0.3 }), ds(trans.value.load5m || '5 Min', '#ffb870', { tension: 0.3 }), ds(trans.value.load15m || '15 Min', '#4da6ff', { tension: 0.3 })], legend: true }
 ]
 
@@ -835,10 +876,15 @@ const syncProbeChartVisibility = () => {
     for (const item of PING_FIELD_DEFS) {
       const dataset = chart.data.datasets[item.datasetIndex]
       if (!dataset) continue
-      const disabled = isDisabledProbeMetric(server.value[item.field])
+      const value = server.value[item.field]
+      const disabled = isDisabledProbeMetric(value)
+      // 与 WSS 保持一致：字段不存在(undefined)或为 false 时不显示；
+      // null 表示超时，仍需保留在图表中，不能当作“无数据”隐藏。
+      const noReport = value === undefined
       dataset.disabledProbe = disabled
+      dataset.noDataProbe = noReport
       // Only force hide if disabled by config; otherwise preserve user's legend toggle
-      if (disabled) {
+      if (disabled || noReport) {
         dataset.hidden = true
         if (typeof chart.setDatasetVisibility === 'function') {
           chart.setDatasetVisibility(item.datasetIndex, false)
@@ -926,7 +972,10 @@ const initCharts = () => {
             font: { size: 10, family: "'JetBrains Mono', monospace" },
             usePointStyle: true,
             color: chartTheme.axis,
-            filter: (legendItem, chartData) => !chartData.datasets[legendItem.datasetIndex]?.disabledProbe
+            filter: (legendItem, chartData) => {
+              const dataset = chartData.datasets[legendItem.datasetIndex]
+              return !dataset?.disabledProbe && !dataset?.noDataProbe
+            }
           }
         },
         tooltip: {
@@ -1250,10 +1299,18 @@ const loadAllHistory = async (hours) => {
       updateChartDataset(charts.ping, 1, allData, fieldAccessor('ping_cu', true))
       updateChartDataset(charts.ping, 2, allData, fieldAccessor('ping_cm', true))
       updateChartDataset(charts.ping, 3, allData, fieldAccessor('ping_bd', true))
+      updateChartDataset(charts.ping, 4, allData, fieldAccessor('ping_node_1', true))
+      updateChartDataset(charts.ping, 5, allData, fieldAccessor('ping_node_2', true))
+      updateChartDataset(charts.ping, 6, allData, fieldAccessor('ping_node_3', true))
+      updateChartDataset(charts.ping, 7, allData, fieldAccessor('ping_node_4', true))
       updateChartDataset(charts.loss, 0, allData, fieldAccessor('loss_ct', true))
       updateChartDataset(charts.loss, 1, allData, fieldAccessor('loss_cu', true))
       updateChartDataset(charts.loss, 2, allData, fieldAccessor('loss_cm', true))
       updateChartDataset(charts.loss, 3, allData, fieldAccessor('loss_bd', true))
+      updateChartDataset(charts.loss, 4, allData, fieldAccessor('loss_node_1', true))
+      updateChartDataset(charts.loss, 5, allData, fieldAccessor('loss_node_2', true))
+      updateChartDataset(charts.loss, 6, allData, fieldAccessor('loss_node_3', true))
+      updateChartDataset(charts.loss, 7, allData, fieldAccessor('loss_node_4', true))
       updateLoadChart(charts.load, allData)
 
       const avg = (arr, field, skipZero = true) => {
@@ -1264,10 +1321,18 @@ const loadAllHistory = async (hours) => {
       avgPingCu.value = avg(allData, 'ping_cu')
       avgPingCm.value = avg(allData, 'ping_cm')
       avgPingBd.value = avg(allData, 'ping_bd')
+      avgPingNode1.value = avg(allData, 'ping_node_1')
+      avgPingNode2.value = avg(allData, 'ping_node_2')
+      avgPingNode3.value = avg(allData, 'ping_node_3')
+      avgPingNode4.value = avg(allData, 'ping_node_4')
       avgLossCt.value = avg(allData, 'loss_ct', false)
       avgLossCu.value = avg(allData, 'loss_cu', false)
       avgLossCm.value = avg(allData, 'loss_cm', false)
       avgLossBd.value = avg(allData, 'loss_bd', false)
+      avgLossNode1.value = avg(allData, 'loss_node_1', false)
+      avgLossNode2.value = avg(allData, 'loss_node_2', false)
+      avgLossNode3.value = avg(allData, 'loss_node_3', false)
+      avgLossNode4.value = avg(allData, 'loss_node_4', false)
       syncProbeChartVisibility()
     }
 
@@ -1528,14 +1593,19 @@ const appendReportCharts = (data, dataTimestamp) => {
   appendDataToChart(charts.proc, 0, dataTimestamp, data.processes)
   appendDataToChart(charts.conn, 0, dataTimestamp, data.tcp_conn)
   appendDataToChart(charts.conn, 1, dataTimestamp, data.udp_conn)
-  appendDataToChart(charts.ping, 0, dataTimestamp, data.ping_ct, true)
-  appendDataToChart(charts.ping, 1, dataTimestamp, data.ping_cu, true)
-  appendDataToChart(charts.ping, 2, dataTimestamp, data.ping_cm, true)
-  appendDataToChart(charts.ping, 3, dataTimestamp, data.ping_bd, true)
-  appendDataToChart(charts.loss, 0, dataTimestamp, data.loss_ct, false, true)
-  appendDataToChart(charts.loss, 1, dataTimestamp, data.loss_cu, false, true)
-  appendDataToChart(charts.loss, 2, dataTimestamp, data.loss_cm, false, true)
-  appendDataToChart(charts.loss, 3, dataTimestamp, data.loss_bd, false, true)
+
+  // 与 WSS 一致：字段不存在(undefined)或为 false 时不产生图表点，
+  // null 表示超时，保留为断点/超时提示。
+  for (const item of PING_FIELD_DEFS) {
+    const appendProbe = (chart, field, isPing) => {
+      if (!hasOwn(data, field)) return
+      if (isDisabledProbeMetric(data[field])) return
+      appendDataToChart(chart, item.datasetIndex, dataTimestamp, data[field], isPing, !isPing)
+    }
+    appendProbe(charts.ping, item.field, true)
+    appendProbe(charts.loss, item.lossField, false)
+  }
+
   appendLoadChartData(dataTimestamp, data.load_avg)
 }
 

@@ -7,6 +7,7 @@ import { handleUpdate, handleWebSocketUpgrade, handleUpdateWebSocketUpgrade } fr
 import { handleServerAPI, handleServersAPI } from './handlers/dashboard.js';
 import { handleTheme } from './handlers/theme.js';
 import { isValidThemeOptions, loadSettings, loadSiteSettings, loadAppearanceOptions, normalizeFrontendWsTimeoutMinutes, normalizeLongHistoryPoints, saveThemeOptions, setDebug, debug } from './utils/settings.js';
+import { omitNullLossProbeFields } from './handlers/dashboard.js';
 import { checkAuth, simpleAuthResponse } from './middleware/auth.js';
 import { getServerDetail, getMetricsHistoryCache, setMetricsHistoryCache, getCacheDuration } from './utils/cache.js';
 import { AppError, createSuccessResponse, createUnauthorizedResponse, createBadRequestResponse, createNotFoundResponse, createErrorResponse } from './utils/errors.js';
@@ -133,7 +134,10 @@ async function fetchHistoryData(env, request, id, hours, columns, sys = null) {
 
   const cached = getMetricsHistoryCache(id, clampedHours, columns, longHistoryPoints);
   if (cached && Date.now() - cached.timestamp < cacheDuration) {
-    return createSuccessResponse(cached.data, { 'X-Cache': 'HIT' });
+    const cachedData = Array.isArray(cached.data)
+      ? cached.data.map(omitNullLossProbeFields)
+      : cached.data;
+    return createSuccessResponse(cachedData, { 'X-Cache': 'HIT' });
   }
   
   let data;
@@ -160,9 +164,12 @@ async function fetchHistoryData(env, request, id, hours, columns, sys = null) {
     throw e;
   }
   
-  setMetricsHistoryCache(id, clampedHours, columns, data, longHistoryPoints);
+  const sanitizedData = Array.isArray(data)
+    ? data.map(omitNullLossProbeFields)
+    : data;
+  setMetricsHistoryCache(id, clampedHours, columns, sanitizedData, longHistoryPoints);
   
-  return createSuccessResponse(data, { 'X-Cache': 'MISS' });
+  return createSuccessResponse(sanitizedData, { 'X-Cache': 'MISS' });
 }
 
 export default {
@@ -307,6 +314,14 @@ export default {
           turnstile_enabled: turnstileEnabled,
           turnstile_login_enabled: turnstileEnabled || turnstileLoginEnabled,
           turnstile_site_key: sys.turnstile_site_key || '',
+          custom_ct_name: sys.custom_ct_name || '电信',
+          custom_cu_name: sys.custom_cu_name || '联通',
+          custom_cm_name: sys.custom_cm_name || '移动',
+          custom_bd_name: sys.custom_bd_name || 'BGP',
+          node_1_name: sys.node_1_name || 'Node 1',
+          node_2_name: sys.node_2_name || 'Node 2',
+          node_3_name: sys.node_3_name || 'Node 3',
+          node_4_name: sys.node_4_name || 'Node 4',
           site_title: appearanceOptions.site_title || '',
           display_mode: appearanceOptions.display_mode || 'bar',
           preferred_theme: appearanceOptions.preferred_theme || 'auto',

@@ -2,7 +2,7 @@ const HOST_PATTERN = /^[a-zA-Z0-9._-]+$/
 const IPV4_PATTERN = /^(?:\d{1,3}\.){3}\d{1,3}$/
 const IPV4_LIKE_PATTERN = /^(?:\d+\.){3}\d+$/
 
-export const PING_NODE_FIELDS = ['custom_ct', 'custom_cu', 'custom_cm', 'custom_bd']
+export const PING_NODE_FIELDS = ['custom_ct', 'custom_cu', 'custom_cm', 'custom_bd', 'node_1', 'node_2', 'node_3', 'node_4']
 
 const isValidIpv4 = (host) => {
   if (!IPV4_PATTERN.test(host)) return false

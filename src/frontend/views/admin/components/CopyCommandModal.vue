@@ -84,6 +84,9 @@
           <span class="config-label">{{ trans.customBd }}</span>
           <span class="config-value">{{ isBlank(customBd) ? '-' : customBd }}</span>
         </div>
+        <div v-for="(node, index) in [node1, node2, node3, node4]" :key="index" class="config-row">
+          <span class="config-label">Node {{ index + 1 }}</span><span class="config-value">{{ isBlank(node) ? '-' : node }}</span>
+        </div>
         <div class="config-row">
           <span class="config-label">{{ trans.networkInterface }}</span>
           <span class="config-value">{{ isBlank(networkInterface) ? '-' : networkInterface }}</span>
@@ -135,6 +138,7 @@ const props = defineProps({
   customCu: { type: String, default: '' },
   customCm: { type: String, default: '' },
   customBd: { type: String, default: '' },
+  node1: { type: String, default: '' }, node2: { type: String, default: '' }, node3: { type: String, default: '' }, node4: { type: String, default: '' },
   networkInterface: { type: String, default: '' },
   resetDay: { type: [Number, String], default: 1 },
   rxCorrection: { type: [Number, String], default: '' },

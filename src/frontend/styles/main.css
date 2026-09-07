@@ -2237,6 +2237,40 @@ body::before {
     padding: 16px;
 }
 
+.ping-node-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+}
+
+.ping-node-item {
+    min-width: 0;
+    padding: 10px;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    background: var(--bg-primary);
+}
+
+.ping-node-fields {
+    display: grid;
+    grid-template-columns: minmax(70px, 23%) minmax(0, 1fr);
+    align-items: center;
+    gap: 8px;
+}
+
+.ping-node-name {
+    color: var(--accent-cyan);
+    font-weight: 600;
+}
+
+.ping-node-arrow {
+    display: none;
+}
+
+.ping-node-item .text-red {
+    margin-bottom: 0;
+}
+
 .section-title {
     font-size: 13px;
     font-weight: 600;
@@ -3077,6 +3111,7 @@ body::before {
 
 .chart-title {
     font-size: 13px;
+    min-width: 80px;
     font-weight: 600;
     color: var(--text-primary);
     display: flex;
@@ -3997,8 +4032,8 @@ body.server-row-drag-active * {
 .ping-indicator {
     display: flex;
     flex-wrap: wrap;
-    gap: 20px;
-    font-size: 11px;
+    gap: 5px 10px;
+    font-size: 10px;
     font-weight: 500;
 }
 
@@ -4016,6 +4051,22 @@ body.server-row-drag-active * {
 
 .ping-bd {
     color: var(--accent-purple);
+}
+
+.ping-node-1 {
+    color: #ff7b72;
+}
+
+.ping-node-2 {
+    color: #79c0ff;
+}
+
+.ping-node-3 {
+    color: #7ee787;
+}
+
+.ping-node-4 {
+    color: #ffa657;
 }
 
 .modal-body-content {
@@ -4938,6 +4989,14 @@ body.mikus-theme .mikus-stats-mascot-img {
 
     .settings-grid {
         grid-template-columns: 1fr;
+    }
+
+    .ping-node-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .ping-node-fields {
+        grid-template-columns: minmax(90px, 34%) minmax(0, 1fr);
     }
 
     .batch-edit-grid {

@@ -652,30 +652,42 @@
       <div class="settings-section">
         <div class="section-title"><span>▸</span> {{ trans.pingNodes }}</div>
 
-        <div class="form-row">
-          <div class="form-group flex-1">
-            <label class="form-label">{{ trans.customCt }}</label>
+        <div class="ping-node-grid">
+          <div class="ping-node-item">
+            <div class="ping-node-fields"><input type="text" v-model.trim="settings.custom_ct_name" class="form-input ping-node-name"><span class="ping-node-arrow">→</span>
             <input type="text" v-model.trim="settings.custom_ct" :class="['form-input', { 'input-invalid': pingNodeErrors.custom_ct }]" placeholder="gd-ct-dualstack.ip.zstaticcdn.com">
-            <p v-if="pingNodeErrors.custom_ct" class="text-red text-sm mt-1">{{ pingNodeErrors.custom_ct }}</p>
+            </div><p v-if="pingNodeErrors.custom_ct" class="text-red text-sm mt-1">{{ pingNodeErrors.custom_ct }}</p>
           </div>
 
-          <div class="form-group flex-1">
-            <label class="form-label">{{ trans.customCu }}</label>
+          <div class="ping-node-item">
+            <div class="ping-node-fields"><input type="text" v-model.trim="settings.custom_cu_name" class="form-input ping-node-name"><span class="ping-node-arrow">→</span>
             <input type="text" v-model.trim="settings.custom_cu" :class="['form-input', { 'input-invalid': pingNodeErrors.custom_cu }]" placeholder="gd-cu-dualstack.ip.zstaticcdn.com">
-            <p v-if="pingNodeErrors.custom_cu" class="text-red text-sm mt-1">{{ pingNodeErrors.custom_cu }}</p>
+            </div><p v-if="pingNodeErrors.custom_cu" class="text-red text-sm mt-1">{{ pingNodeErrors.custom_cu }}</p>
           </div>
         </div>
-        <div class="form-row">
-          <div class="form-group flex-1">
-            <label class="form-label">{{ trans.customCm }}</label>
+        <div class="ping-node-grid">
+          <div class="ping-node-item">
+            <div class="ping-node-fields"><input type="text" v-model.trim="settings.custom_cm_name" class="form-input ping-node-name"><span class="ping-node-arrow">→</span>
             <input type="text" v-model.trim="settings.custom_cm" :class="['form-input', { 'input-invalid': pingNodeErrors.custom_cm }]" placeholder="gd-cm-dualstack.ip.zstaticcdn.com">
-            <p v-if="pingNodeErrors.custom_cm" class="text-red text-sm mt-1">{{ pingNodeErrors.custom_cm }}</p>
+            </div><p v-if="pingNodeErrors.custom_cm" class="text-red text-sm mt-1">{{ pingNodeErrors.custom_cm }}</p>
           </div>
 
-          <div class="form-group flex-1">
-            <label class="form-label">{{ trans.customBd }}</label>
+          <div class="ping-node-item">
+            <div class="ping-node-fields"><input type="text" v-model.trim="settings.custom_bd_name" class="form-input ping-node-name"><span class="ping-node-arrow">→</span>
             <input type="text" v-model.trim="settings.custom_bd" :class="['form-input', { 'input-invalid': pingNodeErrors.custom_bd }]" placeholder="ip.zstaticcdn.com">
-            <p v-if="pingNodeErrors.custom_bd" class="text-red text-sm mt-1">{{ pingNodeErrors.custom_bd }}</p>
+            </div><p v-if="pingNodeErrors.custom_bd" class="text-red text-sm mt-1">{{ pingNodeErrors.custom_bd }}</p>
+          </div>
+        </div>
+        <div class="ping-node-grid">
+          <div v-for="field in ['node_1', 'node_2']" :key="field" class="ping-node-item">
+            <div class="ping-node-fields"><input type="text" v-model.trim="settings[`${field}_name`]" class="form-input ping-node-name"><span class="ping-node-arrow">→</span><input type="text" v-model.trim="settings[field]" :class="['form-input', { 'input-invalid': pingNodeErrors[field] }]" placeholder="host[:port]"></div>
+            <p v-if="pingNodeErrors[field]" class="text-red text-sm mt-1">{{ pingNodeErrors[field] }}</p>
+          </div>
+        </div>
+        <div class="ping-node-grid">
+          <div v-for="field in ['node_3', 'node_4']" :key="field" class="ping-node-item">
+            <div class="ping-node-fields"><input type="text" v-model.trim="settings[`${field}_name`]" class="form-input ping-node-name"><span class="ping-node-arrow">→</span><input type="text" v-model.trim="settings[field]" :class="['form-input', { 'input-invalid': pingNodeErrors[field] }]" placeholder="host[:port]"></div>
+            <p v-if="pingNodeErrors[field]" class="text-red text-sm mt-1">{{ pingNodeErrors[field] }}</p>
           </div>
         </div>
       </div>

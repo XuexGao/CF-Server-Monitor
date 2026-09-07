@@ -21,10 +21,12 @@ import {
 
 let dbInitialized = false;
 
-const LOSS_AGG_COLUMNS = new Set(['loss_ct', 'loss_cu', 'loss_cm', 'loss_bd']);
+const LOSS_AGG_COLUMNS = new Set(['loss_ct', 'loss_cu', 'loss_cm', 'loss_bd', 'loss_node_1', 'loss_node_2', 'loss_node_3', 'loss_node_4']);
 const DEFAULT_HISTORY_MAX_POINTS = 160;
-const LATENCY_NODE_FIELDS = ['ct', 'cu', 'cm', 'bd'];
+const LATENCY_NODE_FIELDS = ['ct', 'cu', 'cm', 'bd', 'node_1', 'node_2', 'node_3', 'node_4'];
 const DASHBOARD_LATENCY_COLUMNS = LATENCY_NODE_FIELDS
+  .flatMap(field => [`ping_${field}`, `loss_${field}`]);
+const LEGACY_DASHBOARD_LATENCY_COLUMNS = ['ct', 'cu', 'cm', 'bd']
   .flatMap(field => [`ping_${field}`, `loss_${field}`]);
 const dashboardLatencyHistoryCache = new Map();
 
@@ -98,6 +100,10 @@ export async function initDatabase(db) {
           custom_cu TEXT DEFAULT '',
           custom_cm TEXT DEFAULT '',
           custom_bd TEXT DEFAULT '',
+          node_1 TEXT DEFAULT '',
+          node_2 TEXT DEFAULT '',
+          node_3 TEXT DEFAULT '',
+          node_4 TEXT DEFAULT '',
           rx_correction REAL DEFAULT NULL,
           tx_correction REAL DEFAULT NULL,
           offline_notify_disabled TEXT DEFAULT '0',
@@ -518,19 +524,29 @@ export async function getDashboardLatencyHistory(db, servers, options = {}) {
 
       const intervalMs = Math.max(10_000, Math.ceil((queryEnd - queryStart) / points));
       const idPrefix = getHistoryIdRange(historyInfo.partitionId).startId;
-      const sparseQuery = buildSparseHistoryQuery({
-        columns,
-        queryStart,
-        queryEnd,
-        firstRangeEnd: Math.min(queryEnd, queryStart + intervalMs),
-        intervalMs,
-        idPrefix,
-        oldTableExists,
-        tableBoundary: thisSunday.getTime(),
-        sampleOrder: 'DESC'
-      });
+      const querySparseHistory = async queryColumns => {
+        const sparseQuery = buildSparseHistoryQuery({
+          columns: queryColumns,
+          queryStart,
+          queryEnd,
+          firstRangeEnd: Math.min(queryEnd, queryStart + intervalMs),
+          intervalMs,
+          idPrefix,
+          oldTableExists,
+          tableBoundary: thisSunday.getTime(),
+          sampleOrder: 'DESC'
+        });
+        return db.prepare(sparseQuery.sql).bind(...sparseQuery.bindValues).all();
+      };
 
-      const rawResult = await db.prepare(sparseQuery.sql).bind(...sparseQuery.bindValues).all();
+      let rawResult;
+      try {
+        rawResult = await querySparseHistory(columns);
+      } catch (error) {
+        // Existing deployments may serve history before the new probe columns are migrated.
+        if (!/no such column/i.test(String(error?.message || error))) throw error;
+        rawResult = await querySparseHistory(LEGACY_DASHBOARD_LATENCY_COLUMNS.join(', '));
+      }
       const window = normalizeDashboardLatencyWindow(rawResult.results, { queryStart, intervalMs, points });
       result.set(serverId, window);
       if (useCache) {
@@ -652,10 +668,18 @@ export async function saveMetricsHistory(db, serverId, historyPartitionId, metri
     parsePing(metrics.ping_cu),
     parsePing(metrics.ping_cm),
     parsePing(metrics.ping_bd),
+    parsePing(metrics.ping_node_1),
+    parsePing(metrics.ping_node_2),
+    parsePing(metrics.ping_node_3),
+    parsePing(metrics.ping_node_4),
     parseLoss(metrics.loss_ct),
     parseLoss(metrics.loss_cu),
     parseLoss(metrics.loss_cm),
     parseLoss(metrics.loss_bd),
+    parseLoss(metrics.loss_node_1),
+    parseLoss(metrics.loss_node_2),
+    parseLoss(metrics.loss_node_3),
+    parseLoss(metrics.loss_node_4),
     parseFloat(metrics.ram_total) || 0,
     parseFloat(metrics.ram_used) || 0,
     parseFloat(metrics.swap_total) || 0,

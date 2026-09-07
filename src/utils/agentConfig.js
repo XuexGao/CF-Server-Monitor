@@ -1,11 +1,12 @@
 import { md5Hash } from './common.js';
 import { isWssReportConfigured } from './settings.js';
 
-export const AGENT_CONFIG_SCHEMA_VERSION = 6;
+export const AGENT_CONFIG_SCHEMA_VERSION = 7;
 export const AGENT_CONFIG_LEGACY_SCHEMA_VERSION = 3;
 export const AGENT_CONFIG_CONNECTION_MODE_SCHEMA_VERSION = 4;
 export const AGENT_CONFIG_WSS_REPORT_INTERVAL_SCHEMA_VERSION = 5;
 export const AGENT_CONFIG_PING_MODE_SCHEMA_VERSION = 6;
+export const AGENT_CONFIG_EXTRA_NODES_SCHEMA_VERSION = 7;
 export const AGENT_CONFIG_SCHEMA_HEADER = 'X-Agent-Config-Schema';
 export const AGENT_CONFIG_MD5_HEADER = 'X-Agent-Config-Md5';
 export const MAX_TRAFFIC_CORRECTION_GB = 1000000;
@@ -267,6 +268,10 @@ export function buildAgentConfig(server, settings = null, schemaVersion = AGENT_
   const customCu = sanitizePingNode(server?.custom_cu || settings?.custom_cu || '');
   const customCm = sanitizePingNode(server?.custom_cm || settings?.custom_cm || '');
   const customBd = sanitizePingNode(server?.custom_bd || settings?.custom_bd || '');
+  const node1 = sanitizePingNode(server?.node_1 || settings?.node_1 || '');
+  const node2 = sanitizePingNode(server?.node_2 || settings?.node_2 || '');
+  const node3 = sanitizePingNode(server?.node_3 || settings?.node_3 || '');
+  const node4 = sanitizePingNode(server?.node_4 || settings?.node_4 || '');
   const networkInterface = sanitizeNetworkInterfaces(server?.interface || '');
 
   const config = {
@@ -280,6 +285,13 @@ export function buildAgentConfig(server, settings = null, schemaVersion = AGENT_
     interface: networkInterface,
     schema_version: version
   };
+
+  if (version >= AGENT_CONFIG_EXTRA_NODES_SCHEMA_VERSION) {
+    config.node_1 = node1;
+    config.node_2 = node2;
+    config.node_3 = node3;
+    config.node_4 = node4;
+  }
 
   if (version >= AGENT_CONFIG_CONNECTION_MODE_SCHEMA_VERSION) {
     const connectionMode = normalizeConnectionMode(server?.connection_mode) || CONNECTION_MODE_AUTO;
@@ -314,6 +326,12 @@ export function serializeAgentConfig(config) {
     `&custom_cm=${config.custom_cm}` +
     `&custom_bd=${config.custom_bd}` +
     `&interface=${config.interface}`;
+  if (Object.prototype.hasOwnProperty.call(config, 'node_1')) {
+    serialized += `&node_1=${config.node_1}` +
+      `&node_2=${config.node_2}` +
+      `&node_3=${config.node_3}` +
+      `&node_4=${config.node_4}`;
+  }
   if (Object.prototype.hasOwnProperty.call(config, 'connection_mode')) {
     serialized += `&connection_mode=${config.connection_mode}`;
   }
