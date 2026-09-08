@@ -106,13 +106,19 @@ function normalizePingNodeFields(source, fields = PING_NODE_FIELDS) {
   const values = {};
   for (const field of fields) {
     if (source?.[field] === undefined) continue;
-    const result = validatePingNode(source?.[field]);
+    const rawValue = source[field] === 0 || source[field] === '0' ? '' : source[field];
+    const result = validatePingNode(rawValue);
     if (!result.valid) {
       return { valid: false, field };
     }
     values[field] = result.value;
   }
   return { valid: true, values };
+}
+
+function normalizeImportedPingNodeValue(value) {
+  if (value === null || value === 0 || value === '0') return null;
+  return value === undefined ? '' : value;
 }
 
 function normalizeNetworkInterfaceField(value) {
@@ -1065,14 +1071,14 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
           normalizedAgentConfig.connection_mode,
           normalizedAgentConfig.ping_mode,
           normalizeBooleanFlag(auto_update),
-          pingNodes.values.custom_ct,
-          pingNodes.values.custom_cu,
-          pingNodes.values.custom_cm,
-          pingNodes.values.custom_bd,
-          pingNodes.values.node_1,
-          pingNodes.values.node_2,
-          pingNodes.values.node_3,
-          pingNodes.values.node_4,
+          pingNodes.values.custom_ct || null,
+          pingNodes.values.custom_cu || null,
+          pingNodes.values.custom_cm || null,
+          pingNodes.values.custom_bd || null,
+          pingNodes.values.node_1 || null,
+          pingNodes.values.node_2 || null,
+          pingNodes.values.node_3 || null,
+          pingNodes.values.node_4 || null,
           safeRx,
           safeTx,
           normalizeBooleanFlag(offline_notify_disabled),
@@ -1215,11 +1221,12 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
             normalizeConnectionMode(server.connection_mode) || 'auto',
             normalizePingMode(server.ping_mode) || 'tcp',
             normalizeBooleanFlag(server.auto_update),
-            server.custom_ct || '',
-            server.custom_cu || '',
-            server.custom_cm || '',
-            server.custom_bd || '',
-            server.node_1 || '', server.node_2 || '', server.node_3 || '', server.node_4 || '',
+            normalizeImportedPingNodeValue(server.custom_ct),
+            normalizeImportedPingNodeValue(server.custom_cu),
+            normalizeImportedPingNodeValue(server.custom_cm),
+            normalizeImportedPingNodeValue(server.custom_bd),
+            normalizeImportedPingNodeValue(server.node_1), normalizeImportedPingNodeValue(server.node_2),
+            normalizeImportedPingNodeValue(server.node_3), normalizeImportedPingNodeValue(server.node_4),
             server.rx_correction ?? null,
             server.tx_correction ?? null,
             normalizeBooleanFlag(server.offline_notify_disabled),

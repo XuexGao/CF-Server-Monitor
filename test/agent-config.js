@@ -22,8 +22,8 @@ const server = {
   reset_day: 15,
   ping_mode: 'tcp'
 };
-const expected = 'collect_interval=1&report_interval=60&reset_day=15&schema_version=6&custom_ct=&custom_cu=&custom_cm=&custom_bd=&interface=&connection_mode=http&ping_mode=tcp';
-const expectedWssEnabled = 'collect_interval=1&report_interval=60&reset_day=15&schema_version=6&custom_ct=&custom_cu=&custom_cm=&custom_bd=&interface=&connection_mode=auto&wss_report_interval=2&ping_mode=tcp';
+const expected = 'collect_interval=1&report_interval=60&reset_day=15&schema_version=7&custom_ct=&custom_cu=&custom_cm=&custom_bd=&interface=&node_1=&node_2=&node_3=&node_4=&connection_mode=http&ping_mode=tcp';
+const expectedWssEnabled = 'collect_interval=1&report_interval=60&reset_day=15&schema_version=7&custom_ct=&custom_cu=&custom_cm=&custom_bd=&interface=&node_1=&node_2=&node_3=&node_4=&connection_mode=auto&wss_report_interval=2&ping_mode=tcp';
 const expectedLegacy = 'collect_interval=1&report_interval=60&reset_day=15&schema_version=3&custom_ct=&custom_cu=&custom_cm=&custom_bd=&interface=';
 
 const config = buildAgentConfig(server);
@@ -201,15 +201,26 @@ assert.equal(resolvedConfig.custom_ct, 'ct-server.example.com');
 assert.equal(resolvedConfig.custom_cu, 'cu-global.example.com');
 assert.equal(resolvedConfig.custom_cm, 'cm-global.example.com');
 assert.equal(resolvedConfig.custom_bd, 'bd-global.example.com');
+for (const explicitEmpty of [null, 0, '0']) {
+  const explicitEmptyConfig = buildAgentConfig({ custom_ct: explicitEmpty }, settings);
+  assert.equal(explicitEmptyConfig.custom_ct, '', `custom_ct=${String(explicitEmpty)} must override the global node`);
+  const explicitEmptyDescriptor = await describeAgentConfig({ custom_ct: explicitEmpty }, settings);
+  assert.match(explicitEmptyDescriptor.serialized, /(?:^|&)custom_ct=(?:&|$)/);
+}
+assert.equal(buildAgentConfig({ custom_ct: '' }, settings).custom_ct, 'ct-global.example.com');
+assert.equal(buildAgentConfig({}, settings).custom_ct, 'ct-global.example.com');
 assert.equal(buildAgentConfig({ interface: 'eth0, ens3,eth0' }).interface, 'eth0,ens3');
 assert.equal(buildAgentConfig({ custom_ct: 'gd-ct-v4.ip.zstaticcdn.com:80' }).custom_ct, 'gd-ct-v4.ip.zstaticcdn.com:80');
 assert.equal(buildAgentConfig({ custom_ct: 'GD-CT-V4.IP.ZSTATICCDN.COM:080' }).custom_ct, 'gd-ct-v4.ip.zstaticcdn.com:80');
 assert.equal(buildAgentConfig({ custom_ct: 'a'.repeat(100) }).custom_ct, '');
 assert.equal(buildAgentConfig({ custom_ct: 'gd-ct-v4.ip.zstaticcdn.com:99999' }).custom_ct, '');
 assert.equal(buildAgentConfig({ custom_ct: 'foo:bar' }).custom_ct, '');
-assert.equal(buildAgentConfig({ custom_ct: '2001:db8::1' }).custom_ct, '');
+assert.equal(buildAgentConfig({ custom_ct: '2001:db8::1' }).custom_ct, '[2001:db8::1]');
+assert.equal(buildAgentConfig({ custom_ct: '[2001:db8::1]:443' }).custom_ct, '[2001:db8::1]:443');
 assert.deepEqual(validatePingNode('foo:443'), { valid: true, value: 'foo:443' });
 assert.equal(validatePingNode('foo:bar').valid, false);
-assert.equal(validatePingNode('2001:db8::1').valid, false);
+assert.deepEqual(validatePingNode('2001:db8::1'), { valid: true, value: '[2001:db8::1]' });
+assert.deepEqual(validatePingNode('[2001:db8::1]:443'), { valid: true, value: '[2001:db8::1]:443' });
+assert.equal(validatePingNode('2001:db8::1:443').valid, false);
 
 console.log('agent config tests passed');

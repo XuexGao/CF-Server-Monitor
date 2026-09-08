@@ -170,39 +170,57 @@
 
       <div class="form-row">
         <div class="form-group flex-1">
-          <label class="form-label">{{ settings.custom_ct_name || trans.customCt }} <span class="text-xs text-muted">({{ trans.serverLevel }})</span></label>
+          <label class="form-label">
+            {{ settings.custom_ct_name || trans.customCt }}
+            <HelpTooltip :text="trans.pingNodeTip" />
+          </label>
           <input type="text" name="edit_custom_ct" autocomplete="off" v-model.trim="editForm.custom_ct" :class="['form-input', { 'input-invalid': pingNodeErrors.custom_ct }]" :placeholder="settings.custom_ct || 'gd-ct-dualstack.ip.zstaticcdn.com'">
           <p v-if="pingNodeErrors.custom_ct" class="text-red text-sm mt-1">{{ pingNodeErrors.custom_ct }}</p>
         </div>
         <div class="form-group flex-1">
-          <label class="form-label">{{ settings.custom_cu_name || trans.customCu }} <span class="text-xs text-muted">({{ trans.serverLevel }})</span></label>
+          <label class="form-label">
+            {{ settings.custom_cu_name || trans.customCu }}
+            <HelpTooltip :text="trans.pingNodeTip" />
+          </label>
           <input type="text" name="edit_custom_cu" autocomplete="off" v-model.trim="editForm.custom_cu" :class="['form-input', { 'input-invalid': pingNodeErrors.custom_cu }]" :placeholder="settings.custom_cu || 'gd-cu-dualstack.ip.zstaticcdn.com'">
           <p v-if="pingNodeErrors.custom_cu" class="text-red text-sm mt-1">{{ pingNodeErrors.custom_cu }}</p>
         </div>
       </div>
       <div class="form-row">
         <div class="form-group flex-1">
-          <label class="form-label">{{ settings.custom_cm_name || trans.customCm }} <span class="text-xs text-muted">({{ trans.serverLevel }})</span></label>
+          <label class="form-label">
+            {{ settings.custom_cm_name || trans.customCm }}
+            <HelpTooltip :text="trans.pingNodeTip" />
+          </label>
           <input type="text" name="edit_custom_cm" autocomplete="off" v-model.trim="editForm.custom_cm" :class="['form-input', { 'input-invalid': pingNodeErrors.custom_cm }]" :placeholder="settings.custom_cm || 'gd-cm-dualstack.ip.zstaticcdn.com'">
           <p v-if="pingNodeErrors.custom_cm" class="text-red text-sm mt-1">{{ pingNodeErrors.custom_cm }}</p>
         </div>
         <div class="form-group flex-1">
-          <label class="form-label">{{ settings.custom_bd_name || trans.customBd }} <span class="text-xs text-muted">({{ trans.serverLevel }})</span></label>
+          <label class="form-label">
+            {{ settings.custom_bd_name || trans.customBd }}
+            <HelpTooltip :text="trans.pingNodeTip" />
+          </label>
           <input type="text" name="edit_custom_bd" autocomplete="off" v-model.trim="editForm.custom_bd" :class="['form-input', { 'input-invalid': pingNodeErrors.custom_bd }]" :placeholder="settings.custom_bd || 'ip.zstaticcdn.com'">
           <p v-if="pingNodeErrors.custom_bd" class="text-red text-sm mt-1">{{ pingNodeErrors.custom_bd }}</p>
         </div>
       </div>
       <div class="form-row">
         <div v-for="(field, index) in ['node_1', 'node_2']" :key="field" class="form-group flex-1">
-          <label class="form-label">{{ settings[`${field}_name`] || `Node ${index + 1}` }} <span class="text-xs text-muted">({{ trans.serverLevel }})</span></label>
-          <input type="text" :name="`edit_${field}`" autocomplete="off" v-model.trim="editForm[field]" :class="['form-input', { 'input-invalid': pingNodeErrors[field] }]" placeholder="host[:port]">
+          <label class="form-label">
+            {{ settings[`${field}_name`] || `Node ${index + 1}` }}
+            <HelpTooltip :text="trans.pingNodeTip" />
+          </label>
+          <input type="text" :name="`edit_${field}`" autocomplete="off" v-model.trim="editForm[field]" :class="['form-input', { 'input-invalid': pingNodeErrors[field] }]" placeholder="host[:port] / [IPv6]:port">
           <p v-if="pingNodeErrors[field]" class="text-red text-sm mt-1">{{ pingNodeErrors[field] }}</p>
         </div>
       </div>
       <div class="form-row">
         <div v-for="(field, index) in ['node_3', 'node_4']" :key="field" class="form-group flex-1">
-          <label class="form-label">{{ settings[`${field}_name`] || `Node ${index + 3}` }} <span class="text-xs text-muted">({{ trans.serverLevel }})</span></label>
-          <input type="text" :name="`edit_${field}`" autocomplete="off" v-model.trim="editForm[field]" :class="['form-input', { 'input-invalid': pingNodeErrors[field] }]" placeholder="host[:port]">
+          <label class="form-label">
+            {{ settings[`${field}_name`] || `Node ${index + 3}` }}
+            <HelpTooltip :text="trans.pingNodeTip" />
+          </label>
+          <input type="text" :name="`edit_${field}`" autocomplete="off" v-model.trim="editForm[field]" :class="['form-input', { 'input-invalid': pingNodeErrors[field] }]" placeholder="host[:port] / [IPv6]:port">
           <p v-if="pingNodeErrors[field]" class="text-red text-sm mt-1">{{ pingNodeErrors[field] }}</p>
         </div>
       </div>

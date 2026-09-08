@@ -1102,6 +1102,7 @@ const node1 = ref('')
 const node2 = ref('')
 const node3 = ref('')
 const node4 = ref('')
+const explicitEmptyNodes = ref({})
 const networkInterface = ref('')
 const resetDay = ref(1)
 const rxCorrection = ref('')
@@ -1656,6 +1657,15 @@ const getInstallCommand = (serverId) => {
   return `curl -sL ${HOST}/install.sh | bash -s install -id=${serverId} -secret='${apiSecret.value}' -url=${HOST}/update`
 }
 
+const resolveServerPingNode = (server, field) => {
+  const value = server?.[field]
+  const explicitEmpty = value === null || value === 0 || value === '0'
+  return {
+    value: explicitEmpty ? '' : (value || settings.value[field] || ''),
+    explicitEmpty
+  }
+}
+
 const getUninstallCommand = () => {
   const HOST = selectedApiBase.value
   const isGo = deleteVersion.value === 'go'
@@ -1694,14 +1704,28 @@ const copyCmd = (serverId) => {
   wssReportInterval.value = server?.wss_report_interval || 2
   connectionMode.value = getEffectiveConnectionMode(server?.connection_mode)
   pingMode.value = getEffectivePingMode(server?.ping_mode)
-  customCt.value = server?.custom_ct || settings.value.custom_ct
-  customCu.value = server?.custom_cu || settings.value.custom_cu
-  customCm.value = server?.custom_cm || settings.value.custom_cm
-  customBd.value = server?.custom_bd || settings.value.custom_bd
-  node1.value = server?.node_1 || settings.value.node_1
-  node2.value = server?.node_2 || settings.value.node_2
-  node3.value = server?.node_3 || settings.value.node_3
-  node4.value = server?.node_4 || settings.value.node_4
+  const customCtNode = resolveServerPingNode(server, 'custom_ct')
+  const customCuNode = resolveServerPingNode(server, 'custom_cu')
+  const customCmNode = resolveServerPingNode(server, 'custom_cm')
+  const customBdNode = resolveServerPingNode(server, 'custom_bd')
+  const node1Value = resolveServerPingNode(server, 'node_1')
+  const node2Value = resolveServerPingNode(server, 'node_2')
+  const node3Value = resolveServerPingNode(server, 'node_3')
+  const node4Value = resolveServerPingNode(server, 'node_4')
+  explicitEmptyNodes.value = {
+    custom_ct: customCtNode.explicitEmpty, custom_cu: customCuNode.explicitEmpty,
+    custom_cm: customCmNode.explicitEmpty, custom_bd: customBdNode.explicitEmpty,
+    node_1: node1Value.explicitEmpty, node_2: node2Value.explicitEmpty,
+    node_3: node3Value.explicitEmpty, node_4: node4Value.explicitEmpty
+  }
+  customCt.value = customCtNode.value
+  customCu.value = customCuNode.value
+  customCm.value = customCmNode.value
+  customBd.value = customBdNode.value
+  node1.value = node1Value.value
+  node2.value = node2Value.value
+  node3.value = node3Value.value
+  node4.value = node4Value.value
   networkInterface.value = server?.interface || ''
   resetDay.value = server?.reset_day ?? 1
   rxCorrection.value = server?.rx_correction ?? ''
@@ -1742,11 +1766,11 @@ const getCustomInstallCommand = () => {
       `-reset_day='${resetDay.value ?? 1}'`,
       `-auto_update='${autoUpdateFlag}'`
     )
-    if (customCt.value) params.push(`-ct='${customCt.value}'`)
-    if (customCu.value) params.push(`-cu='${customCu.value}'`)
-    if (customCm.value) params.push(`-cm='${customCm.value}'`)
-    if (customBd.value) params.push(`-bd='${customBd.value}'`)
-    if (node1.value) params.push(`-node_1='${node1.value}'`); if (node2.value) params.push(`-node_2='${node2.value}'`); if (node3.value) params.push(`-node_3='${node3.value}'`); if (node4.value) params.push(`-node_4='${node4.value}'`)
+    if (customCt.value || explicitEmptyNodes.value.custom_ct) params.push(`-ct='${customCt.value}'`)
+    if (customCu.value || explicitEmptyNodes.value.custom_cu) params.push(`-cu='${customCu.value}'`)
+    if (customCm.value || explicitEmptyNodes.value.custom_cm) params.push(`-cm='${customCm.value}'`)
+    if (customBd.value || explicitEmptyNodes.value.custom_bd) params.push(`-bd='${customBd.value}'`)
+    if (node1.value || explicitEmptyNodes.value.node_1) params.push(`-node_1='${node1.value}'`); if (node2.value || explicitEmptyNodes.value.node_2) params.push(`-node_2='${node2.value}'`); if (node3.value || explicitEmptyNodes.value.node_3) params.push(`-node_3='${node3.value}'`); if (node4.value || explicitEmptyNodes.value.node_4) params.push(`-node_4='${node4.value}'`)
     if (networkInterface.value) params.push(`-interface='${networkInterface.value}'`)
     if (hasCorrectionValue(rxCorrection.value)) params.push(`-rx_correction='${rxCorrection.value}'`)
     if (hasCorrectionValue(txCorrection.value)) params.push(`-tx_correction='${txCorrection.value}'`)
@@ -1766,11 +1790,11 @@ const getCustomInstallCommand = () => {
     `-reset_day=${resetDay.value ?? 1}`,
     `-auto_update=${autoUpdateFlag}`
   )
-  if (customCt.value) params.push(`-ct=${customCt.value}`)
-  if (customCu.value) params.push(`-cu=${customCu.value}`)
-  if (customCm.value) params.push(`-cm=${customCm.value}`)
-  if (customBd.value) params.push(`-bd=${customBd.value}`)
-  if (node1.value) params.push(`-node_1=${node1.value}`); if (node2.value) params.push(`-node_2=${node2.value}`); if (node3.value) params.push(`-node_3=${node3.value}`); if (node4.value) params.push(`-node_4=${node4.value}`)
+  if (customCt.value || explicitEmptyNodes.value.custom_ct) params.push(`-ct='${customCt.value}'`)
+  if (customCu.value || explicitEmptyNodes.value.custom_cu) params.push(`-cu='${customCu.value}'`)
+  if (customCm.value || explicitEmptyNodes.value.custom_cm) params.push(`-cm='${customCm.value}'`)
+  if (customBd.value || explicitEmptyNodes.value.custom_bd) params.push(`-bd='${customBd.value}'`)
+  if (node1.value || explicitEmptyNodes.value.node_1) params.push(`-node_1='${node1.value}'`); if (node2.value || explicitEmptyNodes.value.node_2) params.push(`-node_2='${node2.value}'`); if (node3.value || explicitEmptyNodes.value.node_3) params.push(`-node_3='${node3.value}'`); if (node4.value || explicitEmptyNodes.value.node_4) params.push(`-node_4='${node4.value}'`)
   if (networkInterface.value) params.push(`-interface=${networkInterface.value}`)
   if (hasCorrectionValue(rxCorrection.value)) params.push(`-rx_correction=${rxCorrection.value}`)
   if (hasCorrectionValue(txCorrection.value)) params.push(`-tx_correction=${txCorrection.value}`)
@@ -1839,11 +1863,11 @@ const createEditFormFromServer = (server) => ({
     wss_report_interval: server.wss_report_interval || 2,
     connection_mode: getEffectiveConnectionMode(server.connection_mode),
     ping_mode: server.ping_mode === 'icmp' ? 'icmp' : 'tcp',
-    custom_ct: server.custom_ct || '',
-    custom_cu: server.custom_cu || '',
-    custom_cm: server.custom_cm || '',
-    custom_bd: server.custom_bd || '',
-    node_1: server.node_1 || '', node_2: server.node_2 || '', node_3: server.node_3 || '', node_4: server.node_4 || '',
+    custom_ct: server.custom_ct ?? '',
+    custom_cu: server.custom_cu ?? '',
+    custom_cm: server.custom_cm ?? '',
+    custom_bd: server.custom_bd ?? '',
+    node_1: server.node_1 ?? '', node_2: server.node_2 ?? '', node_3: server.node_3 ?? '', node_4: server.node_4 ?? '',
     rx_correction: server.rx_correction ?? '',
     tx_correction: server.tx_correction ?? '',
     auto_update: server.auto_update === '1' || server.auto_update === 1 || server.auto_update === true,

@@ -108,7 +108,7 @@
                   :key="ipItem.copyField"
                   class="server-ip-line"
                   :class="{ 'spec-copied': isSpecCopied(server, ipItem.copyField) }"
-                  @dblclick.stop="emitCopySpec(server, ipItem.copyField, ipItem.address)"
+                  @click.stop="emitCopySpec(server, ipItem.copyField, ipItem.address)"
                 >
                   <span class="server-ip-value">{{ ipItem.address }}</span>
                 </span>
@@ -126,36 +126,34 @@
               <span
                 class="note-text"
                 :class="{ 'note-copied': copiedNoteServerId === server.id }"
-                @dblclick.stop="$emit('copy-note', server)"
+                @click.stop="$emit('copy-note', server)"
               >{{ server.note || '-' }}</span>
             </td>
             <td>
               <span
                 class="spec-text"
                 :class="{ 'spec-copied': isSpecCopied(server, 'price') }"
-                @dblclick.stop="emitCopySpec(server, 'price', formatServerPrice(server))"
+                @click.stop="emitCopySpec(server, 'price', formatServerPrice(server))"
               >{{ formatServerPrice(server) }}</span>
             </td>
             <td><span class="date-text">{{ server.expire_date || '-' }}</span></td>
             <td>
               <span
-                class="spec-text"
-                :class="{ 'spec-copied': isSpecCopied(server, 'auto_renewal') }"
-                @dblclick.stop="emitCopySpec(server, 'auto_renewal', isServerAutoRenewal(server) ? trans.enabled : trans.disabled)"
+                class="renewal-text"
               >{{ isServerAutoRenewal(server) ? trans.enabled : trans.disabled }}</span>
             </td>
             <td>
               <span
                 class="spec-text"
                 :class="{ 'spec-copied': isSpecCopied(server, 'traffic_limit') }"
-                @dblclick.stop="emitCopySpec(server, 'traffic_limit', server.traffic_limit ? formatBytes(server.traffic_limit * 1024 * 1024 * 1024) : '')"
+                @click.stop="emitCopySpec(server, 'traffic_limit', server.traffic_limit ? formatBytes(server.traffic_limit * 1024 * 1024 * 1024) : '')"
               >{{ server.traffic_limit ? formatBytes(server.traffic_limit * 1024 * 1024 * 1024) : '-' }}</span>
             </td>
             <td>
               <span
                 class="spec-text"
                 :class="[getAgentVersionClass(server.agent_version), { 'spec-copied': isSpecCopied(server, 'agent_version') }]"
-                @dblclick.stop="emitCopySpec(server, 'agent_version', server.agent_version)"
+                @click.stop="emitCopySpec(server, 'agent_version', server.agent_version)"
               >{{ server.agent_version || '●' }}</span>
             </td>
             <td>
