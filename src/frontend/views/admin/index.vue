@@ -226,6 +226,7 @@
         :current-server-name="currentServerName"
         :delete-target-os="deleteTargetOs"
         :delete-version="deleteVersion"
+        :delete-install-mode="deleteInstallMode"
         :delete-gh-proxy="deleteGhProxy"
         :uninstall-command="getUninstallCommand()"
         :uninstall-copied="uninstallCopied"
@@ -234,15 +235,19 @@
         @copy-uninstall="copyUninstallCmd"
         @update:delete-target-os="deleteTargetOs = $event"
         @update:delete-version="deleteVersion = $event"
+        @update:delete-install-mode="deleteInstallMode = $event"
         @update:delete-gh-proxy="deleteGhProxy = $event"
       />
 
       <CopyCommandModal
         :trans="trans"
+        :settings="settings"
         :show="showCopyModal"
         :current-server-name="currentServerName"
         :target-os="targetOs"
+        :install-mode="installMode"
         :install-gh-proxy="installGhProxy"
+        :install-version="installVersion"
         :collect-interval="collectInterval"
         :report-interval="reportInterval"
         :wss-report-interval="wssReportInterval"
@@ -266,7 +271,9 @@
         @close="closeCopyModal"
         @copy-cmd="copyCustomCmd"
         @update:target-os="targetOs = $event"
+        @update:install-mode="installMode = $event"
         @update:install-gh-proxy="installGhProxy = $event"
+        @update:install-version="installVersion = $event"
         @open-edit-from-copy="openEditModalFromCopy"
       />
 
@@ -1062,6 +1069,7 @@ const copiedNoteServerId = ref(null)
 const copiedSpecKey = ref(null)
 const deleteTargetOs = ref('linux')
 const deleteVersion = ref('go')
+const deleteInstallMode = ref('current-user')
 const deleteGhProxy = ref('')
 const uninstallCopied = ref(false)
 const saving = ref(false)
@@ -1088,7 +1096,9 @@ const showCopyModal = ref(false)
 const copyServerId = ref('')
 const currentServerName = ref('')
 const targetOs = ref('linux')
+const installMode = ref('current-user')
 const installGhProxy = ref('')
+const installVersion = ref('')
 const collectInterval = ref(0)
 const reportInterval = ref(60)
 const wssReportInterval = ref(2)
@@ -1659,7 +1669,7 @@ const getInstallCommand = (serverId) => {
 
 const resolveServerPingNode = (server, field) => {
   const value = server?.[field]
-  const explicitEmpty = value === null || value === 0 || value === '0'
+  const explicitEmpty = value === 0 || value === '0'
   return {
     value: explicitEmpty ? '' : (value || settings.value[field] || ''),
     explicitEmpty
@@ -1671,26 +1681,24 @@ const getUninstallCommand = () => {
   const isGo = deleteVersion.value === 'go'
   const proxy = isGo ? deleteGhProxy.value.trim() : ''
   if (isGo) {
-    const proxyParam = proxy ? ` --install-ghproxy=${proxy}` : ''
     if (deleteTargetOs.value === 'windows') {
       const ghUrl = buildGhRawUrl(proxy, '/huilang-me/cfsm-agent/main/install.ps1')
-      return `$script = "$env:TEMP\\install-cf-probe.ps1"; Invoke-WebRequest -Uri "${ghUrl}" -OutFile $script -UseBasicParsing; PowerShell -ExecutionPolicy Bypass -File $script uninstall${proxyParam}`
+      const proxyParam = proxy ? ` ${quotePowerShellArg(`--install-ghproxy=${proxy}`)}` : ''
+      return `$script = "$env:TEMP\\install-cf-probe.ps1"; Invoke-WebRequest -Uri ${quotePowerShellArg(ghUrl)} -OutFile $script -UseBasicParsing; PowerShell -ExecutionPolicy Bypass -File $script uninstall${proxyParam}`
     }
     const sudoPrefix = deleteTargetOs.value === 'mac' ? 'sudo ' : ''
     const ghUrl = buildGhRawUrl(proxy, '/huilang-me/cfsm-agent/main/install.sh')
-    return `curl -fsSL ${ghUrl} | ${sudoPrefix}sh -s -- uninstall${proxyParam}`
+    const proxyParam = proxy ? ` ${quotePosixShellArg(`--install-ghproxy=${proxy}`)}` : ''
+    const uninstallCommand = `curl -fsSL ${quotePosixShellArg(ghUrl)} | ${sudoPrefix}sh -s -- uninstall${proxyParam}`
+    if (deleteTargetOs.value === 'linux' && deleteInstallMode.value === 'cfsm-user') {
+      return buildUninstallAsCfsmCommand(uninstallCommand)
+    }
+    return uninstallCommand
   }
   if (deleteTargetOs.value === 'windows') {
-    return `irm ${HOST}/cf-server-monitor.ps1 -OutFile cf-server-monitor.ps1; powershell -ExecutionPolicy Bypass -File .\\cf-server-monitor.ps1 uninstall`
+    return `$script = Join-Path (Get-Location) 'uninstall-cf-probe.ps1'; Invoke-WebRequest -Uri '${HOST}/uninstall.ps1' -OutFile $script -UseBasicParsing; PowerShell -ExecutionPolicy Bypass -File $script`
   }
-  const shell = deleteTargetOs.value === 'alpine' || deleteTargetOs.value === 'openwrt' ? 'sh' : 'bash'
-  const sudoPrefix = deleteTargetOs.value === 'mac' ? 'sudo ' : ''
-  const script = deleteTargetOs.value === 'alpine' ? 'install-alpine.sh'
-    : deleteTargetOs.value === 'openwrt' ? 'install-openwrt.sh'
-    : deleteTargetOs.value === 'mac' ? 'install-mac.sh'
-    : deleteTargetOs.value === 'synology' ? 'install-synology.sh'
-    : 'install.sh'
-  return `curl -sL ${HOST}/${script} | ${sudoPrefix}${shell} -s uninstall`
+  return `curl -fsSL '${HOST}/uninstall.sh' | sh -s`
 }
 
 const copyCmd = (serverId) => {
@@ -1698,7 +1706,9 @@ const copyCmd = (serverId) => {
   copyServerId.value = serverId
   currentServerName.value = server?.name || ''
   targetOs.value = 'linux'
+  installMode.value = 'current-user'
   installGhProxy.value = ''
+  installVersion.value = ''
   collectInterval.value = server?.collect_interval ?? 0
   reportInterval.value = server?.report_interval || 60
   wssReportInterval.value = server?.wss_report_interval || 2
@@ -1744,17 +1754,81 @@ const buildGhRawUrl = (proxy, path) => {
   return `${cleanProxy}/${base}${path}`
 }
 
+const quotePosixShellArg = (value) => `'${String(value).replaceAll("'", `'"'"'`)}'`
+
+const quotePowerShellArg = (value) => `'${String(value).replaceAll("'", "''")}'`
+
+const quotePosixDoubleShellArg = (value) => `"${String(value)
+  .replaceAll('\\', '\\\\')
+  .replaceAll('"', '\\"')
+  .replaceAll('$', '\\$')
+  .replaceAll('`', '\\`')}"`
+
+const buildUninstallAsCfsmCommand = (command) => {
+  const runuserCommand = `runuser -u cfsm -- env HOME="\${CFSM_HOME}" XDG_RUNTIME_DIR="/run/user/\${CFSM_UID}" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/\${CFSM_UID}/bus" sh -c ${quotePosixDoubleShellArg(command)}`
+  return [
+    '(',
+    'set -e',
+    `if ! command -v runuser >/dev/null 2>&1; then echo ${quotePosixDoubleShellArg(trans.value.dedicatedUserUninstallUnsupported)} >&2; exit 1; fi`,
+    `id cfsm >/dev/null 2>&1 || { echo ${quotePosixDoubleShellArg(trans.value.nonRootUninstallUserMissing)} >&2; exit 1; }`,
+    'CFSM_UID=$(id -u cfsm)',
+    'CFSM_HOME=$(getent passwd cfsm | cut -d: -f6); [ -n "${CFSM_HOME}" ] || CFSM_HOME=/home/cfsm',
+    'if [ "$(id -u)" -eq 0 ]; then',
+    `  ${runuserCommand}`,
+    'elif command -v sudo >/dev/null 2>&1; then',
+    `  sudo ${runuserCommand}`,
+    'else',
+    `  echo ${quotePosixDoubleShellArg(trans.value.nonRootInstallSudoRequired)} >&2; exit 1`,
+    'fi',
+    ')'
+  ].join('\n')
+}
+
+const buildInstallAsCfsmCommand = (command, runStep) => {
+  const lines = [
+    '(',
+    'set -e',
+    `if [ ! -d /run/systemd/system ] || ! command -v systemctl >/dev/null 2>&1 || ! command -v loginctl >/dev/null 2>&1 || ! command -v useradd >/dev/null 2>&1 || ! command -v runuser >/dev/null 2>&1; then echo ${quotePosixDoubleShellArg(trans.value.dedicatedUserSystemdRequired)} >&2; exit 1; fi`,
+    'if [ "$(id -u)" -eq 0 ]; then',
+    '  as_root() { "$@"; }',
+    'elif command -v sudo >/dev/null 2>&1; then',
+    '  as_root() { sudo "$@"; }',
+    'else',
+    `  echo ${quotePosixDoubleShellArg(trans.value.nonRootInstallSudoRequired)} >&2; exit 1`,
+    'fi'
+  ]
+
+  lines.push(
+    'id cfsm >/dev/null 2>&1 || as_root useradd -m -s /bin/sh cfsm',
+    'as_root loginctl enable-linger cfsm'
+  )
+
+  lines.push(
+    'CFSM_UID=$(id -u cfsm)',
+    'as_root systemctl start user@${CFSM_UID}.service',
+    'if command -v getent >/dev/null 2>&1; then CFSM_HOME=$(getent passwd cfsm | cut -d: -f6); else CFSM_HOME=/home/cfsm; fi; [ -n "${CFSM_HOME}" ] || CFSM_HOME=/home/cfsm',
+    '',
+    `# ${runStep}`,
+    `as_root runuser -u cfsm -- env HOME="\${CFSM_HOME}" XDG_RUNTIME_DIR="/run/user/\${CFSM_UID}" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/\${CFSM_UID}/bus" sh -c ${quotePosixDoubleShellArg(command)}`,
+    ')'
+  )
+  return lines.join('\n')
+}
+
 const getCustomInstallCommand = () => {
   const HOST = selectedApiBase.value
   const autoUpdateFlag = autoUpdate.value ? 1 : 0
   const proxy = installGhProxy.value.trim()
+  const version = installVersion.value.trim()
   const effectiveConnectionMode = getEffectiveConnectionMode(connectionMode.value)
-  const effectivePingMode = getEffectivePingMode(pingMode.value)
+  const isDedicatedUserInstall = targetOs.value === 'linux' && installMode.value === 'cfsm-user'
+  const effectivePingMode = getEffectivePingMode(isDedicatedUserInstall ? 'tcp' : pingMode.value)
   if (targetOs.value === 'windows') {
     const params = [
       'install'
     ]
-    if (proxy) params.push(`--install-ghproxy='${proxy}'`)
+    if (proxy) params.push(quotePowerShellArg(`--install-ghproxy=${proxy}`))
+    if (version) params.push(quotePowerShellArg(`--install-version=${version}`))
     params.push(
       `-id='${copyServerId.value}'`,
       `-secret='${apiSecret.value}'`,
@@ -1775,10 +1849,11 @@ const getCustomInstallCommand = () => {
     if (hasCorrectionValue(rxCorrection.value)) params.push(`-rx_correction='${rxCorrection.value}'`)
     if (hasCorrectionValue(txCorrection.value)) params.push(`-tx_correction='${txCorrection.value}'`)
     const ghUrl = buildGhRawUrl(proxy, '/huilang-me/cfsm-agent/main/install.ps1')
-    return `$script = "$env:TEMP\\install-cf-probe.ps1"; Invoke-WebRequest -Uri "${ghUrl}" -OutFile $script -UseBasicParsing; PowerShell -ExecutionPolicy Bypass -File $script ${params.join(' ')}`
+    return `$script = "$env:TEMP\\install-cf-probe.ps1"; Invoke-WebRequest -Uri ${quotePowerShellArg(ghUrl)} -OutFile $script -UseBasicParsing; PowerShell -ExecutionPolicy Bypass -File $script ${params.join(' ')}`
   }
   const params = ['install']
-  if (proxy) params.push(`--install-ghproxy=${proxy}`)
+  if (proxy) params.push(quotePosixShellArg(`--install-ghproxy=${proxy}`))
+  if (version) params.push(quotePosixShellArg(`--install-version=${version}`))
   params.push(
     `-id=${copyServerId.value}`,
     `-secret='${apiSecret.value}'`,
@@ -1799,10 +1874,17 @@ const getCustomInstallCommand = () => {
   if (hasCorrectionValue(rxCorrection.value)) params.push(`-rx_correction=${rxCorrection.value}`)
   if (hasCorrectionValue(txCorrection.value)) params.push(`-tx_correction=${txCorrection.value}`)
   const ghUrl = buildGhRawUrl(proxy, '/huilang-me/cfsm-agent/main/install.sh')
-  return `curl -fsSL ${ghUrl} | sh -s -- ${params.join(' ')}`
+  const installCommand = `curl -fsSL ${quotePosixShellArg(ghUrl)} | sh -s -- ${params.join(' ')}`
+  if (!isDedicatedUserInstall) return installCommand
+
+  return buildInstallAsCfsmCommand(installCommand, trans.value.nonRootInstallRunStep)
 }
 
 const copyCustomCmd = async () => {
+  if (window.location.protocol !== 'https:') {
+    alertMessage.value = trans.value.httpsRequired
+    return
+  }
   const cmd = getCustomInstallCommand()
   try {
     await navigator.clipboard.writeText(cmd)
@@ -2047,6 +2129,7 @@ const openDeleteModal = (id) => {
   currentServerName.value = server?.name || ''
   deleteTargetOs.value = 'linux'
   deleteVersion.value = 'go'
+  deleteInstallMode.value = 'current-user'
   deleteGhProxy.value = ''
   uninstallCopied.value = false
   showDeleteModal.value = true

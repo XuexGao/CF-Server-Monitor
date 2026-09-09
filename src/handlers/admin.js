@@ -106,19 +106,18 @@ function normalizePingNodeFields(source, fields = PING_NODE_FIELDS) {
   const values = {};
   for (const field of fields) {
     if (source?.[field] === undefined) continue;
-    const rawValue = source[field] === 0 || source[field] === '0' ? '' : source[field];
-    const result = validatePingNode(rawValue);
+    const result = validatePingNode(source[field]);
     if (!result.valid) {
       return { valid: false, field };
     }
-    values[field] = result.value;
+    // Keep the disabled-node sentinel as text so D1 does not coerce it to 0.0 in TEXT columns.
+    values[field] = source[field] === 0 || source[field] === '0' ? '0' : result.value;
   }
   return { valid: true, values };
 }
 
 function normalizeImportedPingNodeValue(value) {
-  if (value === null || value === 0 || value === '0') return null;
-  return value === undefined ? '' : value;
+  return value === null || value === undefined ? '' : value;
 }
 
 function normalizeNetworkInterfaceField(value) {
@@ -1071,14 +1070,14 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
           normalizedAgentConfig.connection_mode,
           normalizedAgentConfig.ping_mode,
           normalizeBooleanFlag(auto_update),
-          pingNodes.values.custom_ct || null,
-          pingNodes.values.custom_cu || null,
-          pingNodes.values.custom_cm || null,
-          pingNodes.values.custom_bd || null,
-          pingNodes.values.node_1 || null,
-          pingNodes.values.node_2 || null,
-          pingNodes.values.node_3 || null,
-          pingNodes.values.node_4 || null,
+          pingNodes.values.custom_ct ?? null,
+          pingNodes.values.custom_cu ?? null,
+          pingNodes.values.custom_cm ?? null,
+          pingNodes.values.custom_bd ?? null,
+          pingNodes.values.node_1 ?? null,
+          pingNodes.values.node_2 ?? null,
+          pingNodes.values.node_3 ?? null,
+          pingNodes.values.node_4 ?? null,
           safeRx,
           safeTx,
           normalizeBooleanFlag(offline_notify_disabled),

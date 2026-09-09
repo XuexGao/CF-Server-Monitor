@@ -333,13 +333,15 @@ export function useServerCardData(props) {
         if (!ts) return null
         return { ts, value: normalizeProbeMetricValue(point[key]) }
       })
-      .filter(point => point && point.value !== false)
+      // Keep failed probes as positional placeholders so later samples stay
+      // aligned with their original time buckets in the latency chart.
+      .filter(point => point)
       .sort((a, b) => a.ts - b.ts)
   }
 
   const getLatestSeriesValue = (series, fallback) => {
     for (let index = series.length - 1; index >= 0; index -= 1) {
-      if (series[index].value !== null) return series[index].value
+      if (series[index].value !== null && series[index].value !== false) return series[index].value
     }
     const value = normalizeProbeMetricValue(fallback)
     return value === false ? null : value

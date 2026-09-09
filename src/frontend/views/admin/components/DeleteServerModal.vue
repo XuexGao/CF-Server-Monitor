@@ -23,11 +23,9 @@
         <div class="form-group flex-1 mb-3">
           <label class="form-label">{{ trans.targetOs }}</label>
           <select :value="deleteTargetOs" class="form-select" @change="$emit('update:delete-target-os', $event.target.value)">
-            <option value="linux">Linux (Ubuntu/Debian/CentOS/FreeBSD)</option>
-            <option value="alpine">Alpine Linux</option>
-            <option value="openwrt">OpenWrt / LEDE / ImmortalWrt</option>
-            <option value="mac">macOS (Intel / Apple Silicon)</option>
-            <option value="synology">Synology DSM (群晖)</option>
+            <option value="linux">Linux (systemd)</option>
+            <option value="unix">OpenWrt/Alpine/Synology DSM/FreeBSD</option>
+            <option value="mac">macOS</option>
             <option value="windows">Windows</option>
           </select>
         </div>
@@ -39,8 +37,20 @@
             <option value="shell">{{ trans.agentVersionShell }}</option>
           </select>
         </div>
+      </div>
 
-        <div v-if="deleteVersion === 'go'" class="form-group flex-1 mb-3">
+      <div v-if="deleteVersion === 'go'" class="form-row">
+        <div v-if="deleteTargetOs === 'linux' && deleteVersion === 'go'" class="form-group flex-1 mb-3">
+          <label class="form-label">
+            {{ trans.uninstallMode }}
+          </label>
+          <select :value="deleteInstallMode" class="form-select" @change="$emit('update:delete-install-mode', $event.target.value)">
+            <option value="current-user">{{ trans.uninstallModeCurrentUser }}</option>
+            <option value="cfsm-user">{{ trans.uninstallModeCfsmUser }}</option>
+          </select>
+        </div>
+
+        <div class="form-group flex-1 mb-3">
           <label class="form-label">
             {{ trans.ghProxy }}
             <HelpTooltip :text="trans.ghProxyTip" />
@@ -62,7 +72,14 @@
 
       <div class="cmd-input-wrapper mb-3" :class="{ copied: uninstallCopied }">
         <span class="cmd-prompt">{{ deleteTargetOs === 'windows' ? 'PS' : '$' }}</span>
-        <input type="text" readonly :value="uninstallCommand" class="cmd-input flex-1">
+        <textarea
+          v-if="deleteTargetOs === 'linux' && deleteVersion === 'go' && deleteInstallMode === 'cfsm-user'"
+          readonly
+          :value="uninstallCommand"
+          class="cmd-input flex-1"
+          rows="8"
+        />
+        <input v-else type="text" readonly :value="uninstallCommand" class="cmd-input flex-1">
         <button @click="$emit('copy-uninstall')" class="btn btn-icon btn-green ml-2" :aria-label="trans.copy">{{ uninstallCopied ? '✅' : '📋' }}</button>
       </div>
 
@@ -85,6 +102,7 @@ const props = defineProps({
   currentServerName: { type: String, default: '' },
   deleteTargetOs: { type: String, default: 'linux' },
   deleteVersion: { type: String, default: 'go' },
+  deleteInstallMode: { type: String, default: 'current-user' },
   deleteGhProxy: { type: String, default: '' },
   uninstallCommand: { type: String, default: '' },
   uninstallCopied: { type: Boolean, default: false }
@@ -96,6 +114,7 @@ const emit = defineEmits([
   'copy-uninstall',
   'update:delete-target-os',
   'update:delete-version',
+  'update:delete-install-mode',
   'update:delete-gh-proxy'
 ])
 

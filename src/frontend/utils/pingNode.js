@@ -25,7 +25,7 @@ const isValidHostname = (host) => {
 const isValidIpv6 = (host) => IPV6_PATTERN.test(host)
 
 export const validatePingNode = (value) => {
-  const raw = String(value || '').trim()
+  const raw = String(value ?? '').trim()
   if (!raw) return { valid: true, value: '' }
   if (raw.length > 60 || raw.includes('://') || /[\s/@?#\\]/.test(raw)) {
     return { valid: false }

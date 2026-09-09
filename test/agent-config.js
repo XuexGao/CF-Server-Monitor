@@ -95,6 +95,10 @@ assert.deepEqual(buildAgentConfig({}), {
   custom_bd: '',
   interface: '',
   schema_version: AGENT_CONFIG_SCHEMA_VERSION,
+  node_1: '',
+  node_2: '',
+  node_3: '',
+  node_4: '',
   connection_mode: 'http',
   ping_mode: 'tcp'
 });
@@ -201,12 +205,13 @@ assert.equal(resolvedConfig.custom_ct, 'ct-server.example.com');
 assert.equal(resolvedConfig.custom_cu, 'cu-global.example.com');
 assert.equal(resolvedConfig.custom_cm, 'cm-global.example.com');
 assert.equal(resolvedConfig.custom_bd, 'bd-global.example.com');
-for (const explicitEmpty of [null, 0, '0']) {
+for (const explicitEmpty of [0, '0']) {
   const explicitEmptyConfig = buildAgentConfig({ custom_ct: explicitEmpty }, settings);
   assert.equal(explicitEmptyConfig.custom_ct, '', `custom_ct=${String(explicitEmpty)} must override the global node`);
   const explicitEmptyDescriptor = await describeAgentConfig({ custom_ct: explicitEmpty }, settings);
   assert.match(explicitEmptyDescriptor.serialized, /(?:^|&)custom_ct=(?:&|$)/);
 }
+assert.equal(buildAgentConfig({ custom_ct: null }, settings).custom_ct, 'ct-global.example.com');
 assert.equal(buildAgentConfig({ custom_ct: '' }, settings).custom_ct, 'ct-global.example.com');
 assert.equal(buildAgentConfig({}, settings).custom_ct, 'ct-global.example.com');
 assert.equal(buildAgentConfig({ interface: 'eth0, ens3,eth0' }).interface, 'eth0,ens3');
@@ -221,6 +226,6 @@ assert.deepEqual(validatePingNode('foo:443'), { valid: true, value: 'foo:443' })
 assert.equal(validatePingNode('foo:bar').valid, false);
 assert.deepEqual(validatePingNode('2001:db8::1'), { valid: true, value: '[2001:db8::1]' });
 assert.deepEqual(validatePingNode('[2001:db8::1]:443'), { valid: true, value: '[2001:db8::1]:443' });
-assert.equal(validatePingNode('2001:db8::1:443').valid, false);
+assert.deepEqual(validatePingNode('2001:db8::1:443'), { valid: true, value: '[2001:db8::1:443]' });
 
 console.log('agent config tests passed');

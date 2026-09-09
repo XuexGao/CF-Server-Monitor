@@ -129,7 +129,7 @@
             <input type="text" v-model.trim="form.custom_bd" class="form-input" :disabled="!enabled.custom_bd" :placeholder="settings.custom_bd || 'ip.zstaticcdn.com'">
           </BatchEditField>
           <BatchEditField v-for="(field, index) in ['node_1', 'node_2', 'node_3', 'node_4']" :key="field" :enabled="enabled[field]" :label="settings[`${field}_name`] || `Node ${index + 1}`" @toggle="toggleField(field, $event)">
-            <input type="text" v-model.trim="form[field]" class="form-input" :disabled="!enabled[field]" placeholder="host[:port]">
+            <input type="text" v-model.trim="form[field]" class="form-input" :disabled="!enabled[field]" :placeholder="settings[field] || 'host[:port] / [IPv6]:port'">
           </BatchEditField>
         </div>
 

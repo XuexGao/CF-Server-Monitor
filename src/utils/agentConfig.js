@@ -147,7 +147,7 @@ function isValidHostname(host) {
 const isValidIpv6 = (host) => IPV6_PATTERN.test(host);
 
 export function validatePingNode(value) {
-  const raw = String(value || '').trim();
+  const raw = String(value ?? '').trim();
   if (!raw) return { valid: true, value: '' };
   if (raw.length > 60 || raw.includes('://') || /[\s/@?#\\]/.test(raw)) {
     return { valid: false };
@@ -279,10 +279,13 @@ export function buildAgentConfig(server, settings = null, schemaVersion = AGENT_
 
   const resolveNode = (field) => {
     const serverValue = server?.[field];
-    const hasServerValue = server && Object.prototype.hasOwnProperty.call(server, field) &&
-      serverValue !== undefined && serverValue !== '';
-    const value = hasServerValue ? server[field] : settings?.[field] || '';
-    return sanitizePingNode(value === 0 || value === '0' ? '' : value);
+    const hasServerField = server && Object.prototype.hasOwnProperty.call(server, field);
+    // A stored 0 explicitly disables this node; blank/null inherits the global node.
+    if (hasServerField && (serverValue === 0 || serverValue === '0')) return '';
+    const value = hasServerField && serverValue !== null && serverValue !== undefined && serverValue !== ''
+      ? serverValue
+      : settings?.[field] || '';
+    return sanitizePingNode(value);
   };
   const customCt = resolveNode('custom_ct');
   const customCu = resolveNode('custom_cu');

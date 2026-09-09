@@ -10,7 +10,7 @@
   <a href="README-en.md">English</a>
 </p>
 
-[![Workers](https://img.shields.io/badge/Workers-2.8.5%20Beta4-f38020?style=flat-square&logo=cloudflare&logoColor=white)](version.json)
+[![Workers](https://img.shields.io/badge/Workers-2.8.5%20Beta5-f38020?style=flat-square&logo=cloudflare&logoColor=white)](version.json)
 [![GitHub Stars](https://img.shields.io/github/stars/huilang-me/CF-Server-Monitor?style=flat-square&logo=github)](https://github.com/huilang-me/CF-Server-Monitor/stargazers)
 [![GitHub Forks](https://img.shields.io/github/forks/huilang-me/CF-Server-Monitor?style=flat-square&logo=github)](https://github.com/huilang-me/CF-Server-Monitor/forks)
 [![License](https://img.shields.io/badge/License-MIT-16a34a?style=flat-square)](#许可证)
@@ -216,13 +216,15 @@ V2.8.3 起默认使用独立项目 [cfsm-agent](https://github.com/huilang-me/cf
 
 ### 非 root 安装（推荐）
 
-支持 `systemd --user` 的 Linux 环境建议优先使用非 root 安装，可避免 Agent 长期以 root 身份运行，大幅提高安全性。非 root 安装会使用当前用户，并将文件写入 `~/.cf-probe/`，自启动依赖 `systemd --user`。如果希望用户退出登录后服务仍可运行，请先由 root 执行：
+支持 `systemd --user` 的 Linux 环境建议使用非 root 安装。后台安装命令可选择“当前用户”或“专用 cfsm 用户”：当前用户会直接执行安装，专用用户则会自动创建并切换到 `cfsm`。文件保存在该用户的 `~/.cf-probe/`。
+
+普通用户安装后，如需退出登录仍保持服务运行，请由 root 执行：
 
 ```bash
 loginctl enable-linger 用户名
 ```
 
-如果从旧 root 安装切换到非 root 安装，建议先用 root 卸载旧版，再切换到目标用户执行后台复制的安装命令。OpenWrt、Alpine/OpenRC、Synology DSM 等不支持 `systemd --user` 的环境，按后台生成的对应系统命令安装即可。
+卸载时请选择原来的安装用户。OpenWrt、Alpine/OpenRC、Synology DSM 等不支持 `systemd --user` 的环境，请使用对应系统命令。
 
 ## 配置说明
 
