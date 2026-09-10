@@ -110,19 +110,19 @@
           <span class="config-value">{{ formatWithUnit(txCorrection, 'GB') }}</span>
         </div>
         <div class="config-row">
-          <span class="config-label">{{ trans.customCt }}</span>
+          <span class="config-label">{{ settings.custom_ct_name || trans.customCt }}</span>
           <span class="config-value">{{ isBlank(customCt) ? '-' : customCt }}</span>
         </div>
         <div class="config-row">
-          <span class="config-label">{{ trans.customCu }}</span>
+          <span class="config-label">{{ settings.custom_cu_name || trans.customCu }}</span>
           <span class="config-value">{{ isBlank(customCu) ? '-' : customCu }}</span>
         </div>
         <div class="config-row">
-          <span class="config-label">{{ trans.customCm }}</span>
+          <span class="config-label">{{ settings.custom_cm_name || trans.customCm }}</span>
           <span class="config-value">{{ isBlank(customCm) ? '-' : customCm }}</span>
         </div>
         <div class="config-row">
-          <span class="config-label">{{ trans.customBd }}</span>
+          <span class="config-label">{{ settings.custom_bd_name || trans.customBd }}</span>
           <span class="config-value">{{ isBlank(customBd) ? '-' : customBd }}</span>
         </div>
         <div v-for="(node, index) in [node1, node2, node3, node4]" :key="index" class="config-row">
