@@ -1,40 +1,202 @@
-name: Upstream Sync
+name: Sync Upstream
+
+on:
+  schedule:
+    # 每周一、周四 北京时间 07:00（GitHub cron 为 UTC，对应周日/周三 23:00）
+    - cron: '0 23 * * 0,3'
+  workflow_dispatch:
+    inputs:
+      upstream_ref:
+        description: "上游 ref（分支 / tag / commit），默认上游默认分支"
+        required: false
+        default: "main"
+        type: string
+      dry_run:
+        description: "仅演练：计算变更但不推送"
+        required: false
+        default: false
+        type: boolean
+      force:
+        description: "忽略本地改动保护，强制覆盖（危险）"
+        required: false
+        default: false
+        type: boolean
+
+# 同一时间只允许一个同步任务，避免并发 force-push 互相覆盖
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
 
 permissions:
   contents: write
 
-on:
-  schedule:
-    - cron: "0 0 * * *" # every day
-  workflow_dispatch:
-
 jobs:
-  sync_latest_from_upstream:
-    name: Sync latest commits from upstream repo
+  sync:
     runs-on: ubuntu-latest
-    if: ${{ github.event.repository.fork }}
-
+    name: Sync upstream to main
+    timeout-minutes: 15
     steps:
-      # Step 1: run a standard checkout action
-      - name: Checkout target repo
-        uses: actions/checkout@v3
-
-      # Step 2: run the sync action
-      - name: Sync upstream changes
-        id: sync
-        uses: aormsby/Fork-Sync-With-Upstream-action@v3.4
+      - name: 📥 Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          upstream_sync_repo: huilang-me/CF-Server-Monitor
-          upstream_sync_branch: main
-          target_sync_branch: main
-          target_repo_token: ${{ secrets.GITHUB_TOKEN }} # automatically generated, no need to set
+          fetch-depth: 0
+          ref: main
 
-          # Set test_mode true to run tests instead of the true action!!
-          test_mode: false
-
-      - name: Sync check
-        if: failure()
+      - name: ⬆️ Sync upstream
+        id: sync
+        env:
+          UPSTREAM_REPO: https://github.com/huilang-me/CF-Server-Monitor.git
+          UPSTREAM_REF: ${{ inputs.upstream_ref || 'main' }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          FORCE: ${{ inputs.force }}
+          TARGET_BRANCH: "main"
+          WORKFLOW_PATH: ".github/workflows/sync.yml"
         run: |
-          echo "[Error] 由于上游仓库的 workflow 文件变更，导致 GitHub 自动暂停了本次自动更新，请前往仓库页面手动执行 Sync Fork 操作。"
-          echo "[Error] Due to a change in the workflow file of the upstream repository, GitHub has automatically suspended the scheduled automatic update. You need to manually sync your fork."
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          case "$UPSTREAM_REF" in
+            "" | *[!A-Za-z0-9._/-]* )
+              echo "::error::Invalid upstream_ref: $UPSTREAM_REF"
+              exit 1
+              ;;
+          esac
+
+          test -s "$WORKFLOW_PATH" || { echo "::error::workflow file not found: $WORKFLOW_PATH"; exit 1; }
+
+          BEFORE_SHA="$(git rev-parse HEAD)"
+          echo "before_sha=$BEFORE_SHA" >> "$GITHUB_OUTPUT"
+
+          # 备份本 workflow 自身（reset 后会被上游覆盖删除）
+          KEEP_DIR="$RUNNER_TEMP/fork-keep"
+          mkdir -p "$KEEP_DIR/$(dirname "$WORKFLOW_PATH")"
+          cp "$WORKFLOW_PATH" "$KEEP_DIR/$WORKFLOW_PATH"
+
+          git remote add upstream "$UPSTREAM_REPO" 2>/dev/null \
+            || git remote set-url upstream "$UPSTREAM_REPO"
+          git fetch --no-tags upstream "$UPSTREAM_REF"
+
+          UPSTREAM_SHA="$(git rev-parse FETCH_HEAD)"
+          echo "upstream_sha=$UPSTREAM_SHA" >> "$GITHUB_OUTPUT"
+
+          # 上游 commit 已在本地历史中 -> 无新内容
+          if git merge-base --is-ancestor "$UPSTREAM_SHA" "$BEFORE_SHA"; then
+            UP_TO_DATE=true
+          else
+            UP_TO_DATE=false
+          fi
+
+          # 保护：fork 相对共同祖先的真实本地改动会被 reset 抹掉
+          MERGE_BASE="$(git merge-base "$UPSTREAM_SHA" "$BEFORE_SHA" 2>/dev/null || echo "")"
+          LOCAL_FILES=""
+          if [ -n "$MERGE_BASE" ]; then
+            LOCAL_FILES="$(git diff --name-only "$MERGE_BASE" "$BEFORE_SHA" 2>/dev/null \
+              | grep -vxF "$WORKFLOW_PATH" || true)"
+          fi
+
+          if [ -n "$LOCAL_FILES" ] && [ "$FORCE" != "true" ]; then
+            {
+              echo "## ⛔ Sync Upstream 已阻止"
+              echo ""
+              echo "检测到 fork 本地改动，强制同步会丢失以下文件，已中止："
+              echo ""
+              echo '```'
+              echo "$LOCAL_FILES"
+              echo '```'
+              echo ""
+              echo "如确认要用上游覆盖，请手动触发本 workflow 并勾选 \`force\`。"
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::fork has local changes; refusing to force-sync (set force=true to override)"
+            echo "$LOCAL_FILES"
+            exit 1
+          fi
+
+          if [ "$UP_TO_DATE" = "true" ]; then
+            AFTER_SHA="$BEFORE_SHA"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "已是最新，跳过推送。"
+            {
+              echo "上游 \`$UPSTREAM_REF\` → \`$UPSTREAM_SHA\`"
+              echo ""
+              echo "本次同步没有产生变更。"
+            } > "$RUNNER_TEMP/sync-summary.md"
+          else
+            git reset --hard "$UPSTREAM_SHA"
+
+            # 恢复本 workflow，避免下次定时任务丢失
+            mkdir -p "$(dirname "$WORKFLOW_PATH")"
+            cp "$KEEP_DIR/$WORKFLOW_PATH" "$WORKFLOW_PATH"
+            test -s "$WORKFLOW_PATH"
+
+            git add -A "$WORKFLOW_PATH"
+            if ! git diff --cached --quiet; then
+              git commit -m "chore: keep fork sync workflow"
+            fi
+
+            AFTER_SHA="$(git rev-parse HEAD)"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+
+            {
+              echo "上游 \`$UPSTREAM_REF\` → \`$UPSTREAM_SHA\`"
+              echo ""
+              echo '```'
+              git diff --stat "$BEFORE_SHA" "$AFTER_SHA"
+              echo '```'
+            } > "$RUNNER_TEMP/sync-summary.md"
+          fi
+
+          echo "after_sha=$AFTER_SHA" >> "$GITHUB_OUTPUT"
+
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "dry_run=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::dry run 已开启，跳过推送。"
+          else
+            echo "dry_run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 🚀 Push to origin
+        if: steps.sync.outputs.changed == 'true' && steps.sync.outputs.dry_run != 'true'
+        env:
+          TARGET_BRANCH: "main"
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if git push origin "HEAD:$TARGET_BRANCH" --force; then
+              echo "推送成功（第 $attempt 次尝试）。"
+              exit 0
+            fi
+            echo "::warning::第 $attempt 次推送失败，准备重试。"
+            sleep $((attempt * 5))
+          done
+          echo "::error::连续 3 次推送失败。"
           exit 1
+
+      - name: 📝 Summary
+        if: always()
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          UPSTREAM_SHA: ${{ steps.sync.outputs.upstream_sha }}
+          BEFORE_SHA: ${{ steps.sync.outputs.before_sha }}
+          AFTER_SHA: ${{ steps.sync.outputs.after_sha }}
+          CHANGED: ${{ steps.sync.outputs.changed }}
+          DRY_RUN: ${{ steps.sync.outputs.dry_run }}
+        run: |
+          {
+            echo "## 🔄 Sync Upstream"
+            echo ""
+            echo "| 项目 | 值 |"
+            echo "| --- | --- |"
+            echo "| 触发方式 | \`${EVENT_NAME:-unknown}\` |"
+            echo "| 上游 commit | \`${UPSTREAM_SHA:-n/a}\` |"
+            echo "| 同步前 commit | \`${BEFORE_SHA:-n/a}\` |"
+            echo "| 同步后 commit | \`${AFTER_SHA:-n/a}\` |"
+            echo "| 是否推送 | ${CHANGED:-unknown} / dry_run=${DRY_RUN:-false} |"
+            echo ""
+            if [ -f "$RUNNER_TEMP/sync-summary.md" ]; then
+              cat "$RUNNER_TEMP/sync-summary.md"
+            else
+              echo "同步步骤未生成摘要（可能被保护规则中止或提前失败）。"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
