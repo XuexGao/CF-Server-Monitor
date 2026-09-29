@@ -69,10 +69,18 @@ jobs:
           BEFORE_SHA="$(git rev-parse HEAD)"
           echo "before_sha=$BEFORE_SHA" >> "$GITHUB_OUTPUT"
 
-          # 备份本 workflow 自身（reset 后会被上游覆盖删除）
+          # 备份 fork 自己的整个 workflows 目录。
+          # GITHUB_TOKEN 无权创建/修改/删除 workflow 文件，若同步时引入上游的
+          # workflow 变更，push 会被拒绝（refusing to allow ... workflow）。
+          # 因此同步后原样恢复 fork 的 workflows，保证推送不涉及 workflow 文件。
           KEEP_DIR="$RUNNER_TEMP/fork-keep"
-          mkdir -p "$KEEP_DIR/$(dirname "$WORKFLOW_PATH")"
-          cp "$WORKFLOW_PATH" "$KEEP_DIR/$WORKFLOW_PATH"
+          rm -rf "$KEEP_DIR"
+          mkdir -p "$KEEP_DIR"
+          HAD_WORKFLOWS=false
+          if [ -d .github/workflows ]; then
+            HAD_WORKFLOWS=true
+            cp -a .github/workflows "$KEEP_DIR/workflows"
+          fi
 
           git remote add upstream "$UPSTREAM_REPO" 2>/dev/null \
             || git remote set-url upstream "$UPSTREAM_REPO"
@@ -93,7 +101,7 @@ jobs:
           LOCAL_FILES=""
           if [ -n "$MERGE_BASE" ]; then
             LOCAL_FILES="$(git diff --name-only "$MERGE_BASE" "$BEFORE_SHA" 2>/dev/null \
-              | grep -vxF "$WORKFLOW_PATH" || true)"
+              | grep -v '^\.github/workflows/' || true)"
           fi
 
           if [ -n "$LOCAL_FILES" ] && [ "$FORCE" != "true" ]; then
@@ -125,14 +133,17 @@ jobs:
           else
             git reset --hard "$UPSTREAM_SHA"
 
-            # 恢复本 workflow，避免下次定时任务丢失
-            mkdir -p "$(dirname "$WORKFLOW_PATH")"
-            cp "$KEEP_DIR/$WORKFLOW_PATH" "$WORKFLOW_PATH"
+            # 原样恢复 fork 的 workflows（含本同步 workflow 自身）
+            rm -rf .github/workflows
+            if [ "$HAD_WORKFLOWS" = "true" ]; then
+              mkdir -p .github
+              cp -a "$KEEP_DIR/workflows" .github/workflows
+            fi
             test -s "$WORKFLOW_PATH"
 
-            git add -A "$WORKFLOW_PATH"
+            git add -A .github/workflows
             if ! git diff --cached --quiet; then
-              git commit -m "chore: keep fork sync workflow"
+              git commit -m "chore: keep fork workflows"
             fi
 
             AFTER_SHA="$(git rev-parse HEAD)"
